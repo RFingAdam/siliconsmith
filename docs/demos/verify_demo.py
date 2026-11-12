@@ -386,7 +386,8 @@ class StatusSnapshot:
 
 
 def summarize_status(steps: list[dict[str, Any]]) -> str:
-    """`spec valid, check, sim x2, coverage pass; approval open` from the status steps."""
+    """`spec valid, check, sim x2, coverage pass, synthesis pass, gate-level pass; approval open`
+    from the status steps (a step that does not pass is listed in brackets with its state)."""
     state = {s["key"]: s["state"] for s in steps}
     done: list[str] = []
     if state.get("spec_valid") == "pass":
@@ -398,9 +399,14 @@ def summarize_status(steps: list[dict[str, Any]]) -> str:
         done.append(f"sim x{sims}")
     if state.get("coverage") == "pass":
         done.append("coverage pass")
+    if state.get("synthesis") == "pass":
+        done.append("synthesis pass")
+    if state.get("gate_sim") == "pass":
+        done.append("gate-level pass")
+    checked = ("spec_valid", "check", "sim_icarus", "sim_verilator", "coverage")
     missing = [
-        f"{k} {state[k]}"
-        for k in ("spec_valid", "check", "sim_icarus", "sim_verilator", "coverage")
+        f"{k} {state.get(k, 'not_run')}"
+        for k in (*checked, "synthesis", "gate_sim")
         if state.get(k, "not_run") != "pass"
     ]
     text = ", ".join(done) or "nothing passes"
@@ -579,32 +585,44 @@ def replay_checks(events: list[dict[str, Any]], project: Path, meta: dict[str, A
     ]
 
 
-async def run_sims(label: str, root: Path, name: str, image: str) -> list[Rerun]:
-    runs: list[Rerun] = []
+async def one_run(client: Client, label: str, name: str, sim: str, gl: bool = False) -> Rerun:
+    """One `run_tests` call as a Rerun. A gate-level run is labelled `icarus-gl`."""
+    shown = f"{sim}-gl" if gl else sim
+    args: dict[str, Any] = {"project": name, "simulator": sim}
+    if gl:
+        args["gl"] = True
+    try:
+        out = await call_tool(client, "run_tests", **args)
+    except DemoError as exc:
+        return Rerun(label, shown, False, 0, 0, str(exc))
+    tests = out.get("details", {}).get("tests", [])
+    names = [str(t.get("name")) for t in tests]
+    passed = sum(1 for t in tests if t.get("outcome") == "pass")
+    failed = sum(1 for t in tests if t.get("outcome") in ("fail", "error"))
+    first = out["summary"].splitlines()[0] if out["summary"] else ""
+    return Rerun(label, shown, bool(out.get("ok")), passed, failed, first, names)
+
+
+async def run_sims(
+    label: str, root: Path, name: str, image: str, gate_level: bool = False
+) -> list[Rerun]:
+    """The RTL run on each simulator and, with `gate_level`, the gate-level run on Icarus."""
     server = build_server(root, None, image=image)
     async with Client(server) as client:
-        for sim in SIMULATORS:
-            try:
-                out = await call_tool(client, "run_tests", project=name, simulator=sim)
-            except DemoError as exc:
-                runs.append(Rerun(label, sim, False, 0, 0, str(exc)))
-                continue
-            tests = out.get("details", {}).get("tests", [])
-            names = [str(t.get("name")) for t in tests]
-            passed = sum(1 for t in tests if t.get("outcome") == "pass")
-            failed = sum(1 for t in tests if t.get("outcome") in ("fail", "error"))
-            first = out["summary"].splitlines()[0] if out["summary"] else ""
-            runs.append(Rerun(label, sim, bool(out.get("ok")), passed, failed, first, names))
+        runs = [await one_run(client, label, name, sim) for sim in SIMULATORS]
+        if gate_level:
+            runs.append(await one_run(client, label, name, "icarus", gl=True))
     return runs
 
 
 async def rerun_all(project: Path, scratch: Path, image: str) -> list[Rerun]:
-    """The four independent runs, on copies under `scratch`."""
+    """The five independent runs, on copies under `scratch`: the agent's tests and the frozen
+    reference test on both simulators, and the reference test on the sky130 gates (Icarus)."""
     agent = copy_project(project, scratch / "agent")
     runs = await run_sims("agent", agent.parent, agent.name, image)
     reference = copy_project(project, scratch / "reference")
     use_reference_test(reference)
-    runs += await run_sims("reference", reference.parent, reference.name, image)
+    runs += await run_sims("reference", reference.parent, reference.name, image, gate_level=True)
     return runs
 
 
@@ -799,15 +817,15 @@ def metrics_table(rows: list[dict[str, Any]]) -> str:
         "| Date | Front-end | Model | Claude Code | Siliconsmith | Turns | Result "
         "| run_tests calls | Cost (USD) | Minutes "
         "| Agent: Icarus | Agent: Verilator | Reference: Icarus | Reference: Verilator "
-        "| Status | Passed | Transcript |"
+        "| Reference: Icarus gates | Status | Passed | Transcript |"
     )
-    lines = [head, "|" + " --- |" * 17]
+    lines = [head, "|" + " --- |" * 18]
     for r in rows:
         cost = r.get("cost_usd")
         lines.append(
             "| {date} | {fe} | {model} | {cc} | {sha} | {turns} | {result} | {runs} | {cost} "
             "| {mins} | {ai} "
-            "| {av} | {ri} | {rv} | {status} | {passed} | {t} |".format(
+            "| {av} | {ri} | {rv} | {rg} | {status} | {passed} | {t} |".format(
                 date=r.get("date", ""),
                 fe=r.get("frontend", ""),
                 model=r.get("model", ""),
@@ -822,6 +840,7 @@ def metrics_table(rows: list[dict[str, Any]]) -> str:
                 av=mark(r.get("agent_verilator")),
                 ri=mark(r.get("reference_icarus")),
                 rv=mark(r.get("reference_verilator")),
+                rg=mark(r.get("reference_icarus_gl")),
                 status=r.get("status_summary", ""),
                 passed="yes" if r.get("passed") else "no",
                 t=transcript_cell(str(r.get("transcript", ""))),
@@ -887,6 +906,7 @@ def record_attempt(
         "agent_verilator": by.get(("agent", "verilator")),
         "reference_icarus": by.get(("reference", "icarus")),
         "reference_verilator": by.get(("reference", "verilator")),
+        "reference_icarus_gl": by.get(("reference", "icarus-gl")),
         "status_summary": status_summary,
         "passed": passed,
         "transcript": name,
@@ -920,7 +940,7 @@ class Report:
     def passed(self) -> bool:
         return (
             all(c.passed for c in self.checks)
-            and len(self.reruns) == 4
+            and len(self.reruns) == 5
             and all(r.success for r in self.reruns)
             and not self.leaks
         )
