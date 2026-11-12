@@ -411,3 +411,16 @@ async def test_design_code_cannot_forge_a_clean_lint(server: Client, tmp_path: P
         out = await emit(client)
     assert out["ok"] is False
     assert "LATCH" in out["summary"]
+
+
+async def test_amaranth_fsm_passes_emit_verilog(server: Client, tmp_path: Path) -> None:
+    """An Amaranth `m.FSM` writes a `case` with no default, which Verilator reports as
+    CASEINCOMPLETE in the generated Verilog; the agent cannot fix that, so it is not reported."""
+    fsm = (REPO_ROOT / "tests" / "fixtures" / "emit" / "amaranth_fsm.py").read_text()
+    async with server as client:
+        project = await make_project(client, tmp_path, "amaranth")
+        put_design(project, "amaranth", fsm)
+        out = await emit(client)
+    assert out["ok"] is True, out["summary"]
+    assert out["details"]["lint"] == []
+    assert "case" in (project / "src" / "counter.v").read_text()  # the FSM really is in there

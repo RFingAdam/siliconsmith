@@ -227,6 +227,13 @@ def _ports_json(ports: dict[str, tuple[str, int]]) -> dict[str, dict[str, Any]]:
 # -- step 4: lint --------------------------------------------------------------------------
 
 
+def _amaranth_exemptions(frontend: str) -> dict[str, bool]:
+    """Warnings Verilator must not report for the Amaranth-generated core (never for Verilog or
+    MyHDL): the agent cannot fix them in its Amaranth source."""
+    amaranth = frontend == "amaranth"
+    return {"width_checks": not amaranth, "case_checks": not amaranth}
+
+
 def _lint(
     out_dir: Path,
     name: str,
@@ -234,6 +241,7 @@ def _lint(
     generated: bool,
     core_only: bool = False,
     width_checks: bool = True,
+    case_checks: bool = True,
     frontend: str = "",
 ) -> list[dict[str, Any]]:
     """Run Verilator over the wrapper and the core (or over the core alone).
@@ -262,6 +270,10 @@ def _lint(
         # smallest width, so `x == 0` on a 3-bit x reads as a width mismatch in the generated
         # text. The agent cannot fix that in its Amaranth source, so skip those two warnings.
         command += ["-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC"]
+    if not case_checks:
+        # Amaranth's `m.FSM` is written as a `case` over the state with no `default`, which
+        # Verilator reports as CASEINCOMPLETE. The agent cannot add a default to generated text.
+        command += ["-Wno-CASEINCOMPLETE"]
     if core_only:
         command.append(f"{name}.v")
     else:
@@ -465,7 +477,7 @@ def _emit(request: dict[str, Any]) -> dict[str, Any]:
 
     # 4. lint
     found = _lint(
-        out_dir, name, generated=generated, width_checks=frontend != "amaranth", frontend=frontend
+        out_dir, name, generated=generated, frontend=frontend, **_amaranth_exemptions(frontend)
     )
     found += _yosys_check(out_dir, name, frontend)
     return _result(

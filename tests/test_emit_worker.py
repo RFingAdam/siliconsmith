@@ -233,3 +233,28 @@ def test_sandbox_guard_needs_init_and_readonly_root(
     tmp_path: Path, comm: str, root_opts: str, expected: bool
 ) -> None:
     assert worker_emit.in_sandbox(_fake_proc(tmp_path, comm, root_opts)) is expected
+
+
+def test_only_the_amaranth_core_skips_width_and_incomplete_case_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(worker_emit.subprocess, "run", fake_run)
+    for frontend in ("amaranth", "myhdl", "verilog"):
+        worker_emit._lint(
+            tmp_path,
+            "chip",
+            generated=frontend != "verilog",
+            frontend=frontend,
+            **worker_emit._amaranth_exemptions(frontend),
+        )
+    amaranth, myhdl, verilog = commands
+    skipped = {"-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC", "-Wno-CASEINCOMPLETE"}
+    assert skipped <= set(amaranth)
+    assert not skipped & set(myhdl)
+    assert not skipped & set(verilog)
