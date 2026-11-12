@@ -126,7 +126,7 @@ def test_everything_passes_after_full_runs(tmp_path: Path) -> None:
         "sim_icarus": "pass",
         "sim_verilator": "pass",
         "coverage": "pass",
-        "synthesis": "not_available",
+        "synthesis": "not_run",
         "gate_sim": "not_available",
         "equivalence": "not_available",
         "layout": "not_available",
@@ -135,7 +135,8 @@ def test_everything_passes_after_full_runs(tmp_path: Path) -> None:
     }
     by_key = {s.key: s for s in report.steps}
     assert by_key["sim_icarus"].evidence == "run_tests icarus: 2/2 passed"
-    for key in ("synthesis", "gate_sim", "equivalence"):
+    assert by_key["synthesis"].evidence.startswith("Call synthesize")
+    for key in ("gate_sim", "equivalence"):
         assert by_key[key].evidence == "Comes with milestone M1"
     assert by_key["layout"].evidence == "Comes with milestone M2"
     assert by_key["tt_precheck"].evidence == "Comes with milestone M3"
@@ -149,7 +150,8 @@ def test_new_project_is_not_run_everywhere(tmp_path: Path) -> None:
     assert got["spec_valid"] == "pass"
     for key in ("spec_approved", "check", "sim_icarus", "sim_verilator", "coverage"):
         assert got[key] == "not_run"
-    assert [got[k] for k in STEP_KEYS[6:]] == ["not_available"] * 6
+    assert got["synthesis"] == "not_run"
+    assert [got[k] for k in STEP_KEYS[7:]] == ["not_available"] * 5
 
 
 def test_invalid_and_missing_spec(tmp_path: Path) -> None:
@@ -188,7 +190,7 @@ def edit(rel: str, text: str = "# changed\n") -> Any:
         ("verilog", edit("src/chip.v", "// changed\n"), CHECK_SIM_COV),
         ("amaranth", edit("src/chip.v", "// generated\n"), set()),
         ("amaranth", edit("src/project.v", "// generated\n"), set()),
-        ("amaranth", edit("info.yaml", "# changed\n"), CHECK_SIM_COV),
+        ("amaranth", edit("info.yaml", "# changed\n"), set()),
         ("amaranth", edit("test/tb.v", "// changed\n"), CHECK_SIM_COV),
         ("amaranth", edit("test/test.py"), SIM_COV),
         ("amaranth", edit("test/sub/x.py"), SIM_COV),
@@ -214,6 +216,118 @@ def test_each_input_class_makes_only_its_steps_stale(
     now = states(project)
     for key in STEP_KEYS[:6]:
         assert now[key] in ("pass", "stale"), (key, now[key])
+
+
+# -- synthesis: its inputs are the check inputs plus src/config.json and info.yaml ---------
+
+
+def add_synth(project: Project, *, ok: bool = True, stage: str = "synth") -> None:
+    add_run(project, "synthesize", None, tests=[], ok=ok, stage=stage)
+
+
+@pytest.mark.parametrize(
+    ("frontend", "change", "expected"),
+    [
+        ("amaranth", edit("src/config.json", "\n"), {"synthesis"}),
+        ("amaranth", edit("info.yaml", "# changed\n"), {"synthesis"}),
+        ("amaranth", edit("hdl/chip.py"), CHECK_SIM_COV | {"synthesis"}),
+        ("verilog", edit("src/chip.v", "// changed\n"), CHECK_SIM_COV | {"synthesis"}),
+        ("amaranth", edit("test/tb.v", "// changed\n"), CHECK_SIM_COV | {"synthesis"}),
+        ("amaranth", edit("test/test.py"), SIM_COV),
+        ("amaranth", edit("spec.yaml"), {"spec_approved", "coverage"}),
+        ("amaranth", edit("docs/info.md", "more\n"), set()),
+        ("amaranth", edit("build/out.txt"), set()),
+    ],
+    ids=lambda v: v if isinstance(v, str) and not v.startswith("<") else "",
+)
+def test_synthesis_stale_matrix(
+    tmp_path: Path, frontend: str, change: Any, expected: set[str]
+) -> None:
+    project = make_project(tmp_path, frontend)
+    all_pass(project)
+    add_synth(project)
+    assert states(project)["synthesis"] == "pass"
+    assert stale_set(project) == set()
+    change(project)
+    assert stale_set(project) == expected
+
+
+def test_synthesis_image_makes_it_stale(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    all_pass(project)
+    add_synth(project)
+    assert stale_set(project, "example/toolchain:ctx-bbbb") == CHECK_SIM_COV | {"synthesis"}
+
+
+def test_synthesis_states(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    assert states(project)["synthesis"] == "not_run"
+    add_synth(project, ok=False, stage="too_big")
+    got = {s.key: s for s in compute_status(project, IMAGE).steps}
+    assert got["synthesis"].state == "fail"
+    assert "too big" in got["synthesis"].evidence
+    add_synth(project)  # the latest synthesize record decides
+    assert states(project)["synthesis"] == "pass"
+    edit("src/config.json", "\n")(project)
+    assert states(project)["synthesis"] == "stale"
+    add_synth(project, ok=False, stage="lint")
+    got = {s.key: s for s in compute_status(project, IMAGE).steps}
+    assert got["synthesis"].state == "fail" and "lint" in got["synthesis"].evidence
+
+
+def test_synthesis_shows_facts_and_a_synth_record_is_check_evidence(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    append_run(
+        project.dir,
+        RunRecord(
+            tool="synthesize",
+            at="2026-11-12T14:03:05Z",
+            ok=True,
+            stage="synth",
+            image=IMAGE,
+            siliconsmith_version=ledger_mod.__version__,
+            digests=compute_digests(project, IMAGE),
+            synth=ledger_mod.SynthFacts(
+                cells=120, area_um2=912.4, utilization=0.0922, tiles="1x1", verdict="ok"
+            ),
+        ),
+    )
+    got = {s.key: s for s in compute_status(project, IMAGE).steps}
+    assert got["synthesis"].evidence == (
+        "synthesize: 120 cells, 912 um2, about 9% of the 1x1 cell budget (estimate)"
+    )
+    assert got["check"].state == "pass"  # lint was clean for synthesis to run
+
+
+def test_synthesis_does_not_touch_other_steps(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    all_pass(project)
+    before = states(project)
+    add_synth(project, ok=False, stage="synth_failed")
+    after = states(project)
+    assert {k: v for k, v in after.items() if k != "synthesis"} == {
+        k: v for k, v in before.items() if k != "synthesis"
+    }
+    assert after["synthesis"] == "fail"
+
+
+def test_old_ledger_without_synth_digest_still_loads(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    all_pass(project)
+    path = project.dir / LEDGER_REL
+    data = json.loads(path.read_text())
+    for run in data["runs"]:
+        del run["digests"]["synth"]
+    path.write_text(json.dumps(data))
+    assert load_ledger(project.dir).problem is None
+    assert states(project)["sim_icarus"] == "pass"
+    assert states(project)["synthesis"] == "not_run"
+    # An M0 record is never read as a synthesis result, and a missing digest is never current.
+    add_run(project, "synthesize", None, tests=[], stage="synth")
+    data = json.loads(path.read_text())
+    del data["runs"][-1]["digests"]["synth"]
+    path.write_text(json.dumps(data))
+    assert states(project)["synthesis"] == "stale"
 
 
 def test_image_name_makes_check_sims_and_coverage_stale(tmp_path: Path) -> None:
@@ -423,8 +537,9 @@ def test_ledger_stores_facts_only(tmp_path: Path) -> None:
         "siliconsmith_version",
         "digests",
         "tests",
+        "synth",
     }
-    assert set(run["digests"]) == {"check", "sim", "spec"}
+    assert set(run["digests"]) == {"check", "sim", "spec", "synth"}
     assert data["approval"]["approved_by"] == "Ada"
     assert "pass" not in json.dumps({k: v for k, v in data.items() if k != "runs"})
 
