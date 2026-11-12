@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
 # SPDX-License-Identifier: Apache-2.0
 # Pinned snapshot of the Tiny Tapeout Verilog template, used by create_project.
-# Files here are verbatim copies. Do not edit them; tests check the hashes below.
+# Files here are verbatim copies, except the edits listed under "snapshot_edits". Do not edit
+# them otherwise; tests check the hashes below.
 # To update: fetch the new commit, replace the files, refresh this manifest, and re-check the patches.
 repo: https://github.com/TinyTapeout/ttsky-verilog-template
 commit: a42e6662fab316e93b4e26399e21d41664a460b7
@@ -11,6 +12,14 @@ license: Apache-2.0  # the template's LICENSE file; GitHub reports Apache-2.0
 
 # Reference only (never copied into a project): src/project.v, test/test.py, test/README.md, LICENSE.
 # The files not listed in "patches" are copied into a new project as they are.
+
+snapshot_edits:
+  # Edits made to the snapshot file itself (the hash below is of the edited file).
+  - file: test/requirements.txt
+    change: >-
+      'pytest==8.4.2' becomes 'pytest==9.2.0': 8.4.2 has a tmpdir advisory
+      (GHSA-6w46-j5rx-g56g, fixed in 9.0.3), and 9.2.0 is the pytest the toolchain image runs.
+    upstream_sha256: c1ba8e1b931e68c3ff600bb849f20975435fedbb7e5f83932095a05d2dca1372
 
 patches:
   # Two of our stubs are adapted from upstream files and keep the Tiny Tapeout copyright line:
@@ -45,6 +54,6 @@ sha256:
   743b565c95299d3f7a7a36fbecf62573b495f52b96118d4db2e0656a24c35ef8  src/project.v
   d67a6fb84035bb068d160f6ab89ff73b233e775a9c9dd4b7ce3d1df0ec1b66ad  test/Makefile
   725c04fcc2293d2ac2b3bdca4faad1125a424ee7fcebc8fd66276d87bf30a6e6  test/README.md
-  c1ba8e1b931e68c3ff600bb849f20975435fedbb7e5f83932095a05d2dca1372  test/requirements.txt
+  308631d109ad1735a26d5900e17e2cec5b88c4de208fb74e447626839e18a22a  test/requirements.txt
   71b38b1fcb451671468e5516e375c1740568915cb6aeed2706628baec39b412b  test/tb.v
   f75fe7a019ec0666b2705f7962b3a4ce5e4697d7ce18c31e27a1b9e95be66833  test/test.py
