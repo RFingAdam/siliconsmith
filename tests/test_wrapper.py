@@ -36,6 +36,13 @@ def test_wrapper_subset_ties_off_outputs_and_lists_unused_inputs() -> None:
     assert "wire _unused = &{uio_in, ena, clk, rst_n, 1'b0};" in text
 
 
+def test_wrapper_rejects_bad_name() -> None:
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    with pytest.raises(ToolError, match="invalid project name"):
+        generate_wrapper("x (input a); endmodule //", ALL, "Ada")
+
+
 def test_wrapper_is_deterministic() -> None:
     assert generate_wrapper("chip", ALL, "Ada") == generate_wrapper("chip", dict(ALL), "Ada")
 

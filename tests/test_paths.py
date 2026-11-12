@@ -224,6 +224,32 @@ def test_paths_walk_skips_symlinks_dotfiles_and_build(proj: Path, tmp_path: Path
     assert ("build/o.txt", 1) in walk_files(proj)
 
 
+def test_paths_walk_deep_tree_is_an_error_not_a_crash(proj: Path) -> None:
+    deep = proj / "build"
+    for _ in range(40):
+        deep = deep / "d"
+    deep.mkdir(parents=True)
+    with pytest.raises(ToolError, match="deep"):
+        walk_files(proj)
+
+
+def test_paths_walk_limit_and_unprintable_names(proj: Path) -> None:
+    (proj / "build").mkdir()
+    for i in range(5):
+        (proj / "build" / f"f{i}.txt").write_text("x")
+    (proj / "build" / "evil\nline.txt").write_text("x")
+    (proj / "build" / os.fsdecode(b"bad\xff.txt")).write_text("x")
+    names = [n for n, _ in walk_files(proj)]
+    assert all("\n" not in n and "\udcff" not in n for n in names)
+    assert len(walk_files(proj, limit=2)) == 3
+
+
+def test_paths_relpath_rejects_control_and_surrogate_characters() -> None:
+    for bad in ("test/a\nb.py", "test/x\udcff.py", "test/a\x01.py"):
+        with pytest.raises(ToolError):
+            validate_relpath(bad)
+
+
 def test_paths_lock_is_exclusive(proj: Path) -> None:
     order: list[str] = []
     ready = threading.Event()

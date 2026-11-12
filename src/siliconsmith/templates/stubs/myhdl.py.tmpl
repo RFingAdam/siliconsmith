@@ -13,15 +13,23 @@ Pin summary (a design may use any subset):
   outputs  uo_out[7:0], uio_out[7:0], uio_oe[7:0]
 """
 
-from myhdl import always_comb, block
+from myhdl import Signal, always_comb, block, intbv
 
 
 @block
 def {name}(ui_in, uo_out, uio_in, uio_out, uio_oe):
+    # The sum of two 8-bit values needs 9 bits; the top 8 bits' worth is dropped on purpose
+    # by slicing, so the converted Verilog has no width warnings.
+    total = Signal(intbv(0)[9:])
+
+    @always_comb
+    def add():
+        total.next = ui_in + uio_in
+
     @always_comb
     def logic():
-        uo_out.next = (ui_in + uio_in) % 256
+        uo_out.next = total[8:]
         uio_out.next = 0
         uio_oe.next = 0  # 0 = every bidirectional pin is an input
 
-    return logic
+    return add, logic

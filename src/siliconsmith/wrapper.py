@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from siliconsmith.paths import validate_project_name
 from siliconsmith.project import validate_text
 
 # name -> (direction, width). The order is the order of the ports in the wrapper.
@@ -49,6 +50,7 @@ def generate_wrapper(name: str, core_ports: Mapping[str, str], author: str) -> s
     `core_ports` maps each port name of the core module to its direction (`input` or `output`).
     Names and directions must match the TT pin set; widths are checked elsewhere (from Yosys).
     """
+    validate_project_name(name)
     author = validate_text("author", author, 200)
     for port, direction in core_ports.items():
         if port not in TT_PORTS:

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,4 +94,7 @@ def validate_text(label: str, value: str, max_len: int) -> str:
         raise ToolError(f"{label} must be a single line without control characters")
     if "*/" in text:
         raise ToolError(f"{label} must not contain '*/'")
+    if re.search(r"coding[:=]", text):
+        # PEP 263: such a comment on line 1 or 2 of a Python file changes how it is decoded.
+        raise ToolError(f"{label} must not contain 'coding:' or 'coding='")
     return text

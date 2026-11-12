@@ -76,9 +76,12 @@ def _info_yaml(name: str, frontend: str, author: str, description: str, title: s
     return header + yaml.safe_dump(info, sort_keys=False, allow_unicode=True)
 
 
-def _with_header(text: str, author: str, comment: str) -> str:
+def _with_header(text: str, author: str, comment: str, *, tiny_tapeout: bool = False) -> str:
+    """Prefix the SPDX header; `tiny_tapeout` keeps the upstream line for files adapted from TT."""
+    upstream = f"{comment} SPDX-FileCopyrightText: 2024 Tiny Tapeout\n" if tiny_tapeout else ""
     return (
         f"{comment} SPDX-FileCopyrightText: {author}\n"
+        f"{upstream}"
         # REUSE-IgnoreStart
         f"{comment} SPDX-License-Identifier: Apache-2.0\n\n{text}"
         # REUSE-IgnoreEnd
@@ -94,7 +97,9 @@ def build_files(
         "info.yaml": _info_yaml(name, frontend, author, description, title),
     }
     if frontend == "verilog":
-        files[f"src/{name}.v"] = _with_header(_stub("verilog.v.tmpl", name), author, "//")
+        files[f"src/{name}.v"] = _with_header(
+            _stub("verilog.v.tmpl", name), author, "//", tiny_tapeout=True
+        )
     else:
         files[f"hdl/{name}.py"] = _with_header(_stub(f"{frontend}.py.tmpl", name), author, "#")
     files["src/project.v"] = generate_wrapper(name, STUB_PORTS[frontend], author)
@@ -112,7 +117,9 @@ def build_files(
         f"PROJECT_SOURCES = project.v {name}.v\n",
         "Makefile PROJECT_SOURCES line",
     )
-    files["test/test.py"] = _with_header(_stub("test.py.tmpl", name), author, "#")
+    files["test/test.py"] = _with_header(
+        _stub("test.py.tmpl", name), author, "#", tiny_tapeout=True
+    )
     return files
 
 

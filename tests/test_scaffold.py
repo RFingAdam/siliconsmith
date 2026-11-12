@@ -124,6 +124,12 @@ def test_scaffold_info_yaml(tmp_path: Path, fe: str) -> None:
     assert list(info) == list(template)
 
 
+def test_scaffold_rejects_encoding_declaration_in_text(tmp_path: Path) -> None:
+    with pytest.raises(ToolError, match="coding"):
+        create_project(tmp_path, "chip", "amaranth", "Bob coding:utf-7", "d")
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_scaffold_custom_title(tmp_path: Path) -> None:
     create_project(tmp_path, "chip", "verilog", "Ada", "Desc", title="My Chip")
     info = yaml.safe_load((tmp_path / "chip" / "info.yaml").read_text())
@@ -147,13 +153,19 @@ def test_scaffold_stubs_parse_and_have_entry_points(tmp_path: Path, fe: str) -> 
         src = (d / "hdl" / "chip.py").read_text()
         assert 'm.domains.sync = cd = ClockDomain("sync")' in src
         assert "cd.rst.eq(~self.rst_n)" in src
+        core_cls = [n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Core"]
+        assert len(core_cls) == 1
+        declared = [
+            n.target.id
+            for n in core_cls[0].body
+            if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name)
+        ]
+        assert declared == list(STUB_PORTS["amaranth"])
     elif fe == "myhdl":
         tree = ast.parse((d / "hdl" / "chip.py").read_text())
         fn = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "chip"]
         assert len(fn) == 1
-        assert [a.arg for a in fn[0].args.args] == [
-            p for p in STUB_PORTS["myhdl"] if p in {a.arg for a in fn[0].args.args}
-        ]
+        assert [a.arg for a in fn[0].args.args] == list(STUB_PORTS["myhdl"])
         assert any(isinstance(dec, ast.Name) and dec.id == "block" for dec in fn[0].decorator_list)
     else:
         core = (d / "src" / "chip.v").read_text()
@@ -167,9 +179,14 @@ def test_scaffold_generated_files_have_spdx_header(tmp_path: Path) -> None:
         for rel in ("src/project.v", "test/test.py", "src/chip_verilog.v", f"hdl/chip_{fe}.py"):
             path = d / rel
             if path.exists():
-                head = path.read_text().splitlines()[:2]
+                head = path.read_text().splitlines()[:3]
                 assert head[0].endswith("SPDX-FileCopyrightText: Ada Lovelace")
-                assert head[1].endswith("SPDX-License-Identifier: Apache-2.0")
+                derived = rel in ("test/test.py", "src/chip_verilog.v")
+                if derived:  # adapted from Tiny Tapeout files: keep their copyright line
+                    assert head[1].endswith("SPDX-FileCopyrightText: 2024 Tiny Tapeout")
+                # REUSE-IgnoreStart
+                assert any(h.endswith("SPDX-License-Identifier: Apache-2.0") for h in head)
+                # REUSE-IgnoreEnd
 
 
 def test_scaffold_refuses_existing_project(tmp_path: Path) -> None:

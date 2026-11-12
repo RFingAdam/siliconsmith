@@ -46,6 +46,8 @@ def child_env(extra: dict[str, str]) -> dict[str, str]:
     working when pytest is started some other way.
     """
     env = dict(os.environ)
+    env.pop("SILICONSMITH_ROOT", None)
+    env.pop("CLAUDE_PROJECT_DIR", None)
     env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
     env.update(extra)
     return env

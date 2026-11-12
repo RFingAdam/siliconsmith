@@ -112,6 +112,8 @@ def validate_relpath(rel: str) -> tuple[str, ...]:
             raise _err(f"path {rel!r} contains '..'")
         if part.startswith("."):
             raise _err(f"path {rel!r} has a component that starts with a dot ({part!r})")
+        if not part.isprintable():
+            raise _err(f"path {rel!r} has a control or non-text character in a component")
     return parts
 
 
@@ -226,44 +228,63 @@ def atomic_write(project_dir: Path, rel: str, data: bytes) -> None:
                 os.unlink(tmp, dir_fd=dfd)
 
 
+MAX_WALK_DEPTH = 32
+
+
 def walk_files(
-    project_dir: Path, *, skip_dirs: frozenset[str] = frozenset()
+    project_dir: Path,
+    *,
+    skip_dirs: frozenset[str] = frozenset(),
+    limit: int | None = None,
+    max_depth: int = MAX_WALK_DEPTH,
 ) -> list[tuple[str, int]]:
     """List `(relative path, size)` for regular files, sorted, without following symlinks.
 
-    Symlinks, special files and dot-files or dot-directories are skipped. `skip_dirs` names
-    directories to leave out at any depth (for example `build`).
+    Symlinks, special files, dot-files or dot-directories and names that are not printable text
+    are skipped. `skip_dirs` names directories to leave out at any depth (for example `build`).
+    The walk is iterative and stops once more than `limit` files are found (so a caller that
+    shows `limit` entries can tell the list was cut). A tree deeper than `max_depth` raises
+    ToolError, because only code running in the container can build one.
     """
     out: list[tuple[str, int]] = []
+    opened = [_open_dir(project_dir)]
 
-    def scan(fd: int, prefix: str) -> None:
+    def frame(fd: int, prefix: str) -> tuple[str, Iterator[os.DirEntry[str]]]:
         with os.scandir(fd) as entries:
-            items = sorted(entries, key=lambda e: e.name)
-        for entry in items:
-            if entry.name.startswith("."):
+            return prefix, iter(sorted(entries, key=lambda e: e.name))
+
+    try:
+        stack = [frame(opened[0], "")]
+        while stack:
+            prefix, items = stack[-1]
+            entry = next(items, None)
+            if entry is None:
+                stack.pop()
+                os.close(opened.pop())
                 continue
-            rel = prefix + entry.name
+            if entry.name.startswith(".") or not entry.name.isprintable():
+                continue
             if entry.is_symlink():
                 continue
+            rel = prefix + entry.name
             if entry.is_dir(follow_symlinks=False):
                 if entry.name in skip_dirs:
                     continue
+                if len(stack) > max_depth:
+                    raise _err(f"{rel!r} is nested more than {max_depth} directories deep")
                 try:
-                    sub = os.open(entry.name, _DIR_FLAGS, dir_fd=fd)
+                    sub = os.open(entry.name, _DIR_FLAGS, dir_fd=opened[-1])
                 except OSError:
                     continue
-                try:
-                    scan(sub, rel + "/")
-                finally:
-                    os.close(sub)
+                opened.append(sub)
+                stack.append(frame(sub, rel + "/"))
             elif entry.is_file(follow_symlinks=False):
                 out.append((rel, entry.stat(follow_symlinks=False).st_size))
-
-    root_fd = _open_dir(project_dir)
-    try:
-        scan(root_fd, "")
+                if limit is not None and len(out) > limit:
+                    break
     finally:
-        os.close(root_fd)
+        for fd in opened:
+            os.close(fd)
     return out
 
 

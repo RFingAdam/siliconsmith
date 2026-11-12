@@ -2,7 +2,7 @@
 
 An open-source AI chip-design agent. One MCP server, one pinned Docker toolchain, and a write-test-fix loop that an AI coding agent (Claude Code, Cursor, Codex) can run end to end.
 
-**Status:** digital milestone M0 is in progress. The tools are not usable yet; [ISSUES.md](ISSUES.md) and the GitHub issues track what has landed.
+**Status:** digital milestone M0 is in progress. The project tools (create, list, read and write files) work today; emit and simulation arrive in later M0 steps; [ISSUES.md](ISSUES.md) and the GitHub issues track what has landed.
 
 Three tracks share the same server and toolchain:
 
