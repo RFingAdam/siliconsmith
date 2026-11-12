@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+
+[[annotations]]
+path = [
+  "**/*.md",
+  ".gitignore",
+  "uv.lock",
+  "docker/requirements.lock",
+  "**/py.typed",
+  "NOTICE",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Adam Engelbrecht"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Content that may carry its own SPDX header (captured logs, adapted workflows): the header
+# in the file wins; this is the default when there is none.
+[[annotations]]
+path = [
+  ".github/**",
+  "tests/fixtures/**",
+  "tests/golden/**",
+  "docs/demos/**",
+]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Adam Engelbrecht"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "src/siliconsmith/templates/tt/**"
+precedence = "closest"
+SPDX-FileCopyrightText = "Tiny Tapeout LTD"
+SPDX-License-Identifier = "Apache-2.0"

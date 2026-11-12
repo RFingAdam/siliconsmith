@@ -1,17 +1,82 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+
 name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.13.7"
 
 jobs:
   lint:
-    name: lint (placeholder)
+    name: lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - name: Placeholder lint
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run mypy
+      - run: uvx --from 'reuse[charset-normalizer]==6.3.0' reuse lint
+      - run: uv run python scripts/check_api_guard.py
+      - run: uv run python scripts/check_no_binaries.py
+      - run: uv run python scripts/check_wheel.py
+      - name: Check commit and PR trailers
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
+        run: uv run python scripts/check_trailers.py "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+      - name: Set up Python for the pip-compat check
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: pip-compat install and import check
         run: |
-          echo "Lint placeholder — ruff, mypy, reuse, and tests land in digital M0."
-          exit 0
+          python -m venv "$RUNNER_TEMP/pc"
+          "$RUNNER_TEMP/pc/bin/pip" install -e '.[amaranth,myhdl]'
+          "$RUNNER_TEMP/pc/bin/siliconsmith" --version
+          "$RUNNER_TEMP/pc/bin/python" -c 'import amaranth, myhdl'
+          "$RUNNER_TEMP/pc/bin/python" -c 'import siliconsmith.server'
+          "$RUNNER_TEMP/pc/bin/siliconsmith" server --help
+
+  unit:
+    name: unit (python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run pytest -m "not integration"

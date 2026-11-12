@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+
+# Repo-relative paths of tracked files allowed to be binary or larger than 1 MB.
+# One path per line. Keep this empty unless there is a strong reason: the project
+# does not ship tool binaries.
