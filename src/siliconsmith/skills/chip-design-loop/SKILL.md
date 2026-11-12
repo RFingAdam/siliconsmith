@@ -53,9 +53,11 @@ An x at the first compared cycle means a register without a reset: use the reset
 
 ## What equivalence proves
 
-`check_equivalence` synthesizes again by itself, then a proof program (Yosys) compares the gates with your RTL. A small design takes about 10 seconds, memories and wide multipliers a minute or more. Read the first line of the summary, then run `status`.
+`check_equivalence` synthesizes again by itself, then a proof program (Yosys) compares the gates with your RTL. A small design takes about 10 seconds, big ones a minute or more. Read the first line of the summary, then run `status`.
 
-"Equivalent" means: every output value the RTL defines matches the gates, for every power-up state of the flip-flops. Where the RTL says x (do not care) the gates may do anything. Registers without a reset are only compared for a consistent power-up. It catches a register in the gates that reset never sets, and RTL that relies on initial values (`not_equivalent`, reason `rtl_initial_value`): reset those registers with `rst_n`.
+"Equivalent" means: every output value the RTL defines matches the gates, for every power-up state of the flip-flops. Where the RTL says x (do not care) the gates may do anything. Registers without a reset are only compared for a consistent power-up. It catches a register in the gates that reset never sets.
+
+A register that keeps an initial value (`reg x = 0`, `initial`, Amaranth `init=`) which reset does not set comes back `not_equivalent` (`rtl_initial_value`) or not proven (`initial_values`): reset it with `rst_n`.
 
 It does not catch bugs in the RTL itself, including a wrong reset in the RTL: both sides share them, so only your tests can. Reset is 1 cycle, compared from cycle 2. Gate-level simulation is still the check for reset and power-up behaviour.
 

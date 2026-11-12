@@ -337,6 +337,14 @@ _GUARD_HINTS = {
     "base_case": (
         "Reset every register that feeds an output with rst_n, then call check_equivalence again."
     ),
+    "initial_values": (
+        "Reset those registers with rst_n instead of giving them an initial value (`reg x = 0`, "
+        "`initial`, Amaranth reset_less or init=...), then call check_equivalence again."
+    ),
+    "unreadable_counterexample": (
+        "The solver found a difference it could not describe. Run run_tests with "
+        "simulator='icarus' and gl=True to look for it in simulation, and call synthesize."
+    ),
 }
 
 
@@ -605,13 +613,15 @@ supported, or the proof ran out of time.\n\
 What it checks: every output value the RTL defines must match for every power-up state of \
 the chip's flip-flops (an x or default-don't-care in the RTL means any value is accepted); \
 registers that nothing resets are only compared for a consistent power-up (the RTL simulation \
-shows x there); an RTL that relies on initial values (reg x = 0, initial blocks, Amaranth \
-reset_less or init) is reported, with the message to reset those registers with rst_n; a gate \
-register that reset never sets while the RTL defines the value is caught. What it does NOT \
-check: bugs in the RTL itself (a wrong or missing reset is the same on both sides, so it is not \
-found), reset held longer than one cycle, and timing. Gate-level simulation (run_tests with \
-gl=True) stays the check for reset and power-up behaviour, and the tests you wrote are still \
-what says the design does the right thing: equivalence only says the gates match the RTL.\n\
+shows x there); an RTL register that keeps an initial value (reg x = 0, initial blocks, Amaranth \
+reset_less or init) which reset does not set is reported, as not equivalent when it shows on a pin \
+within 32 cycles of reset and otherwise as not proven (never a pass), with the message to reset \
+those registers with rst_n; a gate register that reset never sets while the RTL defines the \
+value is caught. What it does NOT check: bugs in the RTL itself (a wrong or missing reset is \
+the same on both sides, so it is not found), reset held longer than one cycle, and timing. \
+Gate-level simulation (run_tests with gl=True) stays the check for reset and power-up \
+behaviour, and the tests you wrote are still what says the design does the right thing: \
+equivalence only says the gates match the RTL.\n\
 It uses time limits of 120 s per proof step and 300 s for the check, on top of the synthesis \
 time (up to 900 s). Typical time: seconds for a small design (a counter takes about 10 s), a \
 minute or more for memories and wide multipliers, which can end as not proven. The netlist is \

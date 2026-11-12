@@ -369,6 +369,9 @@ EQUIV_STAGES = frozenset(
 )
 EQUIV_REASONS = {
     "rtl_initial_value": "the RTL relies on initial values",
+    "initial_values": "the RTL keeps initial values that reset does not set",
+    "unreadable_counterexample": "a difference was found but could not be read",
+    "xz_constant": "the netlist has an unknown (x or z) constant",
     "power_up_dependent": "a value depends on registers that reset does not set",
     "base_case": "a value depends on registers that reset does not set",
     "unproven_points": "some points could not be proven",

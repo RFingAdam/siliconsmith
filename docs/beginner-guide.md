@@ -66,7 +66,7 @@ Clocks above about 66 MHz get a warning, because Tiny Tapeout's pins cannot move
 
 There are three answers:
 
-- **Equivalent**: every output value the RTL defines matches the gates, for every power-up state of the flip-flops. Where the RTL says x (unknown, do not care) the gates may do anything. It does catch a register in the gates that reset never sets, and RTL that only works because of an `initial` value (the tool says `rtl_initial_value` and tells you to reset those registers).
+- **Equivalent**: every output value the RTL defines matches the gates, for every power-up state of the flip-flops. Where the RTL says x (unknown, do not care) the gates may do anything. It does catch a register in the gates that reset never sets, and RTL that only works because of an `initial` value on a register that reset does not set. If that value shows on an output within 32 cycles of reset, the tool says `not_equivalent` (`rtl_initial_value`); if it cannot see an effect that early, it says not proven (`initial_values`) rather than a pass. Either way it tells you to reset those registers.
 - **Not equivalent**: a **counterexample**: the output bit, the clock cycle and the two values (RTL against gates). x means the value depends on how the flip-flop powered up. Fix the cause and run it again.
 - **Not proven**: the proof could not be finished. Latches, a falling-edge or derived clock, tri-state outputs, flip-flops with both an asynchronous set and reset, and proofs that run out of time all end here. It is **not** a pass, and the agent must say so.
 
