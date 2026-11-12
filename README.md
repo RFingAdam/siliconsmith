@@ -13,3 +13,100 @@ Three tracks share the same server and toolchain:
 License: [Apache-2.0](LICENSE). Open-source tools are called as external processes, never vendored. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 If you are implementing this, read [CLAUDE.md](CLAUDE.md) and [PLAN.md](PLAN.md), then work milestone by milestone, digital M0 first. Issues are listed in [ISSUES.md](ISSUES.md) and on the GitHub issue tracker.
+
+## Use it with an AI coding agent
+
+Siliconsmith is an MCP server. An MCP server is a small program that your AI coding agent starts
+and talks to, so the agent gets extra tools (here: tools that create and edit chip projects).
+The server runs on your machine and talks to the agent over standard input and output, so
+nothing is exposed on the network.
+
+Today the server offers `create_project`, `list_files`, `read_file`, `write_rtl` and
+`write_test`. The tools that turn a design into Verilog and run its tests arrive in the next
+milestone steps and need Docker and the toolchain image.
+
+### Install
+
+You need Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
+
+```sh
+git clone https://github.com/RFingAdam/siliconsmith.git
+cd siliconsmith
+uv tool install .
+```
+
+This puts the `siliconsmith-mcp` command on your `PATH` (uv usually uses `~/.local/bin`). With
+plain pip, use `pip install -e .` inside a virtual environment instead, and either activate that
+environment before you start the agent or write the full path to `siliconsmith-mcp` in the
+`command` field below.
+
+The server keeps all projects in one **root** folder, one subfolder per project. It picks the
+root from `--root`, then the `SILICONSMITH_ROOT` environment variable, then
+`CLAUDE_PROJECT_DIR`, then the folder it was started in. It refuses `/` and your home folder
+unless you pass them with `--root` on purpose. `--default-frontend amaranth|myhdl|verilog` lets
+`create_project` skip the `frontend` argument.
+
+### Claude Code
+
+Claude Code starts the server from your project folder and sets `CLAUDE_PROJECT_DIR` to it, so
+the root is that folder. Put this in a `.mcp.json` file at the top of the folder (this is the
+snippet that `tests/test_readme_snippets.py` launches over stdio):
+
+<!-- snippet: claude-code-mcp-json -->
+```json
+{
+  "mcpServers": {
+    "siliconsmith": {
+      "command": "siliconsmith-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+The same thing as a single command:
+
+<!-- snippet: claude-code-add -->
+```sh
+claude mcp add --scope project siliconsmith -- siliconsmith-mcp
+```
+
+Claude Code asks you to approve a project-scoped server the first time. Run `/mcp` to check
+that `siliconsmith` is connected.
+
+### Cursor
+
+Create `.cursor/mcp.json` in your project folder. Cursor replaces `${workspaceFolder}` with the
+folder you opened (the test checks this file's structure against the Cursor `mcp.json` format):
+
+<!-- snippet: cursor-mcp-json -->
+```json
+{
+  "mcpServers": {
+    "siliconsmith": {
+      "command": "siliconsmith-mcp",
+      "args": ["--root", "${workspaceFolder}"]
+    }
+  }
+}
+```
+
+### Codex
+
+Add this to `~/.codex/config.toml`, and change the path to the folder that should hold your
+chip projects. `tool_timeout_sec` is how long Codex waits for one tool call; simulations and
+layout runs can take minutes, so give it plenty:
+
+<!-- snippet: codex-config-toml -->
+```toml
+[mcp_servers.siliconsmith]
+command = "siliconsmith-mcp"
+args = ["--root", "/path/to/your/chip-projects"]
+startup_timeout_sec = 30
+tool_timeout_sec = 1800
+```
+
+### Try it
+
+Ask the agent: "Use Siliconsmith to create a verilog project called `adder` and show me its
+files." It should call `create_project` and then `list_files`.

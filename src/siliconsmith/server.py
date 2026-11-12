@@ -23,9 +23,15 @@ logger = logging.getLogger("siliconsmith")
 FRONTENDS = ("amaranth", "myhdl", "verilog")
 
 INSTRUCTIONS = (
-    "Siliconsmith designs small digital chips with open-source tools. "
-    "Work in a project directory under the server root. Write the spec and tests first, "
-    "then the RTL, then check and simulate."
+    "Siliconsmith designs small digital chips for Tiny Tapeout with open-source tools. "
+    "Loop: create_project once, then write the tests first with write_test, then the design "
+    "with write_rtl, then check and simulate (tools for emitting Verilog and running tests "
+    "arrive in later releases; use only the tools this server lists). "
+    "Every project tool takes the project name first. Write whole files, never diffs. "
+    "Your design is the core module named after the project, using the Tiny Tapeout pins: "
+    "clk, rst_n (active low), ena, ui_in, uio_in as inputs; uo_out, uio_out, uio_oe as outputs. "
+    "The tt_um_<name> wrapper is generated; do not edit it. "
+    "Rejected paths and bad arguments come back as tool errors that say what to do instead."
 )
 
 
