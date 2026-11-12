@@ -58,8 +58,15 @@ def _verb_synth(request: dict[str, Any]) -> dict[str, Any]:
     return synth.run(request)
 
 
+def _verb_equiv(request: dict[str, Any]) -> dict[str, Any]:
+    from siliconsmith.worker import equiv
+
+    return equiv.run(request)
+
+
 VERBS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "emit": _verb_emit,
+    "equiv": _verb_equiv,
     "info": _verb_info,
     "selftest": _verb_selftest,
     "synth": _verb_synth,
