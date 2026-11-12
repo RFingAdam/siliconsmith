@@ -76,7 +76,15 @@ A list of gates and the wires between them, the output of synthesis. Like a sche
 
 ## Gate-level simulation
 
-Simulating the netlist instead of the RTL, using the gate models, to check that synthesis did not change the behavior. Not available in this milestone.
+Simulating the netlist instead of the RTL, using the gate models of the chip library, to check that synthesis did not change the behavior. In Siliconsmith it is `run_tests` with `gl=true`: the same cocotb tests, on the gates. It catches missing resets, unknown (X) values and other places where the gates and the RTL disagree. It does not check real timing: see unit delay.
+
+## X (unknown value)
+
+A signal value that is neither 0 nor 1 in a simulation, written `x`. A flip-flop that has not been reset starts as `x`, and anything computed from an `x` is usually `x` too. RTL simulation can hide it (a register may start at 0); gate-level simulation shows it. `z` is a different value: nothing drives the wire.
+
+## Unit delay
+
+The fixed 1 ns delay that the gate models (`UNIT_DELAY=#1`) put on every flip-flop output in gate-level simulation. It keeps the simulation in a sensible order, but it is not real timing: the real delays of the cells and the wires come from layout and static timing analysis, in a later milestone.
 
 ## Standard cell
 

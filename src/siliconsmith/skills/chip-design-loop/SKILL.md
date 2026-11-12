@@ -5,7 +5,7 @@ description: Use this first, whenever you are asked to design a small digital ch
 
 # The chip design loop
 
-The loop is: spec, then tests, then the design, then check and simulate on two simulators, then synthesize into real gates, then report. It uses only this server's tools. A passing run means the design does what the tests say in simulation. It does not mean working silicon.
+The loop is: spec, then tests, then the design, then check and simulate on two simulators, then synthesize into real gates, then simulate those gates, then report. It uses only this server's tools. A passing run means the design does what the tests say in simulation. It does not mean working silicon.
 
 Rules that always apply:
 
@@ -25,7 +25,8 @@ Rules that always apply:
 5. `emit_verilog`: turns the design into Verilog and lints it. Fix every lint finding before simulating. A latch or a multiply driven signal is an error.
 6. `run_tests` with `simulator="icarus"`, then again with `simulator="verilator"`. Both must pass; they disagree sometimes, and that is a real finding.
 7. `synthesize`, once both simulators pass: it turns the design into real sky130 gates and reports cells, area and how full the tile would be. See "What synthesis proves" below.
-8. `status`: shows which checks pass for the current files and writes `docs/verification.md` for the owner to read.
+8. `run_tests` with `simulator="icarus"` and `gl=true`: the gate-level run (see "What gate-level simulation proves" below). It synthesizes again by itself, so it also works right after a design change.
+9. `status`: shows which checks pass for the current files and writes `docs/verification.md` for the owner to read.
 
 ## What synthesis proves
 
@@ -36,6 +37,16 @@ A pass means: the design turns into gates with no combinational loop, no signal 
 Utilization is an estimate. Layout (a later milestone) gives the real number. Above 90% placement may struggle; above 100% the design will not fit. It does not prove the gates behave like your RTL (gate-level simulation and the equivalence check come later) and it says nothing about timing yet.
 
 A latch you wrote on purpose (`always_latch`) passes with a warning. An accidental latch (an incomplete `if` in combinational logic) is a lint error with file and line; for MyHDL the message also names your `hdl/` function and line. Call `synthesize` again after every design change; `status` shows Synthesis as stale when the design, the clock or the tile changed.
+
+## What gate-level simulation proves
+
+`run_tests(simulator="icarus", gl=true)` runs your same tests, unchanged, on the real sky130 gates that synthesis made (plus the cell models of the chip library). Its summary starts with "Gate-level simulation" so you never mix it up with an RTL run, and it never changes the RTL results or the RTL waves (its own waves are in `build/waves/icarus-gl/`).
+
+A pass means the gates behave as the tests say. This is what catches reset and initial-value bugs (a register that only works because the simulator started it at 0, while a real flip-flop powers up unknown), X (unknown) values that reach the outputs, and any other place where the gates and the RTL simulation disagree.
+
+It does not prove timing: the cell models use a fixed 1 ns unit delay, with no real gate delays, wire delays or clock-to-output times. Timing comes with layout in a later milestone. It also does not prove the design is right where the tests say nothing.
+
+When a gate-level test fails, the summary says "First difference on the pins": the signal, the clock cycle, and the RTL value against the gate-level value (x means unknown). An unknown value almost always means a register without a reset. Fix it with the reset, not with an `initial` value or a default value: a real chip ignores those. Look at `build/waves/icarus-gl/tb.fst` with `inspect_waves`. In a gate-level run the tests can only touch the `tb` pins (`explain('cocotb2-tests')`).
 
 ## Too big for the tile
 
@@ -74,4 +85,4 @@ The owner approves the spec, from a terminal, with `siliconsmith approve`. It is
 
 ## What done looks like
 
-`status` shows the check, both simulations, requirement coverage and Synthesis as pass. The spec approval shows as the owner's step, still open. Later checks (gate-level simulation, equivalence, layout, Tiny Tapeout export) are not available yet; say so rather than implying the chip is ready to submit. Submitting to a shuttle is always done by the owner by hand.
+`status` shows the check, both simulations, requirement coverage, Synthesis and Gate-level simulation as pass. The spec approval shows as the owner's step, still open. Later checks (equivalence, layout, Tiny Tapeout export) are not available yet; say so rather than implying the chip is ready to submit. Submitting to a shuttle is always done by the owner by hand.
