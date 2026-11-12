@@ -134,6 +134,24 @@ class _Sim(_Strict):
     message: str | None = Field(default=None, max_length=lim.TEST_TEXT_MAX)
 
 
+class _DiffPin(_Strict):
+    signal: str = Field(max_length=lim.TEST_NAME_MAX)
+    rtl: str = Field(max_length=lim.TEST_VALUE_MAX)
+    gl: str = Field(max_length=lim.TEST_VALUE_MAX)
+
+
+class _Diff(_Strict):
+    """The worker's RTL-versus-gate-level first difference (worker/gldiff.py)."""
+
+    state: Literal["differs", "same", "no_clock", "no_pins", "too_big", "skipped", "unavailable"]
+    reason: str | None = Field(default=None, max_length=lim.TEST_TEXT_MAX)
+    cycle: int | None = Field(default=None, ge=1)
+    time_ns: float | None = Field(default=None, ge=0)
+    cycles_compared: int = Field(default=0, ge=0)
+    signals: list[_DiffPin] = Field(default_factory=list, max_length=8)
+    rtl_failed: bool = False
+
+
 class _Gl(_Strict):
     """The worker's `gl` entry: the netlist build's defines and the synthesis outcome."""
 
@@ -141,6 +159,8 @@ class _Gl(_Strict):
     synth: _Synth
     netlist_sha256: str | None = Field(default=None, max_length=64)
     simulated: bool = False
+    seed: int | None = None
+    diff: _Diff | None = None
 
 
 class _RunResult(EmitResult):
@@ -184,7 +204,12 @@ def _gl_details(
     netlist_sha256: str | None = None,
     synth: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {"defines": defines or {}, "netlist_sha256": netlist_sha256, "synth": synth}
+    return {
+        "defines": defines or {},
+        "netlist_sha256": netlist_sha256,
+        "synth": synth,
+        "diff": None,
+    }
 
 
 def _is_gl(details: dict[str, Any]) -> bool:
@@ -237,6 +262,47 @@ def _failure_lines(first: dict[str, Any]) -> list[str]:
     if first["message"]:
         lines.append(f"  message: {first['message']}")
     return lines
+
+
+def _pin_values(diff: dict[str, Any]) -> str:
+    shown = diff["signals"][0]
+    text = f"{shown['signal']} at clock cycle {diff['cycle']} (t={diff['time_ns']:g} ns)"
+    return f"{text}: RTL {shown['rtl']}, gate level {shown['gl']}"
+
+
+def _diff_lines(diff: dict[str, Any]) -> list[str]:
+    """One or two plain lines for the RTL-versus-gate-level comparison of a failing GL run."""
+    state = diff["state"]
+    if state == "differs":
+        lines = [f"First difference on the pins: {_pin_values(diff)}."]
+        others = [p["signal"] for p in diff["signals"][1:]]
+        if others:
+            lines[0] = lines[0][:-1] + f" ({', '.join(others)} differ at the same cycle)."
+        shown = diff["signals"][0]
+        if "x" in shown["gl"] and "x" not in shown["rtl"]:
+            lines.append(
+                "The gates start unknown (x) where the RTL starts at a value: some flip-flops "
+                "have no reset or rely on an initial value, which a real chip ignores. Use the "
+                "reset."
+            )
+        if diff.get("rtl_failed"):
+            lines.append(
+                "The same tests also fail on the RTL, so look at the design or the test first."
+            )
+        return lines
+    if state == "same":
+        return [
+            "The pins uo_out, uio_out and uio_oe match the RTL at every clock edge until the "
+            f"failure ({diff['cycles_compared']} cycles compared), so the failing check most "
+            "likely reads something that is not a pin (an internal signal is not in the "
+            "netlist) or depends on timing."
+        ]
+    reason = diff.get("reason") or {
+        "no_clock": "the waves have no tb.clk",
+        "no_pins": "the waves have none of the chip's output pins",
+        "too_big": "a wave file is too large to compare",
+    }.get(state, "it could not be done")
+    return [f"No RTL-versus-gate-level comparison: {reason}."]
 
 
 def _name_list(tests: list[dict[str, Any]], outcome: str) -> str:
@@ -403,7 +469,18 @@ def _finish(
         lines += _failure_lines(bad[0])
         if len(bad) > 1:
             lines.append(f"Other failing tests: {_name_list(bad[1:], bad[1]['outcome'])}")
-        if waves:
+        diff = gl.get("diff") if gl is not None else None
+        if diff is not None:
+            lines += _diff_lines(diff)
+        if gl is not None and waves:
+            hints.append(
+                f"Look at the gate-level pins with inspect_waves(path={waves!r}, "
+                "signals=['uo_out', ...]). A gate-level test can only use the tb pins "
+                "(dut.uo_out, dut.uio_out, dut.uio_oe, ...); inside the netlist the names "
+                "look like \\core.count[0] or are gone. A value of x means unknown: a "
+                "flip-flop that was never reset, or an input that was not driven yet."
+            )
+        elif waves:
             hints.append(
                 f"Look at the failing signals with inspect_waves(path={waves!r}, "
                 "signals=[...]) around the failure."
@@ -653,6 +730,9 @@ def _gl_synthesis(
         sha = hashlib.sha256(files[0]).hexdigest()
     facts = _synth_facts(synth, spec, config, sha)
     gl = _gl_details(dict(result.gl.defines), sha, facts)
+    gl["seed"] = result.gl.seed
+    if result.gl.diff is not None:
+        gl["diff"] = result.gl.diff.model_dump()
     problems = [
         f"The netlist uses {_plain_cell(cell)}, a cell Tiny Tapeout's flow does not allow."
         for cell in synth.forbidden_cells

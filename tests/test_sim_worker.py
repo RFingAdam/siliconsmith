@@ -291,7 +291,7 @@ def test_gl_runs_emit_then_synthesis_then_the_netlist_simulation(
         assert args[4] == 29688.0
         return dict(SYNTH_RAN, message="x" * 5000)
 
-    def fake_simulate(*args: Any) -> dict[str, Any]:
+    def fake_simulate(*args: Any, **kwargs: Any) -> dict[str, Any]:
         order.append("simulate")
         return {"state": "ran"}
 
@@ -314,8 +314,9 @@ def test_gl_simulates_the_netlist_in_the_run_folder(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(emit, "emit", lambda req: {"ok": True})
     monkeypatch.setattr(sim.synth, "synthesize", lambda *a: dict(SYNTH_RAN))
     seen: list[tuple[Any, ...]] = []
-    monkeypatch.setattr(sim, "simulate", lambda *a: seen.append(a) or {"state": "ran"})
+    monkeypatch.setattr(sim, "simulate", lambda *a, **k: seen.append(a) or {"state": "ran"})
     monkeypatch.setattr(sim, "clear_waves", lambda key: None)
+    monkeypatch.setenv("COCOTB_RANDOM_SEED", "123")
     sim.run(request(**GL_FIELDS))
     assert seen == [
         (
@@ -323,7 +324,7 @@ def test_gl_simulates_the_netlist_in_the_run_folder(monkeypatch: pytest.MonkeyPa
             "icarus",
             Path("/work/build/.ss/abc"),
             None,
-            False,
+            True,  # the gates' waves are always dumped; they are kept on request or on failure
             Path("/work/build/.ss/abc/out/synth/tt_um_chip.v"),
         )
     ]
@@ -469,3 +470,74 @@ def test_gl_log_names_the_netlist_in_plain_words() -> None:
     text = f"{netlist}:42: error: Unknown module type: sky130_fd_sc_hd__zzz\n"
     lines = sim.log_lines(text, Path("/work/build/.ss/abc/out"), "chip", netlist)
     assert lines == ["the gate-level netlist:42: error: Unknown module type: sky130_fd_sc_hd__zzz"]
+
+
+def test_a_failing_gl_run_reruns_the_rtl_in_a_scratch_folder_and_compares(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(emit, "emit", lambda req: {"ok": True})
+    monkeypatch.setattr(sim.synth, "synthesize", lambda *a: dict(SYNTH_RAN))
+    monkeypatch.setattr(sim, "clear_waves", lambda key: None)
+    monkeypatch.setenv("COCOTB_RANDOM_SEED", "42")
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    failing = {"state": "ran", "tests": [{"outcome": "fail", "sim_time_ns": 50.0}]}
+
+    def fake_simulate(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append((args, kwargs))
+        if kwargs.get("scratch") is None:
+            return dict(failing, wave_file=tmp_path / "gl.fst")
+        return {"state": "ran", "tests": [{"outcome": "pass"}], "wave_file": tmp_path / "rtl.fst"}
+
+    seen: list[tuple[Path, Path, float | None]] = []
+
+    def fake_compare(rtl: Path, gl: Path, stop: float | None) -> dict[str, Any]:
+        seen.append((rtl, gl, stop))
+        return {"state": "same", "cycles_compared": 5}
+
+    monkeypatch.setattr(sim, "simulate", fake_simulate)
+    monkeypatch.setattr(sim.gldiff, "compare_files", fake_compare)
+    result = sim.run(request(test_filter="wrap", **GL_FIELDS))
+    (gl_args, gl_kw), (rtl_args, rtl_kw) = calls
+    assert gl_args[-1] == Path("/work/build/.ss/abc/out/synth/tt_um_chip.v")
+    assert gl_kw == {"keep": False, "keep_on_failure": True}
+    # The RTL rerun: same filter, no netlist, scratch folder inside the run folder.
+    assert rtl_args == ("chip", "icarus", Path("/work/build/.ss/abc"), "wrap", True, None)
+    assert rtl_kw == {"scratch": Path("/work/build/.ss/abc/rtl-reference")}
+    assert seen == [(tmp_path / "rtl.fst", tmp_path / "gl.fst", 50.0)]
+    assert result["gl"]["seed"] == 42
+    assert result["gl"]["diff"] == {"state": "same", "cycles_compared": 5, "rtl_failed": False}
+    assert "wave_file" not in result["sim"]
+
+
+def test_a_passing_gl_run_has_no_rtl_rerun(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(emit, "emit", lambda req: {"ok": True})
+    monkeypatch.setattr(sim.synth, "synthesize", lambda *a: dict(SYNTH_RAN))
+    monkeypatch.setattr(sim, "clear_waves", lambda key: None)
+    seen: list[Any] = []
+    monkeypatch.setattr(
+        sim,
+        "simulate",
+        lambda *a, **k: seen.append(k) or {"state": "ran", "tests": [{"outcome": "pass"}]},
+    )
+    result = sim.run(request(**GL_FIELDS))
+    assert len(seen) == 1 and "diff" not in result["gl"]
+
+
+def test_a_slow_gl_run_skips_the_reference_rerun(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sim, "DIFF_MAX_GL_SIM_S", -1.0)
+    got = sim._first_difference("chip", tmp_path, None, [], tmp_path / "gl.fst", 1.0)
+    assert got["state"] == "skipped"
+    assert sim._first_difference("chip", tmp_path, None, [], None, 1.0)["state"] == "unavailable"
+
+
+def test_a_crashing_rtl_rerun_is_only_a_missing_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def boom(*a: Any, **k: Any) -> dict[str, Any]:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(sim, "simulate", boom)
+    got = sim._first_difference("chip", tmp_path, None, [], tmp_path / "gl.fst", 1.0)
+    assert got["state"] == "unavailable" and "OSError" in got["reason"]

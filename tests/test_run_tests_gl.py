@@ -351,3 +351,67 @@ def test_gl_with_verilator_is_refused_without_a_hint_to_use_verilator(tmp_path: 
         run(ctx, "chip", "verilator", None, False, gl=True)
     assert "use verilator" not in str(err.value).lower()
     assert runner.calls == []
+
+
+GL_WAVES = "build/waves/icarus-gl/tb.fst"
+DIFFERS = {
+    "state": "differs",
+    "cycle": 3,
+    "time_ns": 30.0,
+    "cycles_compared": 3,
+    "signals": [
+        {"signal": "uo_out", "rtl": "00000001", "gl": "xxxxxxxx"},
+        {"signal": "uio_oe", "rtl": "00000000", "gl": "xxxxxxxx"},
+    ],
+    "rtl_failed": False,
+}
+
+
+def failing_gl(tmp_path: Path, diff: dict[str, Any] | None, waves: str | None = GL_WAVES) -> Any:
+    sim = sim_part([sim_test("test_plain"), FAIL], waves=waves)
+    ctx, _, _ = setup(tmp_path, outcome(gl_result(sim, gl_part(diff=diff, seed=7))))
+    return run_gl(ctx)
+
+
+def test_a_failing_gate_level_run_reports_the_first_difference_on_the_pins(tmp_path: Path) -> None:
+    result = failing_gl(tmp_path, DIFFERS)
+    lines = result.summary.splitlines()
+    assert (
+        "First difference on the pins: uo_out at clock cycle 3 (t=30 ns): "
+        "RTL 00000001, gate level xxxxxxxx (uio_oe differ at the same cycle)."
+    ) in lines
+    assert any("have no reset or rely on an initial value" in ln for ln in lines)
+    assert len(lines) <= 20 and summary_within_limits(result.summary)
+    assert result.details["gl"]["diff"]["signals"][0]["signal"] == "uo_out"
+    assert result.details["gl"]["diff"]["cycle"] == 3
+    assert result.details["waves"] == GL_WAVES
+    hint = next(h for h in result.next_hints if GL_WAVES in h)
+    assert "inspect_waves" in hint and "tb pins" in hint and "core.count[0]" in hint
+    assert not any("verilator" in h.lower() for h in result.next_hints)
+
+
+def test_the_report_says_when_the_rtl_fails_too(tmp_path: Path) -> None:
+    result = failing_gl(tmp_path, {**DIFFERS, "rtl_failed": True})
+    assert "The same tests also fail on the RTL, so look at the design or the test first." in (
+        result.summary
+    )
+
+
+def test_the_report_says_plainly_when_the_pins_never_differ(tmp_path: Path) -> None:
+    same = {"state": "same", "cycles_compared": 12}
+    result = failing_gl(tmp_path, same)
+    assert "match the RTL at every clock edge until the failure (12 cycles compared)" in (
+        result.summary
+    )
+    assert "not a pin" in result.summary
+
+
+@pytest.mark.parametrize("state", ["skipped", "unavailable", "no_clock"])
+def test_a_missing_comparison_is_one_plain_line(tmp_path: Path, state: str) -> None:
+    result = failing_gl(tmp_path, {"state": state, "reason": "the RTL rerun failed"})
+    assert "No RTL-versus-gate-level comparison: the RTL rerun failed." in result.summary
+
+
+def test_a_passing_gate_level_run_has_no_diff(tmp_path: Path) -> None:
+    ctx, _, _ = setup(tmp_path, outcome(gl_result(sim_part(three_pass()))))
+    assert run_gl(ctx).details["gl"]["diff"] is None

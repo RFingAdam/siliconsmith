@@ -51,7 +51,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from siliconsmith.worker import emit, pyerror, results, synth
+from siliconsmith.worker import emit, gldiff, pyerror, results, synth
 from siliconsmith.worker import waves as wavefile
 from siliconsmith.worker.limits import (
     LOG_LINE_MAX,
@@ -238,7 +238,15 @@ def keep_waves(simulator: str, source: Path) -> tuple[str | None, str | None]:
     return f"build/waves/{simulator}/tb{WAVE_EXTENSIONS[fmt]}", None
 
 
-def _prepare_dirs(key: str, waves: bool, run_dir: Path) -> tuple[Path, Path]:
+def _prepare_dirs(
+    key: str, waves: bool, run_dir: Path, scratch: Path | None = None
+) -> tuple[Path, Path]:
+    if scratch is not None:  # a reference run: everything inside the run folder
+        sim_dir = scratch / "sim"
+        sim_dir.mkdir(parents=True, exist_ok=True)
+        build_dir = scratch / "build"
+        build_dir.mkdir(exist_ok=True)
+        return sim_dir, build_dir
     sim_dir = run_dir / "sim"
     sim_dir.mkdir(parents=True, exist_ok=True)
     build_dir = _mkdir_nofollow(WORK / "build", "sim", key + ("-waves" if waves else ""))
@@ -252,13 +260,22 @@ def simulate(
     test_filter: str | None,
     waves: bool,
     netlist: Path | None = None,
+    *,
+    keep: bool | None = None,
+    keep_on_failure: bool = False,
+    scratch: Path | None = None,
 ) -> dict[str, Any]:
     """Build and run the cocotb tests; the result is the `sim` part of the verb's result.
 
     With `netlist` (a gate-level run, Icarus only) the design is that netlist plus the sky130
     cell models instead of the emitted RTL, and the build, sim and wave folders are the
-    `icarus-gl` ones.
+    `icarus-gl` ones. `waves` dumps a wave file; it is copied to `build/waves/` when `keep`
+    (default: when `waves`) or when `keep_on_failure` and a test failed. With `scratch` (a
+    folder in the run folder) the build and sim folders are there and nothing is kept under
+    `build/`: the reference RTL run of a gate-level failure report. For a gate-level or scratch
+    run the wave file's path is in the private key `wave_file`, which the caller removes.
     """
+    keep = waves if keep is None else keep
     test_dir = WORK / "test"
     out_dir = run_dir / "out"
     key = GL_KEY if netlist is not None else simulator
@@ -268,7 +285,7 @@ def simulate(
     if not modules:
         return _outcome("no_modules", message="there is no test/test*.py file with tests in it")
     try:
-        sim_dir, build_dir = _prepare_dirs(key, waves, run_dir)
+        sim_dir, build_dir = _prepare_dirs(key, waves, run_dir, scratch)
     except OSError as exc:
         return _outcome(
             "build_failed",
@@ -354,13 +371,15 @@ def simulate(
         )
     kept: str | None = None
     note: str | None = None
+    source: Path | None = None
     if waves:
         source = find_wave_file(simulator, sim_dir, build_dir)
+        failed = any(r["outcome"] in ("fail", "error") for r in records)
         if source is None:
             note = "the simulation wrote no wave file"
-        else:
+        elif scratch is None and (keep or (keep_on_failure and failed)):
             kept, note = keep_waves(key, source)
-    return _outcome(
+    outcome = _outcome(
         "ran",
         tests=records,
         tests_total=len(records),
@@ -368,6 +387,9 @@ def simulate(
         exit_code=exit_code,
         message=note,
     )
+    if scratch is not None or netlist is not None:
+        outcome["wave_file"] = source
+    return outcome
 
 
 def _gl_part(synthesis: dict[str, Any]) -> dict[str, Any]:
@@ -410,11 +432,63 @@ def _run_gl(
     if _synthesis_blocks_simulation(synthesis):
         return result
     netlist = run_dir / "out" / synth.SYNTH_DIR / f"tt_um_{name}.v"
-    sim = simulate(name, "icarus", run_dir, test_filter, waves, netlist)
+    # The RTL reference run (if a test fails) must see the same random numbers as this run.
+    seed = os.environ.setdefault("COCOTB_RANDOM_SEED", str(int(time.time())))
+    began = time.monotonic()
+    # Always dump the gates' waves (a failure report needs them); they are kept under
+    # build/waves/icarus-gl when the agent asked for waves or when a test failed.
+    sim = simulate(
+        name, "icarus", run_dir, test_filter, True, netlist, keep=waves, keep_on_failure=True
+    )
     sim["simulator"] = "icarus"
+    gl_wave = sim.pop("wave_file", None)
     result["sim"] = sim
     gl["simulated"] = True
+    gl["seed"] = int(seed) if seed.isdigit() else None
+    failed = sim["state"] == "ran" and any(
+        t["outcome"] in ("fail", "error") for t in sim.get("tests", [])
+    )
+    if failed:
+        gl["diff"] = _first_difference(
+            name, run_dir, test_filter, sim["tests"], gl_wave, time.monotonic() - began
+        )
     return result
+
+
+# A gate-level simulation slower than this does not get a reference rerun (the RTL one is
+# faster, but the whole call must stay inside the host's timeout).
+DIFF_MAX_GL_SIM_S = 150.0
+
+
+def _first_difference(
+    name: str,
+    run_dir: Path,
+    test_filter: str | None,
+    tests: list[dict[str, Any]],
+    gl_wave: Path | None,
+    gl_seconds: float,
+) -> dict[str, Any]:
+    """Rerun the RTL with the same seed and filter in a scratch folder of the run folder, then
+    compare the pins of the two wave files (see `worker/gldiff.py`)."""
+    if gl_wave is None:
+        return {"state": "unavailable", "reason": "the gate-level run wrote no wave file"}
+    if gl_seconds > DIFF_MAX_GL_SIM_S:
+        return {"state": "skipped", "reason": "the gate-level run was too slow to run twice"}
+    scratch = run_dir / "rtl-reference"
+    try:
+        rtl = simulate(name, "icarus", run_dir, test_filter, True, None, scratch=scratch)
+    except Exception as exc:  # the report is a help; its failure must not fail the run
+        return {"state": "unavailable", "reason": f"the RTL rerun crashed ({type(exc).__name__})"}
+    rtl_wave = rtl.pop("wave_file", None)
+    if rtl["state"] != "ran" or rtl_wave is None:
+        return {"state": "unavailable", "reason": "the RTL rerun did not produce a wave file"}
+    rtl_failed = any(t["outcome"] in ("fail", "error") for t in rtl["tests"])
+    try:
+        found = gldiff.compare_files(rtl_wave, gl_wave, gldiff.failing_end_ns(tests))
+    except Exception as exc:  # pywellen problems: report, do not fail
+        return {"state": "unavailable", "reason": f"cannot read the waves ({type(exc).__name__})"}
+    found["rtl_failed"] = rtl_failed
+    return found
 
 
 def run(request: dict[str, Any]) -> dict[str, Any]:
