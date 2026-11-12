@@ -50,9 +50,12 @@ ROW_HEIGHT_UM = 2.72
 
 WARN_ABOVE = 0.9
 TOO_BIG_ABOVE = 1.0
-# The pre-abc generic cell count is only a rough guide; stop early only when the design is more
-# than this many times the budget (builder of the synthesize tool: calibrate against real runs).
-PRE_ABC_STOP_FACTOR = 4.0
+# Synthesis stops before `abc` when the cell area estimated from the generic gates (before
+# technology mapping) is more than this many times the cell budget. Calibrated in worker/synth.py:
+# the estimate is within 0.88x to 1.08x of the final area on the measured designs, so a design
+# that fits (utilization up to 1.0) is never stopped, and one that is 3x over is not worth the
+# slow `abc` run.
+PRE_ABC_STOP_FACTOR = 3.0
 ESTIMATE_NOTE = "estimate; layout (M2) gives the real number"
 
 Verdict = Literal["ok", "warn", "too_big"]

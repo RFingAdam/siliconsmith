@@ -52,10 +52,17 @@ def _verb_test(request: dict[str, Any]) -> dict[str, Any]:
     return sim.run(request)
 
 
+def _verb_synth(request: dict[str, Any]) -> dict[str, Any]:
+    from siliconsmith.worker import synth
+
+    return synth.run(request)
+
+
 VERBS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "emit": _verb_emit,
     "info": _verb_info,
     "selftest": _verb_selftest,
+    "synth": _verb_synth,
     "test": _verb_test,
     "waves": _verb_waves,
 }

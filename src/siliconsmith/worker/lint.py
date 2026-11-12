@@ -98,6 +98,8 @@ def parse_yosys_check(text: str, default_file: str) -> list[dict[str, Any]]:
     with more than one driver, `LOGICLOOP` a combinational loop and `NODRIVER` a used wire that
     nothing drives. The line comes from a `file:line` in the finding's own lines (a cell's
     source), or is 0. `ERROR: Found N problems` only gives a finding when no warning explains it.
+    Each finding also carries `signal` (Yosys's name for the net, hierarchy prefix and all) and
+    `source_file` (the file of that source line, as Yosys saw it, or "").
     """
     findings: dict[tuple[str, str], dict[str, Any]] = {}
     current: dict[str, Any] | None = None
@@ -128,6 +130,8 @@ def parse_yosys_check(text: str, default_file: str) -> list[dict[str, Any]]:
                             "col": 0,
                             "msg": text_,
                             "detail": "",
+                            "signal": what,
+                            "source_file": "",
                         }
                     current = findings[key]
                     break
@@ -137,10 +141,12 @@ def parse_yosys_check(text: str, default_file: str) -> list[dict[str, Any]]:
             sources = _CHECK_SOURCE.search(msg)
             if current is not None and sources and not current["line"]:
                 current["line"] = int(sources["line"])
+                current["source_file"] = sources["file"]
         elif current is not None and raw[:1] in (" ", "\t"):
             source = _CHECK_SOURCE.search(raw)
             if source and not current["line"]:
                 current["line"] = int(source["line"])
+                current["source_file"] = source["file"]
     out = list(findings.values())
     if not out and error:
         out.append(
