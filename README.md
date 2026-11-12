@@ -13,3 +13,15 @@ Three tracks share the same server and toolchain:
 License: [Apache-2.0](LICENSE). Open-source tools are called as external processes, never vendored. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 If you are implementing this, read [CLAUDE.md](CLAUDE.md) and [PLAN.md](PLAN.md), then work milestone by milestone, digital M0 first. Issues are listed in [ISSUES.md](ISSUES.md) and on the GitHub issue tracker.
+
+## Toolchain image
+
+Every simulator and Python tool runs inside one Docker image, so the only things you install on your own machine are Docker and Python. The image holds Icarus Verilog, Verilator 5.046, Yosys 0.62, cocotb, Amaranth, MyHDL and a waveform reader, and it has no network access when Siliconsmith runs it.
+
+    ghcr.io/rfingadam/siliconsmith-toolchain:ctx-86b81dc64d6f
+
+Size (linux/amd64): about 750 MB unpacked on disk, and about 255 MB to download.
+
+Get it with `docker pull ghcr.io/rfingadam/siliconsmith-toolchain:ctx-86b81dc64d6f`. The tag changes whenever anything in `docker/` changes, and the server always asks for the tag that matches the checkout you are running. To use a different image, set `SILICONSMITH_IMAGE`. The tool `toolchain_info` checks that Docker and the image work and lists every tool's version.
+
+To build it yourself instead: `docker build -t ghcr.io/rfingadam/siliconsmith-toolchain:ctx-86b81dc64d6f docker/` (about two minutes with a warm cache).
