@@ -153,6 +153,8 @@ class _Diff(_Strict):
     rtl_failed: bool = False
     edges_skipped: int = Field(default=0, ge=0)
     gl_known_before: bool = False
+    input_unknown: str | None = Field(default=None, max_length=lim.TEST_NAME_MAX)
+    reset_never_low: bool = False
     reset_low: bool = False
     truncated: bool = False
     cycle_limit: int | None = Field(default=None, ge=1)
@@ -338,11 +340,22 @@ def _diff_lines(diff: dict[str, Any]) -> list[str]:
             lines[0] = lines[0][:-1] + f" ({', '.join(others)} differ at the same cycle)."
         shown = diff["signals"][0]
         if "x" in shown["gl"] and "x" not in shown["rtl"]:
-            if diff.get("gl_known_before"):
+            if diff.get("input_unknown"):
                 lines.append(
-                    "The gates turned unknown (x) at that cycle while the RTL has a value. Often "
-                    "an input the test never drove (ui_in, uio_in, ena): the RTL treats an "
-                    "unknown `if` as false, the gates do not."
+                    f"{diff['input_unknown']} was never driven (x): the RTL treats an unknown "
+                    "`if` as false, the gates do not. Drive every input (ui_in, uio_in, ena) "
+                    "in the test."
+                )
+            elif diff.get("reset_never_low"):
+                lines.append(
+                    "The test never held rst_n low, so the gates were never reset: hold rst_n "
+                    "low for a few clock cycles, then set it to 1."
+                )
+            elif diff.get("gl_known_before"):
+                lines.append(
+                    "The gates turned unknown (x) at that cycle while the RTL has a value: a "
+                    "register with no reset (or one that relies on an initial value) only now "
+                    "reaches the pins. Use the reset."
                 )
             else:
                 lines.append(

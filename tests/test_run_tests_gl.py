@@ -436,14 +436,47 @@ def test_a_reset_held_low_until_the_failure_says_how_to_release_it(tmp_path: Pat
     assert "before reset was released" not in result.summary
 
 
-def test_x_after_a_known_start_is_not_blamed_on_a_missing_reset(tmp_path: Path) -> None:
+def test_x_after_a_known_start_blames_a_register_not_the_inputs(tmp_path: Path) -> None:
     result = failing_gl(tmp_path, {**DIFFERS, "gl_known_before": True})
-    assert "The gates turned unknown (x) at that cycle while the RTL has a value." in (
+    assert "The gates turned unknown (x) at that cycle while the RTL has a value: a register" in (
         result.summary
     )
-    assert "never drove (ui_in, uio_in, ena)" in result.summary
-    assert "no reset" not in result.summary and "Use the reset" not in result.summary
+    assert "only now reaches the pins. Use the reset." in result.summary
+    assert "never driven" not in result.summary
     assert summary_within_limits(result.summary)
+
+
+def test_an_undriven_input_is_named(tmp_path: Path) -> None:
+    result = failing_gl(tmp_path, {**DIFFERS, "gl_known_before": True, "input_unknown": "uio_in"})
+    assert "uio_in was never driven (x): the RTL treats an unknown `if` as false" in (
+        result.summary
+    )
+    assert "Use the reset" not in result.summary
+    assert summary_within_limits(result.summary)
+
+
+def test_a_test_that_never_held_reset_low_is_told_so(tmp_path: Path) -> None:
+    result = failing_gl(tmp_path, {**DIFFERS, "reset_never_low": True})
+    assert (
+        "The test never held rst_n low, so the gates were never reset: hold rst_n low for a few "
+        "clock cycles, then set it to 1."
+    ) in result.summary
+    assert "no reset or rely" not in result.summary
+
+
+def test_the_input_cause_comes_before_the_reset_cause(tmp_path: Path) -> None:
+    both = {**DIFFERS, "reset_never_low": True, "input_unknown": "ui_in"}
+    assert "ui_in was never driven (x)" in failing_gl(tmp_path, both).summary
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"input_unknown": ["x"]}, {"input_unknown": "u" * 500}, {"reset_never_low": "maybe"}],
+    ids=["list", "too-long", "not-a-bool"],
+)
+def test_the_new_cause_fields_are_validated(tmp_path: Path, bad: dict[str, Any]) -> None:
+    result = failing_gl(tmp_path, {**DIFFERS, **bad})
+    assert not result.ok and "unreadable result" in result.summary
 
 
 def test_matching_pins_with_the_same_test_failing_on_the_rtl_blames_the_design(

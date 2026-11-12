@@ -33,6 +33,8 @@ RESET = "tb.rst_n"
 # test that checks right after a rising edge ends at that edge: allow for both.
 EDGE_SLACK_NS = 0.5
 PINS = ("tb.uo_out", "tb.uio_out", "tb.uio_oe")
+# The inputs the test drives: an x on one of them explains an x on the outputs.
+INPUTS = ("tb.ui_in", "tb.uio_in", "tb.ena")
 MAX_CYCLES = 20_000
 MAX_CHANGES = 200_000
 MAX_WAVE_BYTES = 64 * 1024 * 1024
@@ -73,7 +75,7 @@ def load_trace(path: Path, ticks_limit_ns: float | None = None) -> Trace:
     for var in wave.all_vars():
         names.setdefault(wavefile._normalize(str(var.full_name)), var)
     trace: Trace = {}
-    for wanted in (CLOCK, RESET, *PINS):
+    for wanted in (CLOCK, RESET, *INPUTS, *PINS):
         full, problem = wavefile.resolve(wanted, names)
         if problem is not None or full is None:
             continue
@@ -114,6 +116,9 @@ def first_difference(
     `edges_skipped`), but they are counted in the cycle numbers. `no_edge`: no edge was compared
     (the failure came before the first rising edge after reset; `reset_low` if rst_n never rose).
     `same` with `truncated`: the edges up to `cycle_limit` match, later ones were not compared.
+    `input_unknown` (differs): the first of tb.ui_in/uio_in/ena that had an x or z bit just
+    before a compared edge up to the difference. `reset_never_low` (differs): rst_n is in the
+    trace but was never 0 before the difference.
     `gl_known_before` (differs): the first differing pin had a fully known gate-level value at
     an earlier compared edge.
     """
@@ -139,6 +144,13 @@ def first_difference(
     wait_for_reset = bool(held)
     compared = 0
     skipped = 0
+    inputs = [
+        (pin, trace, [t for t, _ in trace[pin]])
+        for trace in (rtl, gl)
+        for pin in INPUTS
+        if pin in trace
+    ]
+    unknown_input: str | None = None
     gl_known: set[str] = set()  # pins whose gate-level value was fully known at an earlier edge
     for cycle, edge in enumerate(edges, start=1):
         if stop_ns is not None and edge > stop_ns:
@@ -165,6 +177,12 @@ def first_difference(
                 )
             elif b is not None and not set(b) & set("xz"):
                 gl_known.add(pin)
+        if unknown_input is None:
+            for pin, trace, trace_times in inputs:
+                bits = _before(trace[pin], trace_times, edge)
+                if bits is not None and set(bits) & set("xz"):
+                    unknown_input = pin.removeprefix("tb.")
+                    break
         if differing:
             first_pin = "tb." + differing[0]["signal"]
             return {
@@ -174,6 +192,9 @@ def first_difference(
                 "cycles_compared": compared,
                 "edges_skipped": skipped,
                 "gl_known_before": first_pin in gl_known,
+                "input_unknown": unknown_input,
+                "reset_never_low": bool(reset)
+                and not any(bits == "0" and t < edge for t, bits in reset or []),
                 "signals": differing[:MAX_SIGNALS_SHOWN],
             }
     if compared == 0:

@@ -269,3 +269,45 @@ def test_compare_files_allows_for_the_gap_between_tests(
     assert stop == pytest.approx(59.999)
     found = gldiff.compare_files(tmp_path / "r.fst", path, stop)
     assert found["state"] == "differs" and found["time_ns"] == 60.0
+
+
+def with_inputs(a: Trace, b: Trace, **series: list[tuple[float, str]]) -> None:
+    for name, values in series.items():
+        a[f"tb.{name}"] = values
+        b[f"tb.{name}"] = values
+
+
+def test_an_undriven_input_is_named_when_the_outputs_differ() -> None:
+    a, b = traces([(0.0, "00000000")], [(0.0, "00000000"), (25.0, "0000000x")])
+    a["tb.rst_n"] = reset_trace(5.0)
+    with_inputs(a, b, ui_in=[(0.0, "00000001")], uio_in=[(0.0, "xxxxxxxx")])
+    found = gldiff.first_difference(a, b)
+    assert found["state"] == "differs" and found["input_unknown"] == "uio_in"
+
+
+def test_a_register_without_reset_is_not_blamed_on_a_driven_input() -> None:
+    # The test drives every input; only a register reaches the pins as x later.
+    a, b = traces([(0.0, "00000000"), (30.0, "10100101")], [(0.0, "00000000"), (35.0, "xxxxxxxx")])
+    a["tb.rst_n"] = reset_trace(5.0)
+    with_inputs(a, b, ui_in=[(0.0, "00000010")], uio_in=[(0.0, "00000000")], ena=[(0.0, "1")])
+    found = gldiff.first_difference(a, b)
+    assert found["state"] == "differs" and found["gl_known_before"] is True
+    assert found["input_unknown"] is None
+
+
+def test_an_x_injected_on_an_input_later_is_found() -> None:
+    a, b = traces([(0.0, "00000000")], [(0.0, "00000000"), (35.0, "xxxxxxxx")])
+    with_inputs(a, b, uio_in=[(0.0, "00000000"), (22.0, "xxxxxxxx")])
+    assert gldiff.first_difference(a, b)["input_unknown"] == "uio_in"
+
+
+def test_reset_never_low_is_reported_only_when_rst_n_was_never_0() -> None:
+    a, b = traces([(0.0, "00000000")], [(0.0, "xxxxxxxx")])
+    a["tb.rst_n"] = [(0.0, "1")]
+    assert gldiff.first_difference(a, b)["reset_never_low"] is True
+    a["tb.rst_n"] = reset_trace(5.0)
+    assert gldiff.first_difference(a, b)["reset_never_low"] is False
+    del a["tb.rst_n"]  # not in the waves at all: nothing to say
+    assert gldiff.first_difference(a, b)["reset_never_low"] is False
+    a["tb.rst_n"] = [(0.0, "x")]  # declared but never driven
+    assert gldiff.first_difference(a, b)["reset_never_low"] is True
