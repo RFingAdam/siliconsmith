@@ -7,3 +7,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # The base image digests in docker/Dockerfile. A bump changes docker/, so the image tag
+  # changes and image.yml publishes the new image after the PR merges.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly

@@ -80,3 +80,71 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: uv sync --locked
       - run: uv run pytest -m "not integration"
+
+  integration:
+    name: integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+      - run: uv sync --locked
+      - name: Work out the image tag
+        run: |
+          tag="ctx-$(PYTHONPATH=src python3 -m siliconsmith._imagetag)"
+          echo "IMAGE=ghcr.io/rfingadam/siliconsmith-toolchain:${tag}" >> "$GITHUB_ENV"
+      # Logging in is optional: the package is public once the owner has made it so, and a pull
+      # that fails for any reason falls back to building the image in this job.
+      - name: Log in to GHCR
+        continue-on-error: true
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull the image
+        id: pull
+        run: |
+          if docker pull "$IMAGE"; then
+            echo "pulled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pulled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE is not in GHCR yet; building it in this job"
+          fi
+      - name: Set up Docker Buildx
+        if: steps.pull.outputs.pulled != 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the image
+        if: steps.pull.outputs.pulled != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test
+        run: |
+          docker run --rm "$IMAGE" sh -c 'iverilog -V && verilator --version && yosys -V'
+          v=$(docker run --rm "$IMAGE" verilator --version | awk '{print $2}')
+          if [ "$(printf '%s\n5.036\n' "$v" | sort -V | head -n1)" != "5.036" ]; then
+            echo "Verilator $v is older than 5.036 (needed by cocotb 2.1)"
+            exit 1
+          fi
+      - name: Integration tests
+        run: uv run pytest -m integration -v
+        env:
+          SILICONSMITH_IMAGE: ${{ env.IMAGE }}
+          # A pulled image must show a registry digest; a locally built one must not.
+          SILICONSMITH_EXPECT_REPO_DIGEST: ${{ steps.pull.outputs.pulled }}

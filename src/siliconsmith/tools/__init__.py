@@ -13,6 +13,7 @@ from siliconsmith.context import ServerContext
 
 # Names of submodules of this package, for example "create_project". Later PRs add entries.
 TOOL_MODULES: tuple[str, ...] = (
+    "toolchain_info",
     "create_project",
     "list_files",
     "read_file",

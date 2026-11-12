@@ -1,0 +1,157 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+
+# Builds and publishes the toolchain image (ghcr.io/rfingadam/siliconsmith-toolchain).
+#   pull request touching docker/: build and smoke-test only, nothing is pushed.
+#   push to main touching docker/, or run by hand: if the ctx-<hash> tag is already in GHCR do
+#   nothing, otherwise build, smoke-test, then push ctx-<hash> and a date tag.
+# There is no schedule. The image is rebuilt only when docker/ changes (for example when
+# Dependabot bumps a base image).
+
+name: image
+
+on:
+  pull_request:
+    paths:
+      - "docker/**"
+      - ".github/workflows/image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - ".github/workflows/image.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  REPO_IMAGE: ghcr.io/rfingadam/siliconsmith-toolchain
+
+jobs:
+  build:
+    name: build and smoke test
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Work out the image tag
+        run: echo "IMAGE=${REPO_IMAGE}:ctx-$(PYTHONPATH=src python3 -m siliconsmith._imagetag)" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test
+        run: |
+          docker run --rm "$IMAGE" sh -c 'iverilog -V && verilator --version && yosys -V'
+          v=$(docker run --rm "$IMAGE" verilator --version | awk '{print $2}')
+          if [ "$(printf '%s\n5.036\n' "$v" | sort -V | head -n1)" != "5.036" ]; then
+            echo "Verilator $v is older than 5.036 (needed by cocotb 2.1)"
+            exit 1
+          fi
+
+  publish:
+    name: publish
+    # Only main publishes: a manually started run on another branch must not overwrite tags.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Work out the image tags
+        run: |
+          echo "IMAGE=${REPO_IMAGE}:ctx-$(PYTHONPATH=src python3 -m siliconsmith._imagetag)" >> "$GITHUB_ENV"
+          echo "DATE_IMAGE=${REPO_IMAGE}:$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Is this tag already published?
+        id: exists
+        run: |
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$IMAGE is already in GHCR; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Set up Docker Buildx
+        if: steps.exists.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Build and test first, then push the very image that passed the tests.
+      - name: Build the image
+        if: steps.exists.outputs.exists != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test
+        if: steps.exists.outputs.exists != 'true'
+        run: |
+          docker run --rm "$IMAGE" sh -c 'iverilog -V && verilator --version && yosys -V'
+          v=$(docker run --rm "$IMAGE" verilator --version | awk '{print $2}')
+          if [ "$(printf '%s\n5.036\n' "$v" | sort -V | head -n1)" != "5.036" ]; then
+            echo "Verilator $v is older than 5.036 (needed by cocotb 2.1)"
+            exit 1
+          fi
+      - name: cocotb test on each simulator
+        if: steps.exists.outputs.exists != 'true'
+        run: |
+          for sim in icarus verilator; do
+            docker run --rm --read-only --network none --cap-drop ALL \
+              --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,exec,nosuid,nodev,size=1g \
+              -e HOME=/tmp/home -e PYTHONDONTWRITEBYTECODE=1 \
+              --mount "type=bind,src=${GITHUB_WORKSPACE}/tests/fixtures/image_smoke,dst=/smoke,readonly" \
+              -w /tmp "$IMAGE" python /smoke/run_smoke.py "$sim"
+          done
+      - name: Push the image
+        id: push
+        if: steps.exists.outputs.exists != 'true'
+        run: |
+          docker tag "$IMAGE" "$DATE_IMAGE"
+          docker push "$IMAGE"
+          docker push "$DATE_IMAGE"
+          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+          echo "digest=${digest#*@}" >> "$GITHUB_OUTPUT"
+      - name: Write the job summary
+        if: steps.exists.outputs.exists != 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          # Same metric as the README: the sum of the layer sizes `docker history` lists, in bytes.
+          # `docker image inspect .Size` is not used: it is the compressed size on the containerd
+          # store and the unpacked size on the classic store.
+          size=$(docker history --human=false --format '{{.Size}}' "$IMAGE" | awk '{s += $1} END {print s}')
+          {
+            echo "### Toolchain image published"
+            echo ""
+            echo "- tags: \`${IMAGE}\`, \`${DATE_IMAGE}\`"
+            echo "- digest: \`${DIGEST}\`"
+            echo "- unpacked size (sum of layer sizes from docker history): $((size / 1000000)) MB"
+          } >> "$GITHUB_STEP_SUMMARY"

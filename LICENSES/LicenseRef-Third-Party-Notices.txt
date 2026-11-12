@@ -1,0 +1,5 @@
+The files under docker/licenses/ are verbatim copies of the license texts and copyright notices of
+third-party components that the Siliconsmith toolchain image redistributes (Yosys, ABC, slang,
+yosys-slang, SymbiYosys, wellen, fst-reader, Verilator and others). Each file is governed by the
+terms it states itself. They are shipped so that the image meets those licenses' notice
+requirements, and they are not part of Siliconsmith's own Apache-2.0 source.

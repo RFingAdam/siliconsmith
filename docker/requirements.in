@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+#
+# Direct dependencies of the toolchain image. docker/requirements.lock is generated from this file:
+#   uv pip compile --generate-hashes --python-version 3.12 \
+#     --python-platform x86_64-manylinux_2_39 --no-header -o requirements.lock requirements.in
+
+cocotb==2.1.0
+pytest==8.4.2
+amaranth[builtin-yosys]==0.5.10
+myhdl==0.11.52
+pywellen==0.25.7
+yowasp-yosys==0.62.0.0.post1088
+pyyaml

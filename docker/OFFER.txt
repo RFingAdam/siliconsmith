@@ -1,0 +1,21 @@
+Written offer for corresponding source
+
+This image (ghcr.io/rfingadam/siliconsmith-toolchain) contains programs that are licensed under
+the GNU General Public License or the GNU Lesser General Public License, for example Icarus
+Verilog (GPL-2.0-or-later), GNU make, GCC and ccache (GPL-3.0-or-later), and Verilator
+(offered here under its Artistic-2.0 option).
+
+SOURCES.txt in this folder names the source package and exact version of every Ubuntu package in
+the image, and the upstream address of everything else. For Ubuntu packages the source is in the
+Ubuntu archive (https://archive.ubuntu.com/ubuntu/pool/ and https://launchpad.net/ubuntu).
+
+If you received this image and you want a copy of the complete corresponding source code for
+any GPL or LGPL component in it, ask for it by opening an issue at
+https://github.com/RFingAdam/siliconsmith/issues, and name the image tag or digest. We will
+provide the source for a charge no more than the cost of physically performing the distribution.
+
+This offer is valid for three years from the date the image was published, and for as long as we
+distribute spare parts or customer support for that image, whichever is longer. This offer is open to
+any third party, whether or not they have a copy of the image.
+
+We have not modified any of these programs.

@@ -16,6 +16,8 @@ from mcp.server import MCPServer
 
 from siliconsmith._version import __version__
 from siliconsmith.context import ServerContext
+from siliconsmith.runners.base import Runner
+from siliconsmith.runners.docker import DockerRunner, image_name
 from siliconsmith.tools import register_all
 
 logger = logging.getLogger("siliconsmith")
@@ -75,9 +77,19 @@ def resolve_root(
     return candidate
 
 
-def build_server(root: Path, default_frontend: str | None) -> MCPServer:
+def build_server(
+    root: Path,
+    default_frontend: str | None,
+    *,
+    runner: Runner | None = None,
+    image: str | None = None,
+) -> MCPServer:
+    """Build the server. Tests pass a fake `runner`; the real server runs Docker containers."""
+    image = image or image_name()
+    runner = runner or DockerRunner(image)
     server = MCPServer("siliconsmith", instructions=INSTRUCTIONS, version=__version__)
-    register_all(server, ServerContext(root=root, default_frontend=default_frontend))
+    ctx = ServerContext(root=root, default_frontend=default_frontend, image=image, runner=runner)
+    register_all(server, ctx)
     return server
 
 
