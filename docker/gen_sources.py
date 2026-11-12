@@ -123,7 +123,7 @@ def pdk_section() -> list[str]:
     lines = [
         f"SkyWater sky130 PDK, open_pdks {open_pdks} (Apache-2.0), under /opt/pdk:",
         "  Downloaded at build time from the fossi-foundation/ciel-releases GitHub release",
-        f"  sky130-{open_pdks} and checked against these sha256 values (also in docker/Dockerfile):",
+        f"  sky130-{open_pdks} and checked against these sha256 values:",
         f"    {base}/common.tar.zst",
         f"      sha256 {dockerfile_arg('PDK_COMMON_SHA256')}",
         f"    {base}/sky130_fd_sc_hd.tar.zst",
