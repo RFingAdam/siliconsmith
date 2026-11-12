@@ -41,6 +41,10 @@ CORRUPT_REL = ".siliconsmith/ledger.corrupt.json"
 MAX_RUNS = 200
 MAX_TESTS_PER_RUN = 500
 MAX_LEDGER_BYTES = 8 * 1024 * 1024
+# _write trims the oldest runs to stay under this, so load_ledger never refuses what we wrote.
+WRITE_LEDGER_BYTES = 6 * 1024 * 1024
+# Reading a damaged ledger only to move it aside or rescue the approval: allow it to be big.
+RESCUE_LEDGER_BYTES = 256 * 1024 * 1024
 MAX_HASHED_FILE_BYTES = 2 * 1024 * 1024
 SPEC_REL = "spec.yaml"
 
@@ -120,10 +124,28 @@ def load_ledger(project_dir: Path) -> LedgerLoad:
         return LedgerLoad(Ledger(), "the ledger is damaged (it is not valid ledger JSON)")
 
 
+def _encode(ledger: Ledger) -> bytes:
+    return (json.dumps(ledger.model_dump(mode="json"), separators=(",", ":")) + "\n").encode()
+
+
 def _write(project_dir: Path, ledger: Ledger) -> None:
+    """Write the ledger, dropping the oldest runs so the file always stays readable."""
     ledger.runs = ledger.runs[-MAX_RUNS:]
-    text = json.dumps(ledger.model_dump(mode="json"), indent=2) + "\n"
-    atomic_write(project_dir, LEDGER_REL, text.encode("utf-8"), allow_hidden=True)
+    data = _encode(ledger)
+    while len(data) > WRITE_LEDGER_BYTES and ledger.runs:
+        if len(ledger.runs) > 1:
+            ledger.runs = ledger.runs[1:]
+        else:
+            ledger.runs[0].tests = []
+        data = _encode(ledger)
+    atomic_write(project_dir, LEDGER_REL, data, allow_hidden=True)
+
+
+def _rescue_approval(raw: bytes) -> Approval | None:
+    try:
+        return Approval.model_validate(json.loads(raw)["approval"])
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 def _load_for_update(project_dir: Path) -> Ledger:
@@ -131,12 +153,19 @@ def _load_for_update(project_dir: Path) -> Ledger:
     loaded = load_ledger(project_dir)
     if loaded.problem is None:
         return loaded.ledger
+    fresh = Ledger()
     try:
-        raw = safe_read(project_dir, LEDGER_REL, MAX_LEDGER_BYTES, allow_hidden=True)
-        atomic_write(project_dir, CORRUPT_REL, raw, allow_hidden=True)
+        raw = safe_read(project_dir, LEDGER_REL, RESCUE_LEDGER_BYTES, allow_hidden=True)
     except ToolError:
         logger.warning("could not keep a copy of the damaged ledger; replacing it")
-    return Ledger()
+        return fresh
+    fresh.approval = _rescue_approval(raw)  # the owner's approval survives a damaged run list
+    if len(raw) <= WRITE_LEDGER_BYTES * 8:
+        try:
+            atomic_write(project_dir, CORRUPT_REL, raw, allow_hidden=True)
+        except ToolError:
+            logger.warning("could not keep a copy of the damaged ledger; replacing it")
+    return fresh
 
 
 def append_run(project_dir: Path, run: RunRecord) -> None:
@@ -209,10 +238,32 @@ def compute_digests(project: Project, image: str) -> Digests:
 # -- recording a tool run ------------------------------------------------------------------
 
 
+def snapshot_digests(project: Project, image: str) -> Digests | None:
+    """Digests of the files as they are before a run starts, or None if they cannot be read.
+
+    Taken before the run on purpose: a file edited while the run is going then shows as stale,
+    never as tested. The caller holds the project lock.
+    """
+    try:
+        return compute_digests(project, image)
+    except Exception as exc:
+        logger.warning("could not digest the project files: %s", exc)
+        return None
+
+
 def record_from_result(
-    project: Project, image: str, tool: Tool, result: ToolResult, *, image_id: str | None = None
+    project: Project,
+    image: str,
+    tool: Tool,
+    result: ToolResult,
+    *,
+    digests: Digests | None = None,
+    image_id: str | None = None,
 ) -> RunRecord:
-    """Turn a tool's result into a ledger record (computes the digests of the files now)."""
+    """Turn a tool's result into a ledger record.
+
+    `digests` should be the snapshot taken before the run; if None, the files are digested now.
+    """
     details = result.details
     stage = "timeout" if details.get("timed_out") else str(details.get("stage", "unknown"))
     tests: list[RunTest] = []
@@ -236,19 +287,25 @@ def record_from_result(
         image=image,
         image_id=image_id,
         siliconsmith_version=__version__,
-        digests=compute_digests(project, image),
+        digests=digests if digests is not None else compute_digests(project, image),
         tests=tests,
     )
 
 
-def record_run(project: Project, image: str, tool: Tool, result: ToolResult) -> ToolResult:
+def record_run(
+    project: Project, image: str, tool: Tool, result: ToolResult, before: Digests | None
+) -> ToolResult:
     """Append the run to the ledger and return `result`.
+
+    `before` is `snapshot_digests` from before the run. If it is None the run is not recorded.
 
     The caller holds the project lock (it is not re-entrant, so this takes none). A ledger
     problem never turns a result into an error: it is logged and noted in the summary.
     """
     try:
-        append_run(project.dir, record_from_result(project, image, tool, result))
+        if before is None:
+            raise ValueError("the project files could not be digested")
+        append_run(project.dir, record_from_result(project, image, tool, result, digests=before))
     except Exception as exc:  # the ledger must never break a tool result
         logger.warning("could not update the validation ledger: %s", exc)
         lines = [*result.summary.splitlines(), "Note: the validation ledger could not be updated."]

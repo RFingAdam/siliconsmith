@@ -16,7 +16,7 @@ lists later.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from mcp.server.mcpserver.exceptions import ToolError
@@ -55,12 +55,16 @@ class Step:
 
 
 DIGITAL_STEPS: tuple[Step, ...] = (
-    Step("spec_valid", "Spec valid", "spec.yaml is complete and well formed"),
+    Step("spec_valid", "Spec valid", "spec.yaml has every required field and is well formed"),
     Step("spec_approved", "Spec approved", "The owner agrees the spec says what they want"),
     Step("check", "Verilog check", "The design turns into Verilog that lints clean"),
     Step("sim_icarus", "Simulation: Icarus", "The tests pass on the Icarus simulator"),
     Step("sim_verilator", "Simulation: Verilator", "The tests pass on the Verilator simulator"),
-    Step("coverage", "Requirement coverage", "Every requirement has a test that passes on both"),
+    Step(
+        "coverage",
+        "Requirement coverage",
+        "Every requirement is named by a passing test's Covers: tag on both",
+    ),
     Step("synth_gl", "Synthesis + gate sim", "The design maps to real gates and still works", "M1"),
     Step("layout", "Layout signoff", "The layout fits the tile and passes the rules", "M2"),
     Step("tt_precheck", "Tiny Tapeout checks", "Tiny Tapeout's own checks accept it", "M3"),
@@ -95,6 +99,7 @@ class StatusReport:
     project: str
     steps: list[StepStatus]
     ledger_problem: str | None = None
+    doc_problem: str | None = None
 
     def table(self) -> str:
         return "\n".join(table_lines(self.steps))
@@ -103,14 +108,21 @@ class StatusReport:
         lines = table_lines(self.steps)
         if self.ledger_problem:
             lines.append(f"Note: {self.ledger_problem}; treating it as empty.")
+        if self.doc_problem:
+            lines.append(f"Note: docs/verification.md was not updated ({self.doc_problem}).")
         return lines
 
 
 # -- helpers -------------------------------------------------------------------------------
 
 
+_MARKUP = str.maketrans({"|": "/", "<": "(", "[": "(", ">": ")", "]": ")", "`": "'"})
+
+
 def _clip(text: str, limit: int = MAX_EVIDENCE) -> str:
-    text = " ".join(text.replace("|", "/").split())
+    # Evidence can hold agent-chosen names, and the document is Markdown (which allows HTML).
+    text = "".join(ch if ch.isprintable() else " " for ch in text)
+    text = " ".join(text.translate(_MARKUP).split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
@@ -331,9 +343,14 @@ def render_document(report: StatusReport) -> str:
         "- **not run**: nothing has been recorded for this step yet.",
         "- **not available**: the step belongs to a later milestone of Siliconsmith.",
         "",
-        "Approval is the owner's step. Nothing an AI agent does can approve the spec: the owner "
-        "reads spec.yaml and runs `siliconsmith approve <project folder>` in a terminal. This is "
-        "an honest-use convention, not a security boundary.",
+        "Approval is the owner's step. No Siliconsmith tool can approve the spec; the owner reads "
+        "spec.yaml and runs `siliconsmith approve <project folder>` in a terminal. This is an "
+        "honest-use convention, not a security boundary: an agent with its own shell could still "
+        "run it.",
+        "",
+        "The tests, and the `Covers:` tags that link them to requirements, are written by the AI "
+        "agent, so a green table shows the agent's own tests pass, not that they are good ones. "
+        "For the demo designs a held-out reference test is used for that reason.",
     ]
     if report.ledger_problem:
         parts += ["", f"Note: {report.ledger_problem}; it was treated as empty."]
@@ -344,7 +361,10 @@ def refresh_status(project: Project, image: str) -> StatusReport:
     """Compute the status and write `docs/verification.md`, under the project lock."""
     with project_lock(project.dir):
         report = compute_status(project, image)
-        atomic_write(project.dir, DOC_REL, render_document(report).encode("utf-8"))
+        try:
+            atomic_write(project.dir, DOC_REL, render_document(report).encode("utf-8"))
+        except ToolError as exc:  # the table is still worth showing
+            report = replace(report, doc_problem=str(exc))
     return report
 
 

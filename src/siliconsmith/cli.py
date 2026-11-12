@@ -38,6 +38,12 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         command = sub.add_parser(name, help=text, description=text)
         command.add_argument("dir", help="the project folder (it contains siliconsmith.toml)")
+        if name == "status":
+            command.add_argument(
+                "--image",
+                help="toolchain image name:tag the server uses (default: SILICONSMITH_IMAGE or "
+                "the image for this checkout); a different image makes the table stale",
+            )
     return parser
 
 
@@ -55,9 +61,10 @@ def _load(directory: str) -> Project | None:
         return None
 
 
-def _status(directory: str) -> int:
+def _status(directory: str, image: str | None) -> int:
     from mcp.server.mcpserver.exceptions import ToolError
 
+    from siliconsmith.ledger import load_ledger
     from siliconsmith.runners.docker import image_name
     from siliconsmith.status import refresh_status
 
@@ -65,11 +72,19 @@ def _status(directory: str) -> int:
     if project is None:
         return 2
     try:
-        report = refresh_status(project, image_name())
+        image = image or image_name()
+        report = refresh_status(project, image)
+        runs = load_ledger(project.dir).ledger.runs
     except ToolError as exc:
         print(f"siliconsmith: {exc}", file=sys.stderr)
         return 1
     print("\n".join(report.summary_lines()))
+    if runs and runs[-1].image != image:
+        print(
+            f"Note: the last run used image {runs[-1].image} but this table used {image}, so "
+            "steps may show stale only because of the image. If the server runs with a different "
+            "SILICONSMITH_IMAGE, pass it with --image."
+        )
     return 0
 
 
@@ -96,7 +111,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(args_list)
     if args.command == "status":
-        return _status(args.dir)
+        return _status(args.dir, args.image)
     if args.command == "approve":
         return _approve(args.dir)
     parser.print_help()

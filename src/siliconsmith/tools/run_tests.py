@@ -43,7 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from siliconsmith.context import ServerContext
 from siliconsmith.covers import CocotbTest, coverage, parse_covers
 from siliconsmith.frontends import Frontend, get_frontend
-from siliconsmith.ledger import record_run
+from siliconsmith.ledger import record_run, snapshot_digests
 from siliconsmith.paths import MissingFileError, project_lock, safe_read
 from siliconsmith.project import Project
 from siliconsmith.result import Artifact, ToolResult, make_summary
@@ -397,9 +397,10 @@ def run(
     frontend = get_frontend(project.frontend)
     base = _base_details(simulator, test_filter)
     with project_lock(project.dir):
+        before = snapshot_digests(project, ctx.image)
         result = _run_locked(ctx, project, frontend, simulator, test_filter, waves, base)
         # Every result is a fact about these files (a ToolError is not, and is not recorded).
-        return record_run(project, ctx.image, "run_tests", result)
+        return record_run(project, ctx.image, "run_tests", result, before)
 
 
 def _run_locked(

@@ -104,22 +104,40 @@ def approve_project(
         return 1
     say(f"Spec for {project.name}: {spec.title}")
     say(spec.summary)
+    say(f"Clock: {spec.clock_hz} Hz    Reset: {spec.reset}")
+    for group in ("ui", "uo", "uio"):
+        for bit, label in sorted(getattr(spec.pins, group).items()):
+            say(f"  pin {group}[{bit}]: {label}")
     say("Requirements:")
     for req in spec.requirements:
         say(f"  {req.id}: {req.text}")
+        if req.limit is not None:
+            say(f"      limit: {req.limit.model_dump(exclude_none=True)}")
+    if spec.open_questions:
+        say("Open questions:")
+        for question in spec.open_questions:
+            say(f"  - {question}")
     say(f"spec.yaml sha256: {sha}")
     say()
     say(CONVENTION)
-    answer = ask(f"Type '{CONFIRM_WORD}' to approve this spec (anything else cancels): ")
+    try:
+        answer = ask(f"Type '{CONFIRM_WORD}' to approve this spec (anything else cancels): ")
+    except (EOFError, KeyboardInterrupt):
+        say()
+        answer = ""
     if answer.strip() != CONFIRM_WORD:
         say("Not approved. Nothing was recorded.")
         return 1
     who = git_user_name(project.dir)
-    with project_lock(project.dir):
-        _, now_sha = _read_valid_spec(project)
-        if now_sha != sha:
-            say("spec.yaml changed while you were reading it. Nothing was recorded; run again.")
-            return 1
-        set_approval(project.dir, Approval(spec_sha256=sha, approved_by=who, at=now_utc()))
+    try:
+        with project_lock(project.dir):
+            _, now_sha = _read_valid_spec(project)
+            if now_sha != sha:
+                say("spec.yaml changed while you were reading it. Nothing was recorded; run again.")
+                return 1
+            set_approval(project.dir, Approval(spec_sha256=sha, approved_by=who, at=now_utc()))
+    except ToolError as exc:
+        say(f"Refusing to approve: {exc}. Nothing was recorded.")
+        return 1
     say(f"Approved by {who}. Run `siliconsmith status {project.dir}` to refresh the report.")
     return 0

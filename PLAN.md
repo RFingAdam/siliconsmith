@@ -267,7 +267,7 @@ open_questions:  [...]
 
 **Coverage tags.** Each cocotb test says in its docstring which requirements it checks, for example `Covers: R1, R2`. The tool reads these tags with Python's `ast` module; it never runs the test file to find them. An unknown requirement id is a warning. A skipped test does not count as coverage.
 
-**Ledger.** `.siliconsmith/ledger.json` in the project folder stores facts only: the spec approval (spec hash, who, when) and one record per `emit_verilog` or `run_tests` run (tool, simulator, design digest, image id, whether a test filter was used, time, `ok`, and for each test its name, the requirement ids it covers and its outcome). Only the host writes it (the container never sees it), and only `emit_verilog`, `run_tests` and the `approve` command add to it.
+**Ledger.** `.siliconsmith/ledger.json` in the project folder stores facts only: the spec approval (spec hash, who, when) and one record per `emit_verilog` or `run_tests` run (tool, simulator, the check, sim and spec digests, image name and tag, image id when known, whether a test filter was used, time, `ok`, and for each test its name, the requirement ids it covers and its outcome). Only the host writes it (the container never sees it), and only `emit_verilog`, `run_tests` and the `approve` command add to it.
 
 **Derived status.** `status` works out each step's state when it is asked, from the ledger and the current files: `pass`, `fail`, `stale` (an input changed since the last run), `not_run`, or `not_available` (the step belongs to a later milestone). Each step has its own inputs:
 
@@ -276,7 +276,7 @@ open_questions:  [...]
 - simulation ← the check inputs plus `test/**/*.py`;
 - coverage ← the spec plus the latest unfiltered simulation runs.
 
-These file patterns match the write allow-list (section 5.3), so every design or test file an agent can write is an input to some step. The digest is a sha256 over the image id, the Siliconsmith version and the files those patterns match (path and content hash of each), never whole folders, so build output, `__pycache__` and wave files do not affect it.
+These file patterns match the write allow-list (section 5.3), so every design or test file an agent can write is an input to some step. The digest is a sha256 over the image name and tag, the Siliconsmith version and the files those patterns match (path and content hash of each), never whole folders, so build output, `__pycache__` and wave files do not affect it. The write allow-list rejects any path with a `build`, `sim_build` or `__pycache__` component, so nothing an agent can write is skipped. A run's digests are taken before the run starts, so a file edited during the run shows as stale, never as tested.
 
 **Steps for the digital track.** The steps are stored as data per track, so analog and acoustic add their own later.
 
