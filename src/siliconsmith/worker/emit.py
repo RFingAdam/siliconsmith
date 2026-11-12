@@ -228,7 +228,12 @@ def _ports_json(ports: dict[str, tuple[str, int]]) -> dict[str, dict[str, Any]]:
 
 
 def _lint(
-    out_dir: Path, name: str, *, generated: bool, core_only: bool = False
+    out_dir: Path,
+    name: str,
+    *,
+    generated: bool,
+    core_only: bool = False,
+    width_checks: bool = True,
 ) -> list[dict[str, Any]]:
     """Run Verilator over the wrapper and the core (or over the core alone)."""
     command = [
@@ -247,6 +252,11 @@ def _lint(
         # business. Amaranth gives every register an initial value, which Verilator reports as
         # PROCASSINIT. Neither is something the agent can fix in the generated text.
         command += ["-Wno-UNUSEDSIGNAL", "-Wno-PROCASSINIT"]
+    if not width_checks:
+        # Amaranth defines every width itself, and its Verilog writer emits constants at their
+        # smallest width, so `x == 0` on a 3-bit x reads as a width mismatch in the generated
+        # text. The agent cannot fix that in its Amaranth source, so skip those two warnings.
+        command += ["-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC"]
     if core_only:
         command.append(f"{name}.v")
     else:
@@ -432,7 +442,7 @@ def _emit(request: dict[str, Any]) -> dict[str, Any]:
         )
 
     # 4. lint
-    found = _lint(out_dir, name, generated=generated)
+    found = _lint(out_dir, name, generated=generated, width_checks=frontend != "amaranth")
     found += _yosys_check(out_dir, name)
     return _result(
         out_dir,

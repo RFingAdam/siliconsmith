@@ -195,29 +195,17 @@ async def test_common_mistake_is_rejected(
         assert needle in emitted["summary"]
 
 
-@pytest.mark.parametrize(
-    ("cond", "ok"),
-    [
-        ("left == 1", False),
-        ("left == 0", False),
-        ("~(left ^ 1).any()", True),
-        ("~left.any()", True),
-    ],
-)
-async def test_amaranth_literal_comparison_rule(
-    server: Client, tmp_path: Path, cond: str, ok: bool
-) -> None:
-    """The width rule in amaranth-style: a narrow literal fails lint; `~(x ^ v).any()` works."""
+@pytest.mark.parametrize("cond", ["left == 1", "left == 0", "left > 1", "~left.any()"])
+async def test_amaranth_literal_comparison_rule(server: Client, tmp_path: Path, cond: str) -> None:
+    """The width rule in amaranth-style: comparing with a narrow literal is fine in Amaranth."""
     text = (
         EXAMPLES["amaranth-fsm"]
         .files["hdl/pulse.py"]
-        .replace("with m.If(~left.any()):", f"with m.If({cond}):")
+        .replace("with m.If(left == 0):", f"with m.If({cond}):")
         .replace("pulse", "counter")
     )
     async with server as client:
         await make_project(client, tmp_path, "amaranth")
         await call(client, "write_rtl", project="counter", path="hdl/counter.py", content=text)
         emitted = await call(client, "emit_verilog", project="counter")
-        assert emitted["ok"] is ok, emitted["summary"]
-        if not ok:
-            assert "WIDTH" in emitted["summary"]
+        assert emitted["ok"] is True, emitted["summary"]

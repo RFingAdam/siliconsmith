@@ -83,7 +83,7 @@ class Core(wiring.Component):
                     m.next = "RUN"
             with m.State("RUN"):
                 m.d.sync += left.eq(left - 1)
-                with m.If(~left.any()):
+                with m.If(left == 0):
                     m.next = "IDLE"
         # Drive the output from the state register, not from a comb line inside a state.
         m.d.comb += self.uo_out.eq(fsm.ongoing("RUN"))
@@ -137,7 +137,7 @@ def top() -> wiring.Component:
 
 ## Width and simulator traps
 
-- Comparing a signal with a literal that needs fewer bits than the signal fails lint with WIDTHEXPAND: `left == 1` on a 3-bit `left` fails, and so does `left == 2`, `left == 3` or `left > 1`. `left == 0` fails with WIDTHTRUNC. A sized `Const(1, 3)` does not help, because the conversion shrinks the constant back. Compare with zero as `~left.any()`, and with another value `v` as `~(left ^ v).any()`; both are clean. A literal that fills the width (`left == 7` on 3 bits) is fine.
+- Widths are Amaranth's job, so lint does not report width mismatches in Verilog generated from Amaranth: `left == 0` or `left > 1` on a 3-bit `left` is fine. The trap is the other way round: `.eq()` silently drops the high bits when the target is narrower (`self.uo_out.eq(count)` with a 10-bit `count` keeps only bits 0 to 7). Size registers on purpose and slice explicitly, e.g. `count[2:10]`.
 - Driving an output from a `m.d.comb` line inside `m.If`, `m.Switch` or `m.FSM` that depends only on registers that never change after reset. Icarus then leaves the output unknown (`x`) until those registers first change, while Verilator shows 0, so the two simulators disagree. Drive outputs from a register, from `fsm.ongoing("STATE")`, or from a plain `m.d.comb` line at the top level.
 
 ## Latches
