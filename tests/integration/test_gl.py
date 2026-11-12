@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from mcp import Client
 
-from integration.test_emit import FRONTENDS, call
+from integration.test_emit import FIXTURES, FRONTENDS, call
 from integration.test_ledger import step_states
 from integration.test_sim import COUNTER_TESTS, counter_project, outcomes
 from siliconsmith.runners.docker import DockerRunner
@@ -94,3 +94,53 @@ async def test_gl_with_verilator_is_an_error(server: Client, tmp_path: Path) -> 
         )
         assert result.is_error
         assert "icarus only" in str(result.content)
+
+
+async def test_gl_mismatch(server: Client, tmp_path: Path) -> None:
+    """`initial count = 0;` instead of a reset: RTL passes, the gates start unknown and fail."""
+    async with server as client:
+        project = await counter_project(
+            client, tmp_path, "verilog", design="verilog_initial_value.v"
+        )
+        wrote = await call(
+            client,
+            "write_test",
+            project="counter",
+            path="test/test.py",
+            content=(FIXTURES / "test_initial_value.py").read_text(),
+        )
+        assert wrote["ok"] is True, wrote["summary"]
+        rtl = await call(client, "run_tests", project="counter", simulator="icarus", waves=True)
+        assert rtl["ok"] is True, rtl["summary"]  # the seeded bug is invisible in RTL
+        rtl_bytes = (project / RTL_WAVES).read_bytes()
+
+        gl = await call(client, "run_tests", project="counter", simulator="icarus", gl=True)
+        assert gl["ok"] is False, gl["summary"]
+        assert outcomes(gl) == {"test_counts_from_power_up": "error"} or outcomes(gl) == {
+            "test_counts_from_power_up": "fail"
+        }
+        lines = gl["summary"].splitlines()
+        assert lines[0].startswith("Gate-level simulation (sky130 netlist, icarus): failed")
+        first = next(ln for ln in lines if ln.startswith("First difference on the pins"))
+        assert first.startswith("First difference on the pins: uo_out at clock cycle ")
+        assert "RTL 00000000, gate level xxxxxxxx" in first, first
+        assert "have no reset or rely on an initial value" in gl["summary"]
+        diff = gl["details"]["gl"]["diff"]
+        assert diff["state"] == "differs" and diff["rtl_failed"] is False
+        assert diff["signals"][0] == {"signal": "uo_out", "rtl": "00000000", "gl": "xxxxxxxx"}
+        assert diff["cycle"] >= 1 and diff["time_ns"] > 0
+
+        # The gate-level waves are kept for the failure and pointed at; the RTL ones are untouched.
+        assert gl["details"]["waves"] == GL_WAVES and (project / GL_WAVES).is_file()
+        assert any(GL_WAVES in h and "inspect_waves" in h for h in gl["next_hints"])
+        assert (project / RTL_WAVES).read_bytes() == rtl_bytes
+        # The reference RTL rerun left nothing in build/sim/icarus or build/waves/icarus.
+        assert sorted(p.name for p in (project / "build" / "waves").iterdir()) == [
+            "icarus",
+            "icarus-gl",
+        ]
+        assert not list((project / "build" / ".ss").glob("*"))
+
+        states = step_states(await call(client, "status", project="counter"))
+        assert states["gate_sim"] == "fail"
+        assert states["sim_icarus"] == "pass"
