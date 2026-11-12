@@ -50,3 +50,27 @@ htmlcov/
 *.pem
 credentials.json
 .credentials.json
+
+# Build and simulation output
+/tasks/
+sim_build/
+results.xml
+
+# Keep package data and fixtures (must stay last: these override the rules above)
+!src/siliconsmith/templates/**
+!tests/fixtures/**
+
+# Junk is ignored again inside the kept folders (the last matching rule wins).
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.secrets/
+*.pem
+credentials.json
+.credentials.json
+.DS_Store
+*.swp
+*~
+sim_build/
+results.xml

@@ -11,98 +11,162 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 **Labels:** `track:digital` `milestone:M0` `infra`
 **Goal:** Empty, buildable Python package with licensing done right from day one.
 **Tasks**
-- `pyproject.toml` (package `siliconsmith`, Python ≥3.11, extras `[amaranth]`, `[myhdl]`).
-- Keep `LICENSE` (Apache-2.0) and `THIRD_PARTY_LICENSES.md`. Add `NOTICE` if needed and `CONTRIBUTING.md` with the GPL/LGPL rules (call GPL tools only as external processes; no vendoring) and DCO sign-off.
-- SPDX headers on all source files; `reuse lint` in CI.
-- Replace the CI placeholder: ruff, mypy, pytest.
+- `pyproject.toml` (hatchling; package `siliconsmith`, Python ≥3.11; dependencies `mcp>=2.3,<3`, `pyyaml`, `pydantic>=2`; extras `[amaranth]` = `amaranth[builtin-yosys]>=0.5.10,<0.6`, `[myhdl]` = `myhdl>=0.11.52,<0.12`) and `uv.lock`.
+- `src/siliconsmith/{__init__,_version,cli,_imagetag}.py`, plus the seams later issues build on: `result.py` (the result envelope), `server.py` with the tool registry in `tools/__init__.py`, `runners/base.py`, `tests/conftest.py`, and one real unit test.
+- Keep `LICENSE` (Apache-2.0) and `THIRD_PARTY_LICENSES.md`. Add `LICENSES/Apache-2.0.txt`, `REUSE.toml`, `NOTICE`, and `CONTRIBUTING.md` with the GPL/LGPL rules (call GPL tools only as external processes; no vendoring) and the DCO rule (outside contributors sign off; agents never add `Signed-off-by`).
+- SPDX headers on all source files.
+- `.gitignore` additions: `tasks/`, `build/`, `sim_build/`, keeping `src/siliconsmith/templates/**` and `tests/fixtures/**`.
+- Replace the CI placeholder with the `ci.yml` `lint` and `unit` jobs (PLAN.md section 14); Dependabot for GitHub Actions.
+- Update `PLAN.md`, `ISSUES.md`, `CLAUDE.md` and `THIRD_PARTY_LICENSES.md` to the M0 design (container runner, pins, validation sequence, licensing), file the new issues and edit the changed ones on GitHub.
 **Acceptance criteria**
-- [ ] `pip install -e .[amaranth,myhdl]` works on a clean Ubuntu 24.04 runner.
-- [ ] CI is green, and `reuse lint` passes.
-- [ ] The repo contains no third-party tool source or binaries.
+- [ ] `pip install -e .[amaranth,myhdl]` works on a clean Ubuntu 24.04 runner. *Proof:* `lint` job, pip-compat step.
+- [ ] CI is green, and `reuse lint` passes. *Proof:* all `ci.yml` jobs; the pinned `reuse lint` step.
+- [ ] The repo contains no third-party tool source or binaries. *Proof:* `lint` job, no-binaries step.
 
 ## [M0-2] Toolchain Docker image (simulation stage)
 **Labels:** `track:digital` `milestone:M0` `docker`
 **Tasks**
-- `docker/Dockerfile`: Ubuntu 24.04, Python 3.12, iverilog, verilator, yosys, cocotb, amaranth, myhdl (versions pinned).
-- `image.yml` workflow publishes to `ghcr.io/rfingadam/siliconsmith-toolchain` with a date tag and a digest.
-- `toolchain_info` MCP tool reports the versions.
+- `docker/Dockerfile` and a hash-locked `docker/requirements.lock` with the M0 pins in PLAN.md section 6: `ubuntu:24.04` by digest, apt `iverilog=12.0-2build2`, Verilator v5.046 copied from the official `verilator/verilator` image (by digest), `yowasp-yosys` 0.62 behind a `yosys` shim, `cocotb==2.1.0`, `pytest==8.4.2`, `amaranth[builtin-yosys]==0.5.10` with `AMARANTH_USE_YOSYS=builtin`, `myhdl==0.11.52`, `pywellen==0.25.7`. `linux/amd64` only.
+- The image ships `/usr/share/doc/siliconsmith-toolchain/` with `SOURCES.txt`, `THIRD_PARTY_LICENSES.md`, a written offer for the corresponding source, and the license files of bundled components (wellen, Yosys, ABC, yosys-slang, slang).
+- `runners/docker.py`: the container runner with the exact `docker run` arguments from PLAN.md section 5.1 (no network, read-only root, only `build/` writable, resource limits, rootless detection, `docker kill` on timeout). Worker cache plus `worker/{__main__,info}.py`.
+- `toolchain_info` MCP tool.
+- `image.yml` workflow and the `ci.yml` `integration` job (image tag `ctx-<h>`, pull or build, smoke test first, tests run as non-root with the exact runner arguments). The first push to `ghcr.io/rfingadam/siliconsmith-toolchain` comes from `image.yml`.
+- Image size line in the README.
 **Acceptance criteria**
-- [ ] `docker run <image> iverilog -V && verilator --version && yosys -V` all succeed in CI.
-- [ ] `toolchain_info` returns JSON with every tool's version and the image digest.
-- [ ] Image size is recorded in the README.
+- [ ] `docker run --rm <image> sh -c 'iverilog -V && verilator --version && yosys -V'` succeeds in CI. *Proof:* `integration` smoke step and the `image.yml` smoke step.
+- [ ] `toolchain_info` returns JSON with every tool's version and the image id and digest. *Proof:* `test_toolchain_info_keys` (all values non-null, except `repo_digest` for a local build).
+- [ ] Image size is recorded in the README. *Proof:* the README line names the current `ctx-<h>` tag; `test_readme_image_tag_current`.
 
 ## [M0-3] MCP server core + project model
 **Labels:** `track:digital` `milestone:M0` `mcp`
 **Tasks**
-- MCP server on the official MCP Python SDK (stdio, plus streamable HTTP optional).
-- `create_project`, `list_files`, `read_file`, `write_rtl`, `write_test` with path sandboxing (no access outside the project dir, no generic shell tool).
-- `siliconsmith.toml` schema: name, frontend, top, pdk, tiles, clock_hz.
-- Standard result shape `{ok, summary, details, artifacts, next_hints}`.
+- MCP server on the official MCP Python SDK v2 (`from mcp.server import MCPServer`), stdio only (streamable HTTP is M5-3). Project root from `--root`, `SILICONSMITH_ROOT`, `CLAUDE_PROJECT_DIR`, then the current directory. Server `instructions` text.
+- `paths.py`: symlink-safe host file I/O (PLAN.md section 5.1) and the per-front-end write allow-list (PLAN.md section 5.3).
+- `project.py` and `scaffold.py`: `siliconsmith.toml` holds `name` and `frontend` only. `create_project` lays out a TT-shaped project from a pinned `ttsky-verilog-template` snapshot in `templates/tt/` (with an `UPSTREAM` manifest of our patches) and generates the `tt_um_<name>` wrapper.
+- Tools: `create_project`, `list_files`, `read_file`, `write_rtl` (full content, no patches), `write_test`, all returning the standard result `{ok, summary, details, artifacts, next_hints}`; usage errors raise `ToolError`.
+- README config snippets: Claude Code (`.mcp.json` and `claude mcp add`), Cursor (`${workspaceFolder}`), Codex (`tool_timeout_sec`).
 **Acceptance criteria**
-- [ ] `create_project(frontend=amaranth|myhdl|verilog)` creates a project with a TT-compatible `tt_um_<name>` wrapper (ports: `ui_in[7:0]`, `uo_out[7:0]`, `uio_in/uio_out/uio_oe[7:0]`, `ena`, `clk`, `rst_n`) and a cocotb test stub.
-- [ ] Path traversal (`../`) attempts are rejected (unit test).
-- [ ] README has working config snippets for Claude Code and Cursor.
+- [ ] `create_project(frontend=amaranth|myhdl|verilog)` creates a project with a TT-compatible `tt_um_<name>` wrapper (ports: `ui_in[7:0]`, `uo_out[7:0]`, `uio_in/uio_out/uio_oe[7:0]`, `ena`, `clk`, `rst_n`) and a cocotb test stub. *Proof:* `test_scaffold[fe]` (ports compared with the TT template snapshot) and an integration test that checks the ports with Yosys.
+- [ ] Path traversal attempts are rejected. *Proof:* `test_paths_*` (`..`, absolute paths, symlinks, NUL bytes, writes outside the allow-list).
+- [ ] README has working config snippets for Claude Code and Cursor. *Proof:* `test_readme_snippets` (launches the exact command over stdio and lists the tools; checks the Cursor JSON against its schema).
 
 ## [M0-4] Front-end interface: Amaranth, MyHDL, Verilog passthrough
 **Labels:** `track:digital` `milestone:M0` `frontend`
 **Tasks**
-- `Frontend` protocol (`check`, `emit_verilog`, optional `native_sim`).
-- Amaranth: `amaranth.back.verilog.convert`. MyHDL: `convert(hdl='Verilog')`. Verilog: passthrough + `verilator --lint-only`.
-- `emit_verilog` MCP tool.
+- One module per front-end under `frontends/`, plus `worker/emit.py`, which runs inside the container. Amaranth: module-level `top()` and `verilog.convert(top(), name=<name>, emit_src=False)` with Amaranth's bundled Yosys. MyHDL: `@block def <name>(...)` and `convert(hdl='Verilog', testbench=False, no_myhdl_header=True, timescale='1ns/1ps')`; `ToVerilogWarning` is an error. Verilog: passthrough. (PLAN.md section 5.2.)
+- Core/wrapper contract: read the core's ports with Yosys `write_json`, check names, directions and widths against the TT pin names, and regenerate the `tt_um_<name>` wrapper.
+- Lint with `verilator --lint-only -Wall --timing` (latches and multiple drivers are errors) and parse the findings. Map Python errors to a file and line under `hdl/`.
+- `emit_verilog` MCP tool. Emitted output is byte-identical across runs.
 **Acceptance criteria**
-- [ ] The same 8-bit counter spec emits valid Verilog from all three front-ends with an identical top-level port list.
-- [ ] A Python syntax error in Amaranth/MyHDL source comes back with file and line in ≤20 lines.
-- [ ] A Verilator lint warning (e.g. width mismatch) is returned in a structured form.
+- [ ] The same 8-bit counter emits valid Verilog from all three front-ends with an identical top-level port list. *Proof:* `test_emit_counter[fe]` compared with `tests/golden/counter_ports.json`; the output compiles with `iverilog -g2012` and lints clean.
+- [ ] A Python syntax or elaboration error in Amaranth/MyHDL source comes back with file and line in ≤20 lines. *Proof:* unit test (host-side `ast.parse`) and `test_emit_errors[amaranth,myhdl]` (the reported path is `hdl/<name>.py`).
+- [ ] A Verilator lint warning (e.g. width mismatch) is returned in a structured form. *Proof:* `test_lint_width` (`WIDTHTRUNC`/`WIDTHEXPAND` as `{code, file, line, col, msg}`) and parser fixtures.
 
 ## [M0-5] `run_tests` with cocotb on Icarus and Verilator
 **Labels:** `track:digital` `milestone:M0` `sim`
 **Tasks**
-- `run_tests(simulator, test_filter, waves)`: runs cocotb via its runner, then parses `results.xml`.
-- `inspect_waves(vcd_path, signals, time_range)` returns a compact value table.
+- `run_tests(simulator, test_filter, waves)`: one container call that re-emits, lints and runs the cocotb 2.1 Python runner (`tb` as top level, 1 ns / 1 ps timescale, Verilator with `--timing`), then parses the results file. Results go into the ledger (M0-8). Gate-level simulation is M1.
+- `inspect_waves(path, signals, time_range, max_rows=50)` reads VCD or FST with pywellen and returns a compact value table.
+- The 6-cell integration matrix (3 front-ends × 2 simulators), a seeded wrap bug, and a parity test against TT's own `test/Makefile` flow.
 **Acceptance criteria**
-- [ ] Counter tests pass on **both** Icarus and Verilator for **all three** front-ends (CI matrix).
-- [ ] A seeded bug (off-by-one wrap) produces a failure summary naming the test, the assertion, and the expected vs actual value.
-- [ ] Waveform output stays under 50 rows unless more are requested.
+- [ ] Counter tests pass on **both** Icarus and Verilator for **all three** front-ends (CI matrix). *Proof:* `test_counter_sim[fe-sim]`, 6 cells.
+- [ ] A seeded bug (off-by-one wrap) produces a failure summary naming the test, the assertion, and the expected vs actual value, with the first failing assertion in ≤20 lines. *Proof:* `test_seeded_wrap_bug` asserts `{test, file:line, expected, actual}` and the 20-line limit.
+- [ ] Waveform output stays under 50 rows unless more are requested. *Proof:* `test_inspect_waves_rows`.
 
 ## [M0-6] Skill pack v1 + end-to-end agent demo
 **Labels:** `track:digital` `milestone:M0` `skills` `docs`
 **Tasks**
-- `skills/chip-design-loop.md`, `skills/tt-rules.md`, `skills/amaranth-style.md`, `skills/myhdl-style.md`.
+- Skills as package data in `src/siliconsmith/skills/<name>/SKILL.md`: `chip-design-loop`, `tt-rules`, `amaranth-style`, `myhdl-style`, `cocotb2-tests`. They reach the agent through the server's `instructions` and the `explain(topic)` tool.
 - `docs/beginner-guide.md` + glossary (RTL, testbench, synthesis, netlist, GDS, DRC, LVS, slack).
+- `docs/demos/`: a runner for headless `claude -p` sessions, `verify_demo.py`, sanitized Markdown transcripts, and a metrics table.
+- The demo runner sets `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0`. Claude Code moves an MCP call that runs longer than 2 minutes to the background, and in `claude -p` the result of such a call is lost.
+- Update the status lines in the README and PLAN.md once M0 works.
 **Acceptance criteria**
-- [ ] A recorded session (transcript in `docs/demos/`): starting from an empty dir and the prompt "8-bit counter on uo_out, count enable on ui_in[0]", the agent reaches passing tests in each front-end without any human code edits.
-- [ ] Number of loop iterations recorded per front-end.
+- [ ] A recorded session (transcript in `docs/demos/`): starting from an empty dir and the prompt "8-bit counter on uo_out, count enable on ui_in[0]", the agent reaches passing tests in each front-end without any human code edits. *Proof:* `docs/demos/verify_demo.py` and the committed transcripts: the agent's tests **and** the held-out reference test pass on Icarus **and** Verilator for each front-end.
+- [ ] Number of loop iterations recorded per front-end. *Proof:* the metrics table, which lists every attempt.
+
+## [M0-7] Spec capture (`spec.yaml`)
+**Labels:** `track:digital` `milestone:M0` `mcp`
+**Goal:** A short, reviewable spec that the owner can judge, and that is the single source of the clock, pins and requirements.
+**Tasks**
+- `spec.py`: the `spec.yaml` version 1 model (`title`, `summary`, `clock_hz`, `reset`, `pins{ui,uo,uio: {bit: meaning}}`, `requirements[{id: R<n>, text, limit?{min,typ,max,unit}}]`, `open_questions[]`; PLAN.md section 5.7).
+- `write_spec` MCP tool; `create_project` writes a valid stub.
+- `Covers:` parser: reads requirement ids from test docstrings with `ast`, without running the test file.
+**Acceptance criteria**
+- [ ] `write_spec` rejects a missing `clock_hz`, bad requirement ids, an out-of-range pin index, and unknown keys, each with the field path, in ≤20 lines. *Proof:* one unit test per case.
+- [ ] `spec.yaml` is the only source of `clock_hz`, pins and requirements, and `create_project` writes a valid stub. *Proof:* unit tests.
+- [ ] `Covers:` tags are parsed without executing the test file; an unknown R-id gives a warning; a skipped test does not count as coverage; `limit` round-trips. *Proof:* unit tests (the fixture test file raises an error if it is ever imported).
+
+## [M0-8] Validation ledger + status
+**Labels:** `track:digital` `milestone:M0` `mcp`
+**Goal:** Show the owner, in plain English, which checks pass for the current files, and keep that record across agent sessions.
+**Tasks**
+- `ledger.py`: `.siliconsmith/ledger.json` stores facts only (spec approval; one record per `emit_verilog` and `run_tests` run). Only the host writes it.
+- Derived status per step (`pass`, `fail`, `stale`, `not_run`, `not_available`) with per-step input digests (PLAN.md section 5.7).
+- `status` MCP tool and the `siliconsmith status <dir>` command, both writing the same `docs/verification.md`.
+- `siliconsmith approve <dir>`: command line only, terminal confirmation, records git `user.name` and the spec hash. Documented as an honest-use convention; the `chip-design-loop` skill forbids agents from running it.
+- `tests/reference/`: the frozen, held-out counter reference test.
+**Acceptance criteria**
+- [ ] Each step goes stale only when its own inputs change. *Proof:* one unit test per input class (editing X makes exactly the dependent steps stale; for example, editing a nested test helper such as `test/sub/x.py` makes simulation and coverage stale).
+- [ ] Simulation and coverage steps are set only by unfiltered runs with at least one test, and coverage needs passing runs on both simulators at the current digest. *Proof:* unit and integration tests.
+- [ ] No MCP tool can approve the spec, and generated docs are not writable through the tools. *Proof:* tools/list and allow-list tests; `approve` refuses to run without a terminal.
+- [ ] The `status` tool and the command line give the same output; a corrupt or missing ledger gives `not_run` without a crash; M1–M3 steps show `not_available`. *Proof:* unit tests.
+- [ ] A frozen reference test for the counter is committed under `tests/reference/`. It assumes only the prompt: +1 per clock while `ui_in[0]` is 1, hold while it is 0, wrap from 255 to 0, and no particular reset value. *Proof:* committed with this issue's PR and run by CI and the M0-6 demo.
 
 ---
+
+## [M1-0] LibreLane image pin, ciel PDK volume, `tt.lock`, native Yosys decision, `run_tests(gl)` plumbing
+**Labels:** `track:digital` `milestone:M1` `pdk` `infra`
+**Goal:** Everything M1 to M3 depends on, pinned to the versions Tiny Tapeout uses, before any synthesis code is written.
+**Key constraints**
+- Run LibreLane from `ghcr.io/librelane/librelane:3.0.14` referenced by digest (the version tt-gds-action installs at `ttsky26d`/`ttsky26e`), started directly with our container flags (PLAN.md section 5.1). Never `librelane --dockerized` (it mounts the whole `$HOME` read-write). Never a Python dependency of our package (it pulls in the GPL `klayout` module).
+- The sky130 PDK lives in a Docker volume filled by `ciel` at open_pdks `8afc8346a57fe1ab7934ba5a6056ea8b43078e71` (LibreLane 3.0.14's hash); fetch only the libraries we need (`sky130_fd_sc_hd`) where that is enough. Cache it in CI.
+- `tt.lock` records the shuttle tag, the tt-support-tools commit, the LibreLane version, and the sky130 hash per TT step (harden/GL `8afc8346…`, precheck `0536d02d…`).
+- Decide whether to replace the M0 `yowasp-yosys` shim with a native Yosys 0.62 build, and record why. (yowasp-yosys 0.62 already supports `-dont_use`; decide on the speed of the WebAssembly build for synthesis-size designs, and whether synthesis should run in the LibreLane image's native Yosys instead.)
+- Add the `gl` option to `run_tests` and the gate-level plumbing that M1-2 uses.
+Acceptance criteria are finalized in the milestone's plan-mode pass.
 
 ## [M1-1] `synthesize` tool on sky130
 **Labels:** `track:digital` `milestone:M1` `synth`
 **Tasks**
-- Yosys synthesis to generic gates and sky130_fd_sc_hd (liberty from PDK via ciel).
-- Parse `stat`: cell count, area µm², flops vs combinational, estimated tile utilization (≈1,000 gates/tile guide from TT FAQ).
+- Yosys synthesis to generic gates and sky130_fd_sc_hd (liberty and PDK from the M1-0 volume). Mirror LibreLane 3.0.14's synthesis script so our numbers match TT's flow, and exclude the cells in the PDK's `no_synth.cells` and `drc_exclude.cells` lists as LibreLane does (it trims them from the liberty file; `-dont_use` is the equivalent Yosys option).
+- Write `src/config.json` `CLOCK_PERIOD` = 1e9 / `clock_hz` (in ns) from `spec.yaml`, and `info.yaml` `clock_hz` from the same value; a unit test checks that they agree. Warn when `clock_hz` is above 66 MHz (the TT IO limit).
+- Parse `stat -json`: cell count, area µm², flops vs combinational.
+- Utilization estimate = total standard-cell area ÷ (tile area from tt-support-tools `tech/sky130A/tile_sizes.yaml` × `PL_TARGET_DENSITY_PCT`/100). Validate `tiles` against `tile_sizes.yaml`.
 - Detect latches, combinational loops, multi-driven nets, and undriven outputs with source locations.
 **Acceptance criteria**
 - [ ] Counter synthesis reports cell count and area.
-- [ ] Seeded latch (incomplete `if` in combinational logic) is reported with file and line.
-- [ ] Estimate warns when the design likely exceeds the chosen `tiles`.
+- [ ] A seeded latch (incomplete `if` in combinational logic) in Verilog and in MyHDL is reported with file and line. Amaranth is not applicable: its combinational domain cannot infer latches.
+- [ ] The utilization estimate warns when it is above 0.9 and predicts a failure above 1.0 of the chosen `tiles` budget; a unit test checks the formula with a known cell area.
 
 ## [M1-2] Gate-level simulation
 **Labels:** `track:digital` `milestone:M1` `sim`
+**Tasks**
+- `run_tests(gl=true)` on Icarus (as TT does), against the Yosys netlist from M1-1 plus the PDK's `sky130_fd_sc_hd` `primitives.v` and `sky130_fd_sc_hd.v`, with the defines `FUNCTIONAL`, `SIM` and `UNIT_DELAY=#1`. Do **not** define `USE_POWER_PINS` or `GL_TEST`: those are for LibreLane's powered netlist (M2/M3), and with them the unpowered Yosys netlist simulates as all X or fails to elaborate.
+- Verilator gate-level simulation is not in scope.
 **Acceptance criteria**
 - [ ] `run_tests(gl=true)` reruns the cocotb tests against the synthesized sky130 netlist with cell models, and they pass for the counter.
-- [ ] Mismatch between RTL and GL results is reported clearly.
+- [ ] Mismatch between RTL and GL results is reported clearly. Seeded case: a register set by `initial q = 0;` instead of a reset passes RTL simulation and fails GL with X on `uo_out`; the report names the signal and the first differing cycle.
+
+## [M1-3] EQY RTL-vs-netlist equivalence
+**Labels:** `track:digital` `milestone:M1` `synth`
+**Goal:** Prove the synthesized netlist does the same thing as the RTL, independent of how good the tests are.
+**Key constraints**
+- Use Yosys EQY (ISC-licensed; the LibreLane image already contains it) with the cell models from the pinned PDK. Verify and record its license in `THIRD_PARTY_LICENSES.md` when it is added.
+- A seeded non-equivalent netlist must be reported clearly.
+- Do not rely on TT's separate `eqy_test` action; it pins a third sky130 hash and is out of date.
+Acceptance criteria are finalized in the milestone's plan-mode pass.
 
 ---
 
 ## [M2-1] LibreLane integration (OpenLane 2 successor)
 **Labels:** `track:digital` `milestone:M2` `layout`
 **Tasks**
-- Decide: reuse LibreLane's official container vs adding it to our image (document why).
-- Pin the LibreLane and sky130A versions to the ones used by `TinyTapeout/tt-gds-action` for the current shuttle.
+- Use the LibreLane 3.0.14 image pinned by digest in M1-0, run directly with our container flags (PLAN.md section 5.1), never with `--dockerized`. The PDK comes from the M1-0 volume; versions come from `tt.lock`.
 - `run_layout(stage=full|floorplan|place|cts|route|signoff, config_overrides)` with a TT 1x1 die-area config.
 **Acceptance criteria**
-- [ ] Counter → GDS on sky130A at 1x1 tile size, 0 DRC (Magic + KLayout), LVS clean, no setup/hold violations at 50 MHz.
-- [ ] Runtime and peak RAM recorded for a typical laptop/CI runner.
+- [ ] Counter → GDS on sky130A at 1x1 tile size, 0 DRC (Magic + KLayout), LVS clean, and setup and hold slack ≥ 0 at 50 MHz in every STA corner LibreLane reports for the TT config.
+- [ ] Runtime and peak RAM measured on the GitHub `ubuntu-24.04` runner (laptop numbers are informational, labelled by CPU architecture).
 - [ ] Failing step is named in `summary` when the flow fails.
 
 ## [M2-2] `read_report` parsers (timing, DRC, LVS, antenna, area, power)
@@ -110,7 +174,7 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 **Acceptance criteria**
 - [ ] Parsers are unit-tested against real saved LibreLane run fixtures.
 - [ ] `read_report(kind=timing, top_n=5)` returns the worst paths with startpoint, endpoint, slack and corner.
-- [ ] Seeded oversize design (e.g. 64-bit multiplier in 1x1) returns a utilization/placement failure plus `next_hints` (raise tiles, reduce logic).
+- [ ] A seeded oversize design in a 1x1 tile returns a utilization/placement failure plus `next_hints` (raise tiles, reduce logic). The fixture: two 64-bit shift registers loaded serially from `ui_in[7:0]`, a registered 64×64 product, XOR-reduced to `uo_out`, so synthesis cannot optimize the logic away.
 
 ## [M2-3] `render_layout`
 **Labels:** `track:digital` `milestone:M2`
@@ -118,13 +182,31 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - [ ] PNG of the final GDS is produced via the KLayout CLI (external process; GPL tool not imported).
 - [ ] Image path is returned and linked from the run summary.
 
+## [M2-4] Debug skills (debug-timing, debug-drc)
+**Labels:** `track:digital` `milestone:M2` `skills` `docs`
+**Goal:** Teach the agent, and the owner, how to read the parsed layout reports and what to try next.
+**Key constraints**
+- `SKILL.md` format under `src/siliconsmith/skills/`, served through the server `instructions` and `explain`, like the M0 skills.
+- Use LibreLane 3 names (`PL_TARGET_DENSITY_PCT`, not the old `PL_TARGET_DENSITY`) and TT's tile sizes from `tile_sizes.yaml`.
+- Usual fixes: pipeline a stage, lower the clock, raise tiles, adjust density. Plain English for a beginner.
+Acceptance criteria are finalized in the milestone's plan-mode pass.
+
+## [M2-5] Long-running job handles + progress notifications
+**Labels:** `track:digital` `milestone:M2` `mcp`
+**Goal:** Layout runs take minutes; they must not hit client timeouts or block the agent loop.
+**Key constraints**
+- Plain tool-level job handles (start, status, wait, cancel), not MCP Tasks. A detached container per run; job state kept under `build/` so status survives a server restart.
+- MCP progress notifications while waiting. Client limits to design for: Codex has a per-server tool timeout (`tool_timeout_sec`); Claude Code aborts a stdio call after 30 minutes without progress and moves calls longer than 2 minutes to the background.
+Acceptance criteria are finalized in the milestone's plan-mode pass.
+
 ---
 
 ## [M3-1] `export_tt`: Tiny Tapeout submission repo
 **Labels:** `track:digital` `milestone:M3` `tinytapeout`
 **Tasks**
-- Generate repo in the current `ttsky-verilog-template` format: `info.yaml` (title, author, description, `language` = Amaranth/MyHDL/Verilog, `clock_hz`, `tiles`, `top_module`, `source_files`, full pinout), `src/`, `test/` (cocotb), `docs/info.md`, `.github/workflows/gds.yaml` pinned to the current shuttle tag.
-- For Amaranth/MyHDL: commit the generated Verilog plus the Python source (document which is authoritative).
+- Write the export to a fixed directory inside the project (for example `export/tt/`), never to an agent-chosen `repo_dir`.
+- Generate the repo in the current `ttsky-verilog-template` format: `info.yaml` generated from `spec.yaml` and the project with `yaml.safe_dump` (title, author, description, `language` = Amaranth/MyHDL/Verilog as free text, `clock_hz`, `tiles`, `top_module`, `source_files`, full pinout), `src/`, `test/` (cocotb), `docs/info.md`, and `.github/workflows/*.yaml` using `TinyTapeout/tt-gds-action@<shuttle tag>` from `tt.lock`. Template files (`test/Makefile`, workflows) are copied byte-for-byte from the pinned template.
+- For Amaranth/MyHDL: TT's tools read only Verilog, so the generated Verilog is committed in `src/` and listed in `source_files`; the Python source goes in `hdl/`. The docs say the Python source is what you edit and the Verilog is what TT builds.
 **Acceptance criteria**
 - [ ] Exported counter repo, pushed **by the owner** to a test repo, passes TT's `gds`, `precheck`, and `gl_test` Actions.
 - [ ] `docs/info.md` explains how to test on the TT demo board in plain English.
@@ -132,6 +214,8 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 
 ## [M3-2] `tt_precheck` locally
 **Labels:** `track:digital` `milestone:M3` `tinytapeout`
+**Tasks**
+- Run TT's precheck in TT's own environment: the `nix-shell` defined by tt-support-tools `precheck/default.nix` (Magic and KLayout versions differ from the ones in the LibreLane image), with the sky130 PDK at the precheck hash `0536d02d875c8f67dd7cca3902ac457e62f20005` from `tt.lock`, and the export directory mounted read-only.
 **Acceptance criteria**
 - [ ] Runs TT's precheck (from `tt-support-tools` / `tt-gds-action`) locally or documents why only CI can run it.
 - [ ] Failures are mapped to structured hints (e.g. missing pinout entry, wrong top module name).
@@ -141,6 +225,34 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 **Acceptance criteria**
 - [ ] Step-by-step guide from idea to submission-ready repo.
 - [ ] Cost section links the official [TT calculator](https://app.tinytapeout.com/calculator) and says prices change. As of 2026-11-11 the calculator default view showed €70/tile, €300/devkit, €15 shipping (1 tile + devkit + shipping = €385). Re-check before any order.
+
+## [M3-4] Automated tt-compat gate + spec→info.yaml/docs generation
+**Labels:** `track:digital` `milestone:M3` `tinytapeout` `infra`
+**Goal:** Prove in our own CI, on every relevant change, that an exported repo passes TT's checks, so the owner's manual push is only a one-time confirmation.
+**Key constraints**
+- `tt-compat.yml` runs `export_tt` for the counter, then TT's `tt-gds-action` (`gds`, `precheck`, `gl_test`) in one workflow run, at the shuttle tag and tt-support-tools commit pinned in `tt.lock` (TT moves its tags, and the action uses tt-support-tools `main` by default).
+- `info.yaml` (pinout, `clock_hz`, `top_module`, `source_files`) and the pin table and test steps in `docs/info.md` are generated from `spec.yaml`, so there is one source of truth.
+Acceptance criteria are finalized in the milestone's plan-mode pass.
+
+## [M3-5] Demo-board bring-up test (microcotb) + shuttle guide
+**Labels:** `track:digital` `milestone:M3` `tinytapeout` `docs`
+**Goal:** Turn the pin-level cocotb tests into a test the owner can run on the real chip on the TT demo board, and explain how to pick and use a shuttle.
+**Key constraints**
+- `export_tt` generates a bring-up script for the demo board from the pin-level requirement tests, using microcotb (cocotb-style tests on the demo board). It is marked "unverified until run on hardware", and silicon bring-up stays an owner step in the validation sequence.
+- Requirement tests use `ClockCycles`, not absolute `Timer` delays, so they also work at the board's slower clocks.
+- The shuttle guide is plain English and never orders or submits anything; prices and dates point at TT's own pages.
+- microcotb is LGPL-2.1 according to its repository's `LICENSE` (checked 2026-11-11); verify it again from the official repo when it is added and record it in `THIRD_PARTY_LICENSES.md`. Exported repos import it unmodified; our package does not.
+Acceptance criteria are finalized in the milestone's plan-mode pass.
+
+## [M3-6] Distribution: Claude Code plugin, install-skills CLI, MCP prompts/resources
+**Labels:** `track:digital` `milestone:M3` `skills` `mcp`
+**Goal:** Make the skills and the server easy to install in each agent, beyond the M0 delivery through server `instructions` and `explain`.
+**Key constraints**
+- A Claude Code plugin that bundles the MCP server config and the `SKILL.md` skills (check the current plugin manifest format when building it).
+- `siliconsmith install-skills --client claude|codex|cursor [--user]` copies the skills into the client's skills folder.
+- MCP prompts and resources expose the same skill text.
+- One source of skill text (package data); no copies that can drift.
+Acceptance criteria are finalized in the milestone's plan-mode pass.
 
 ---
 
@@ -174,6 +286,14 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - [ ] About 10 prompts (some adapted from VerilogEval/RTLLM, both MIT, with attribution) run through the MCP loop for a chosen model.
 - [ ] Reports pass rate, iterations and token/cost per design. **Manual trigger only.**
 
+## [M4-6] Mutation / weak-test check
+**Labels:** `track:digital` `milestone:M4` `eval`
+**Goal:** Catch tests that pass but do not really test the design.
+**Key constraints**
+- Inject faults into the design (for example with Yosys `mutate`) and report the share of mutants the cocotb tests catch.
+- Runs in the toolchain container like every other tool; report in the standard result shape.
+Acceptance criteria are finalized in the milestone's plan-mode pass.
+
 ---
 
 ## [M5-1] (optional) Extra PDKs: GF180MCU and IHP SG13G2
@@ -185,8 +305,17 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 ## [M5-2] Digital skills point at the analog/RF track
 **Labels:** `track:digital` `milestone:M5` `docs` `skills`
 **Acceptance criteria**
-- [ ] `skills/analog-reality.md` (and the beginner docs) state the digital/analog split, point at the analog/RF issues, and do not treat analog as "docs only."
+- [ ] `src/siliconsmith/skills/analog-reality/SKILL.md` (and the beginner docs) state the digital/analog split, point at the analog/RF issues, and do not treat analog as "docs only."
 - [ ] The skill stays honest: no 2.4 GHz Bluetooth radio claim, no SAW/BAW fab claim.
+
+## [M5-3] Infra follow-ups: streamable HTTP transport, arm64 image, hosted GPL source bundle
+**Labels:** `track:digital` `milestone:M5` `infra` `docker`
+**Goal:** Infrastructure that M0 deliberately left out.
+**Key constraints**
+- Streamable HTTP transport: whoever can call the tools can start containers, so bind to loopback only unless a bearer token is configured; validate `Origin`; turn DNS-rebinding protection on explicitly (the MCP SDK enables it automatically only for localhost hosts); a test shows a request with a foreign `Origin` is refused.
+- arm64 image (`linux/arm64`) for Apple Silicon and ARM Linux, with the same pins where upstream provides them.
+- A hosted corresponding-source bundle per published image (for example a release asset or OCI artifact named after the image digest), in addition to `SOURCES.txt` and the written offer. It is the backstop if the Ubuntu archive or an upstream source that `SOURCES.txt` points at disappears: for the GPL-3.0 components we remain responsible for that source staying available (`THIRD_PARTY_LICENSES.md` rule 3).
+Acceptance criteria are finalized in the milestone's plan-mode pass.
 
 ---
 
@@ -271,7 +400,7 @@ Work starts after digital M0 is green. First design targets: oscillator, VCO, LN
 ## [A3-2] `export_tt_analog`
 **Labels:** `track:analog-rf` `milestone:A3` `tinytapeout`
 **Acceptance criteria**
-- [ ] Exports a chosen analog block (prefer the oscillator if it is clean) in the current `ttsky-analog-template` format: `info.yaml` (tiles 1x2 or 2x2, `analog_pins`, pinout, `uses_3v3` if needed), GDS/LEF paths, `src/project.v` stub, `docs/info.md`.
+- [ ] Exports a chosen analog block (prefer the oscillator if it is clean) in the current `ttsky-analog-template` format: `info.yaml` (tiles 1x2 or 2x2, `analog_pins`, pinout, `uses_vapwr` (formerly `uses_3v3`) if needed), GDS/LEF paths, `src/project.v` stub, `docs/info.md`.
 - [ ] Nothing is ordered or submitted automatically. The owner would push and submit by hand.
 - [ ] Docs link the official TT analog specs and calculator, and repeat that prices change.
 
@@ -299,7 +428,7 @@ Research and stretch. Design and simulation only. There is no open SAW/BAW fab i
 ## [S0-1] Acoustic reality note
 **Labels:** `track:acoustic` `milestone:S0` `docs` `research`
 **Acceptance criteria**
-- [ ] `docs/` + `skills/acoustic-reality.md` explain what SAW/BAW devices are, why they are not CMOS Tiny Tapeout parts, and that this track will not fabricate them.
+- [ ] `docs/` + `src/siliconsmith/skills/acoustic-reality/SKILL.md` explain what SAW/BAW devices are, why they are not CMOS Tiny Tapeout parts, and that this track will not fabricate them.
 - [ ] Each solver is described accurately: Mason/BVD are equivalent-circuit models we implement; Elmer may do piezoelectric FEM *(to be verified in S1)*; openEMS is EM FDTD, not a piezo acoustic solver.
 - [ ] Licenses point at `THIRD_PARTY_LICENSES.md`.
 

@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "siliconsmith"
+dynamic = ["version"]
+description = "MCP server, skills and a pinned Docker toolchain that let an AI coding agent design small chips with open-source tools."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Adam Engelbrecht" }]
+dependencies = [
+  "mcp>=2.3,<3",
+  "pydantic>=2",
+  "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+amaranth = ["amaranth[builtin-yosys]>=0.5.10,<0.6"]
+myhdl = ["myhdl>=0.11.52,<0.12"]
+
+[project.scripts]
+siliconsmith = "siliconsmith.cli:main"
+
+[dependency-groups]
+dev = [
+  "ruff==0.17.4",
+  "mypy==2.4.1",
+  "pytest==9.2.0",
+  "anyio==4.16.0",
+  "types-PyYAML==6.0.12.20261111",
+]
+
+[tool.hatch.version]
+path = "src/siliconsmith/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/siliconsmith"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = ["integration: needs Docker and the toolchain image"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["amaranth.*", "myhdl.*", "cocotb.*", "cocotb_tools.*", "pywellen.*"]
+ignore_missing_imports = true

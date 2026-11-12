@@ -6,7 +6,7 @@ You are implementing Siliconsmith. Read this file and `PLAN.md` before you write
 
 Siliconsmith is an Apache-2.0 MCP server plus a skill pack and a pinned Docker toolchain. It lets an AI coding agent design small chips with open-source tools only. There are three tracks (digital, analog/RF, acoustic filters) that share one MCP server, one toolchain image, and one agent loop. Details, architecture, and acceptance criteria are in `PLAN.md`. Issues are in `ISSUES.md` and on GitHub.
 
-This repo starts as a plan-only starter. You will add the implementation.
+The repo started as a plan-only starter. Digital milestone M0 is now being implemented, one pull request per issue.
 
 ## Order of work
 
@@ -24,18 +24,26 @@ This repo starts as a plan-only starter. You will add the implementation.
 - GPL and LGPL tools are listed in `THIRD_PARTY_LICENSES.md`. If you add a tool, verify its license from the project's official source, record it in that file, and follow the same subprocess rule.
 - Do not copy code from repositories that have **no license**. That includes [ssql2014/mcp4eda](https://github.com/ssql2014/mcp4eda). You may read public docs or papers for ideas; you may not paste or adapt their code.
 - Pin the toolchain in a Docker image (`ghcr.io/rfingadam/siliconsmith-toolchain`). Do not require host installs besides Docker and Python.
+- **Agent-written code runs only through the container runner.** Amaranth/MyHDL elaboration, cocotb tests, and later LibreLane configs are code the agent wrote. Run them only via the hardened `docker run` in `runners/docker.py` (`PLAN.md` section 5.1), never in the server process or a host subprocess. The server never imports amaranth, myhdl or cocotb. Never use `librelane --dockerized`.
+
+## APIs that changed (most examples online are out of date)
+
+- **MCP Python SDK v2** (`mcp>=2.3,<3`): `from mcp.server import MCPServer`. Report usage and toolchain errors by raising `ToolError` (from `mcp.server.mcpserver.exceptions`); never return an error string. Test with `from mcp import Client` (`async with Client(server) as c: await c.call_tool(...)`). Never use `mcp.server.fastmcp` or `FastMCP`; that is the v1 API and does not import on v2.
+- **cocotb 2.x** (`cocotb==2.1.0`): the runner is `cocotb_tools.runner` (not `cocotb.runner`); `Clock(dut.clk, 10, unit="ns")` (not `units=`); read values with `int(dut.x.value)`. `BinaryValue`, `.integer` and `cocotb.fork` are gone (use `cocotb.start_soon`).
+- CI fails on `FastMCP`, `BinaryValue`, `cocotb.runner` and `units=` in `src/**/*.py` and `src/siliconsmith/templates/**`. Skill text (`SKILL.md`) is not scanned, because the `cocotb2-tests` skill names these on purpose.
 
 ## Issues and CI
 
-- Implement against the GitHub issues. When a issue's acceptance criteria are met, update `ISSUES.md` and close the GitHub issue with a short comment pointing at the PR or commit.
+- Implement against the GitHub issues. When an issue's acceptance criteria are met, tick its boxes in `ISSUES.md` **and** in the GitHub issue body, then close the GitHub issue with a short comment pointing at the PR or commit.
 - Keep labels (`track:…`, `milestone:…`) accurate. Do not add an `agent-approved` label.
-- Extend `.github/workflows/ci.yml` as you go (ruff, mypy, tests, later synthesis/layout). The placeholder job must keep passing until you replace it with real checks.
+- Extend `.github/workflows/ci.yml` as you go (ruff, mypy, tests, later synthesis/layout). Keep every `ci.yml` job green on `main`.
 
 ## Git and attribution
 
 - Commits are authored as the repository owner, Adam Engelbrecht (`RFingAdam`).
-- **No bot credit in commits.** Do not add `Co-Authored-By`, `Signed-off-by` for a bot, Cursor/Claude/Codex trailers, or any line that names an AI tool as a commit author or co-author.
-- Do not force-push, rebase published history, or use admin bypass.
+- **No bot credit in commits or PRs.** Agents never add `Signed-off-by` lines (not even the owner's), `Co-authored-by` lines, "Generated with" lines, Cursor/Claude/Codex trailers, or any line that names an AI tool as an author or co-author. Outside contributors sign off their own commits (DCO).
+- **CI trailer scan.** It fails on `Co-authored-by`, "Generated with" and AI-tool trailers in any commit of the PR or in the PR body. It fails on `Signed-off-by` only in PRs from a branch of this repository (the owner's and agents' PRs). In PRs from a fork, outside contributors' own `Signed-off-by` lines pass.
+- Update a branch with `git merge origin/main`. Never rebase or force-push, and never use admin bypass.
 
 ## Product rules
 

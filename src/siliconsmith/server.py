@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+
+"""MCP server (stdio), built on the MCP Python SDK v2 `MCPServer` class."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+
+from mcp.server import MCPServer
+
+from siliconsmith._version import __version__
+from siliconsmith.context import ServerContext
+from siliconsmith.tools import register_all
+
+logger = logging.getLogger("siliconsmith")
+
+FRONTENDS = ("amaranth", "myhdl", "verilog")
+
+INSTRUCTIONS = (
+    "Siliconsmith designs small digital chips with open-source tools. "
+    "Work in a project directory under the server root. Write the spec and tests first, "
+    "then the RTL, then check and simulate."
+)
+
+
+class RootError(ValueError):
+    """The project root could not be chosen safely."""
+
+
+def resolve_root(
+    explicit: str | None,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    """Pick the server root: --root, then SILICONSMITH_ROOT, CLAUDE_PROJECT_DIR, then cwd.
+
+    "/" and the home directory are refused unless given with --root, because every project
+    directory is created under the root.
+    """
+    env = os.environ if env is None else env
+    if explicit is not None:
+        if not explicit.strip():
+            raise RootError("--root was given an empty value")
+        candidate = Path(explicit).expanduser().resolve()
+        if not candidate.is_dir():
+            raise RootError(f"--root {candidate} is not a directory")
+        return candidate
+    source = "the working directory"
+    candidate = (cwd or Path.cwd()).resolve()
+    for key in ("SILICONSMITH_ROOT", "CLAUDE_PROJECT_DIR"):
+        value = env.get(key)
+        if value:
+            source = key
+            candidate = Path(value).expanduser().resolve()
+            break
+    if candidate == Path("/") or candidate == Path.home().resolve():
+        raise RootError(
+            f"refusing to use {candidate} as the root; pass it explicitly with --root "
+            "or start the server in a project directory"
+        )
+    if not candidate.is_dir():
+        raise RootError(f"{source} {candidate} is not a directory")
+    return candidate
+
+
+def build_server(root: Path, default_frontend: str | None) -> MCPServer:
+    server = MCPServer("siliconsmith", instructions=INSTRUCTIONS, version=__version__)
+    register_all(server, ServerContext(root=root, default_frontend=default_frontend))
+    return server
+
+
+def main(argv: Sequence[str] | None = None, prog: str = "siliconsmith server") -> int:
+    parser = argparse.ArgumentParser(prog=prog, description="Siliconsmith MCP server")
+    parser.add_argument("--root", help="directory that holds project directories")
+    parser.add_argument("--default-frontend", choices=FRONTENDS, help="default HDL front end")
+    args = parser.parse_args(argv)
+    # Logs go to stderr: stdout carries the MCP stdio transport.
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(levelname)s %(message)s")
+    try:
+        root = resolve_root(args.root)
+    except RootError as exc:
+        parser.error(str(exc))
+    logger.info("siliconsmith %s using root %s", __version__, root)
+    build_server(root, args.default_frontend).run("stdio")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
