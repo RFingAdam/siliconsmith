@@ -25,7 +25,7 @@ Rules that always apply:
 5. `emit_verilog`: turns the design into Verilog and lints it. Fix every lint finding before simulating. A latch or a multiply driven signal is an error.
 6. `run_tests` with `simulator="icarus"`, then again with `simulator="verilator"`. Both must pass; they disagree sometimes, and that is a real finding.
 7. `synthesize`, once both simulators pass: it turns the design into real sky130 gates and reports cells, area and how full the tile would be. See "What synthesis proves" below.
-8. `run_tests` with `simulator="icarus"` and `gl=true`: the gate-level run (see "What gate-level simulation proves" below). It synthesizes again by itself, so it also works right after a design change.
+8. `run_tests(simulator="icarus", gl=true)`: your same tests on the real gates (see below). It synthesizes by itself.
 9. `status`: shows which checks pass for the current files and writes `docs/verification.md` for the owner to read.
 
 ## What synthesis proves
