@@ -10,6 +10,7 @@ edits of the netlist, exactly what a person (or a bug in a tool) could do.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 # Same pin names (and/or/xor drive X; nand/nor/xnor/*oi drive Y), different function.
 PARTNER = {
@@ -99,6 +100,32 @@ def z_constant(text: str, pin: str = "uio_out[0]") -> tuple[str, str]:
     """Drive an output pin from a 1'bz literal instead of its tie cell."""
     tie = _cell(text, rf"conb_1 \S+ \(\s*\.LO\({re.escape(pin)}\)")
     return _replace(text, tie, f"assign {pin} = 1'bz;"), f"{pin} = 1'bz"
+
+
+def z_constant_spelled(spelling: str) -> Callable[[str], tuple[str, str]]:
+    """A seed that drives an output pin from a z literal written as `spelling` (`'bz`, `1'b z`...).
+
+    The attack rounds found spellings a simple text search misses; Yosys reads all of them as z.
+    """
+
+    def seed(text: str, pin: str = "uio_out[0]") -> tuple[str, str]:
+        tie = _cell(text, rf"conb_1 \S+ \(\s*\.LO\({re.escape(pin)}\)")
+        return _replace(text, tie, f"assign {pin} = {spelling};"), f"{pin} = {spelling}"
+
+    return seed
+
+
+def hold_flop_with_init_attribute(text: str, pin: str = "uio_oe[0]") -> tuple[str, str]:
+    """`hold_flop_on_tied_output` plus `(* init = 0 *)` on the pin's wire: an attribute would give
+    the flop a power-up value that a chip does not have."""
+    edited, what = hold_flop_on_tied_output(text, pin)
+    decl = re.search(r"^\s*wire \[7:0\] uio_oe;", edited, re.M)
+    if decl is None:
+        raise ValueError("no declaration of uio_oe")
+    edited = (
+        edited[: decl.start()] + "  (* init = 8'b00000000 *)" + edited[decl.start() :].lstrip(" ")
+    )
+    return edited, f"{what}, and an init attribute on uio_oe"
 
 
 def clock_from_inverter(text: str) -> tuple[str, str]:

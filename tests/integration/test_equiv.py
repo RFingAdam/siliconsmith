@@ -23,8 +23,10 @@ from netlist_edit import (
     clock_from_inverter,
     combinational_loop,
     hold_flop_on_tied_output,
+    hold_flop_with_init_attribute,
     swap_cell_type,
     z_constant,
+    z_constant_spelled,
 )
 
 from integration.helpers import run_hardened
@@ -172,13 +174,20 @@ async def test_equiv_designs(server: Client, tmp_path: Path, design: str, fe: st
 
 
 # -- regression seeds from the attack rounds ----------------------------------------------------
-# Netlist seeds: one real production counter netlist, five hand edits, ONE container call (the
+# Netlist seeds: one real production counter netlist, ten hand edits, ONE container call (the
 # synthesis is the slow part). Each answer must be one of the refusals named here, never a pass.
 
 NETLIST_SEEDS = {
     "hold": (hold_flop_on_tied_output, "not_equivalent", None),
     "async": (async_set_and_reset, "not_proven", "guard_async_set_reset"),
     "z": (z_constant, "error", "xz_constant"),
+    # the same z in the spellings a plain text search misses (found by the validator)
+    "z_unsized": (z_constant_spelled("'bz"), "error", "xz_constant"),
+    "z_blanks": (z_constant_spelled("1 'b z"), "error", "xz_constant"),
+    "z_hex": (z_constant_spelled("'hz"), "error", "xz_constant"),
+    "z_fill": (z_constant_spelled("'z"), "error", "xz_constant"),
+    # a netlist `init` attribute must not give a flop a power-up value
+    "init_attr": (hold_flop_with_init_attribute, "not_equivalent", None),
     "clkinv": (clock_from_inverter, "not_proven", "guard_clocking"),
     "loop": (combinational_loop, "error", "structure"),
 }
@@ -212,7 +221,7 @@ async def test_equiv_netlist_seeds(server: Client, tmp_path: Path, image: str) -
         assert proc.returncode == 0, proc.stderr
         verdicts = [json.loads(line) for line in proc.stdout.strip().splitlines()]
         assert len(verdicts) == len(NETLIST_SEEDS), proc.stdout
-        print(f"\nfive netlist seeds in one container call: {time.monotonic() - started:.1f} s")
+        print(f"\nnetlist seeds in one container call: {time.monotonic() - started:.1f} s")
         for (name, (_, verdict, reason)), got in zip(NETLIST_SEEDS.items(), verdicts, strict=True):
             print(f"seed {name}: {got['verdict']} {got['reason']}: {got['message']}")
             assert got["ok"] is False, name
@@ -226,6 +235,10 @@ RTL_SEEDS = [
     ("initz", "verilog", "not_equivalent", "rtl_initial_value"),
     ("initz", "amaranth", "not_equivalent", "rtl_initial_value"),
     ("fallingedge", "verilog", "not_proven", "guard_clocking"),
+    # an initial value that first reaches a pin at cycle 42: past the bounded search from reset,
+    # so it must be not proven (it used to be called equivalent, which was wrong)
+    ("deepinit", "verilog", "not_proven", "initial_values"),
+    ("deepinit", "amaranth", "not_proven", "initial_values"),
 ]
 
 
