@@ -4,11 +4,13 @@
 """The validation ledger: `.siliconsmith/ledger.json` (PLAN.md section 5.7).
 
 The ledger stores facts only: the owner's approval of the spec, and one record per
-`emit_verilog`, `run_tests` or `synthesize` run (a gate-level `run_tests` run is marked `gl` and
-carries both the `sim` and the `synth` digests, taken before the run). It never says whether a
-step "passes"; `status.py` works that out from these facts and the current files. Only the host
-writes it (the container never sees `.siliconsmith`), and every write here is atomic. The caller
-holds `paths.project_lock`: the lock is not re-entrant, so nothing in this module takes it.
+`emit_verilog`, `run_tests`, `synthesize` or `check_equivalence` run (a gate-level `run_tests` run
+is marked `gl` and carries both the `sim` and the `synth` digests, taken before the run; an
+equivalence run is judged on the `synth` digest alone, because its inputs are the synthesis's).
+It never says whether a step "passes"; `status.py` works that out from these facts and the
+current files. Only the host writes it (the container never sees `.siliconsmith`), and every
+write here is atomic. The caller holds `paths.project_lock`: the lock is not re-entrant, so
+nothing in this module takes it.
 
 A digest is a sha256 over a sorted list of `(relative path, sha256 of the bytes)` for an explicit
 set of files, plus the image name and the Siliconsmith version. It never covers whole folders, so
@@ -50,7 +52,7 @@ RESCUE_LEDGER_BYTES = 256 * 1024 * 1024
 MAX_HASHED_FILE_BYTES = 2 * 1024 * 1024
 SPEC_REL = "spec.yaml"
 
-Tool = Literal["emit_verilog", "run_tests", "synthesize"]
+Tool = Literal["emit_verilog", "run_tests", "synthesize", "check_equivalence"]
 Simulator = Literal["icarus", "verilator"]
 Outcome = Literal["pass", "fail", "skip", "error"]
 
@@ -91,6 +93,15 @@ class SynthFacts(_Model):
     netlist_sha256: str | None = None
 
 
+class EquivFacts(_Model):
+    """Facts of a `check_equivalence` run that reached the check (all optional)."""
+
+    verdict: str | None = None  # equivalent | not_equivalent | not_proven | error
+    reason: str | None = None
+    method: str | None = None  # equiv_induct | k-induction length L
+    netlist_sha256: str | None = None  # the netlist the check ran on
+
+
 class RunRecord(_Model):
     tool: Tool
     sim: Simulator | None = None
@@ -105,6 +116,7 @@ class RunRecord(_Model):
     digests: Digests
     tests: list[RunTest] = Field(default_factory=list)
     synth: SynthFacts | None = None  # only on synthesize records
+    equiv: EquivFacts | None = None  # only on check_equivalence records that reached the check
 
 
 class Ledger(_Model):
@@ -312,6 +324,12 @@ def record_from_result(
             synth = SynthFacts.model_validate(details["synth"])
         except ValidationError:
             synth = None  # facts only: drop what cannot be read rather than guess
+    equiv: EquivFacts | None = None
+    if tool == "check_equivalence" and isinstance(details.get("equiv"), dict):
+        try:
+            equiv = EquivFacts.model_validate(details["equiv"])
+        except ValidationError:
+            equiv = None
     return RunRecord(
         tool=tool,
         sim=sim,
@@ -326,6 +344,7 @@ def record_from_result(
         digests=digests if digests is not None else compute_digests(project, image),
         tests=tests,
         synth=synth,
+        equiv=equiv,
     )
 
 

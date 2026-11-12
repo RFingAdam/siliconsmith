@@ -132,7 +132,7 @@ def test_everything_passes_after_full_runs(tmp_path: Path) -> None:
         "coverage": "pass",
         "synthesis": "not_run",
         "gate_sim": "not_run",
-        "equivalence": "not_available",
+        "equivalence": "not_run",
         "layout": "not_available",
         "tt_precheck": "not_available",
         "bring_up": "not_available",
@@ -143,7 +143,7 @@ def test_everything_passes_after_full_runs(tmp_path: Path) -> None:
     assert by_key["gate_sim"].evidence.startswith(
         "Call run_tests with simulator icarus and gl=True"
     )
-    assert by_key["equivalence"].evidence == "Comes with milestone M1"
+    assert by_key["equivalence"].evidence.startswith("Call check_equivalence")
     assert by_key["layout"].evidence == "Comes with milestone M2"
     assert by_key["tt_precheck"].evidence == "Comes with milestone M3"
     assert by_key["bring_up"].evidence == "Comes with milestone M3"
@@ -157,7 +157,8 @@ def test_new_project_is_not_run_everywhere(tmp_path: Path) -> None:
     for key in ("spec_approved", "check", "sim_icarus", "sim_verilator", "coverage"):
         assert got[key] == "not_run"
     assert got["synthesis"] == "not_run" and got["gate_sim"] == "not_run"
-    assert [got[k] for k in STEP_KEYS[8:]] == ["not_available"] * 4
+    assert got["equivalence"] == "not_run"
+    assert [got[k] for k in STEP_KEYS[9:]] == ["not_available"] * 3
 
 
 def test_invalid_and_missing_spec(tmp_path: Path) -> None:
@@ -579,6 +580,7 @@ def test_ledger_stores_facts_only(tmp_path: Path) -> None:
         "digests",
         "tests",
         "synth",
+        "equiv",
     }
     assert set(run["digests"]) == {"check", "sim", "spec", "synth"}
     assert data["approval"]["approved_by"] == "Ada"
@@ -838,3 +840,219 @@ def test_ledger_without_the_gl_field_still_loads(tmp_path: Path) -> None:
     loaded = load_ledger(project.dir)
     assert loaded.problem is None and all(r.gl is False for r in loaded.ledger.runs)
     assert states(project)["sim_icarus"] == "pass" and states(project)["gate_sim"] == "not_run"
+
+
+# -- equivalence: the synthesis inputs, a verdict that is ok, and nothing else -------------------
+
+EQ = {"equivalence"}
+
+
+def add_equiv(
+    project: Project,
+    verdict: str | None = "equivalent",
+    *,
+    ok: bool | None = None,
+    stage: str | None = None,
+    reason: str | None = None,
+    method: str | None = "equiv_induct",
+    facts: bool = True,
+) -> None:
+    ok = verdict == "equivalent" if ok is None else ok
+    if stage is None:
+        stage = "equiv_error" if verdict == "error" else str(verdict)
+    append_run(
+        project.dir,
+        RunRecord(
+            tool="check_equivalence",
+            at="2026-11-12T14:03:05Z",
+            ok=ok,
+            stage=stage,
+            image=IMAGE,
+            siliconsmith_version=ledger_mod.__version__,
+            digests=compute_digests(project, IMAGE),
+            equiv=ledger_mod.EquivFacts(
+                verdict=verdict, reason=reason, method=method, netlist_sha256="a" * 64
+            )
+            if facts
+            else None,
+        ),
+    )
+
+
+def evidence(project: Project, key: str = "equivalence") -> tuple[str, str]:
+    step = {s.key: s for s in compute_status(project, IMAGE).steps}[key]
+    return step.state, step.evidence
+
+
+@pytest.mark.parametrize(
+    ("frontend", "change", "expected"),
+    [
+        ("amaranth", edit("src/config.json", "\n"), {"synthesis"} | GL | EQ),
+        ("amaranth", edit("info.yaml", "# changed\n"), {"synthesis"} | GL | EQ),
+        ("amaranth", edit("hdl/chip.py"), CHECK_SIM_COV | {"synthesis"} | GL | EQ),
+        ("verilog", edit("src/chip.v", "// changed\n"), CHECK_SIM_COV | {"synthesis"} | GL | EQ),
+        ("amaranth", edit("test/tb.v", "// changed\n"), CHECK_SIM_COV | {"synthesis"} | GL | EQ),
+        # A test change is not an equivalence input.
+        ("amaranth", edit("test/test.py"), SIM_COV | GL),
+        ("amaranth", edit("test/helpers/x.py"), SIM_COV | GL),
+        ("amaranth", edit("spec.yaml"), {"spec_approved", "coverage"}),
+        ("amaranth", edit("docs/info.md", "more\n"), set()),
+        ("amaranth", edit("build/out.txt"), set()),
+    ],
+    ids=lambda v: v if isinstance(v, str) and not v.startswith("<") else "",
+)
+def test_equivalence_goes_stale_exactly_on_the_synthesis_inputs(
+    tmp_path: Path, frontend: str, change: Any, expected: set[str]
+) -> None:
+    project = make_project(tmp_path, frontend)
+    all_pass(project)
+    add_synth(project)
+    add_gl(project)
+    add_equiv(project)
+    assert states(project)["equivalence"] == "pass"
+    assert stale_set(project) == set()
+    change(project)
+    assert stale_set(project) == expected
+
+
+def test_equivalence_image_makes_it_stale(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    all_pass(project)
+    add_synth(project)
+    add_gl(project)
+    add_equiv(project)
+    assert stale_set(project, "example/toolchain:ctx-bbbb") == (
+        CHECK_SIM_COV | {"synthesis"} | GL | EQ
+    )
+
+
+def test_hand_edited_clock_or_tiles_make_equivalence_stale(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    add_equiv(project)
+    assert states(project)["equivalence"] == "pass"
+    spec = project.dir / "spec.yaml"
+    original = spec.read_text()
+    spec.write_text(original + "tiles: 2x2\n")
+    state, text = evidence(project)
+    assert state == "stale" and "call check_equivalence" in text
+    spec.write_text(original)
+    assert states(project)["equivalence"] == "pass"
+
+
+def test_equivalence_not_run_pass_and_the_text_of_each_state(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    assert evidence(project) == (
+        "not_run",
+        "Call check_equivalence to compare the gates with the RTL",
+    )
+    add_equiv(project)
+    state, text = evidence(project)
+    assert (state, text) == ("pass", "check_equivalence: the gates match the RTL (equiv_induct)")
+    add_equiv(project, "not_equivalent")
+    assert evidence(project) == ("fail", "check_equivalence: the gates do NOT match the RTL")
+    add_equiv(project, "not_proven", reason="guard_tristate", method=None)
+    state, text = evidence(project)
+    assert state == "fail" and "not proven, which is NOT a pass" in text
+    assert "tri-state" in text
+    add_equiv(project, "error", reason="yosys_failed", method=None)
+    assert evidence(project) == ("fail", "check_equivalence: the check itself failed")
+    add_equiv(project, "not_equivalent", reason="rtl_initial_value", method=None)
+    assert "the RTL relies on initial values" in evidence(project)[1]
+    add_equiv(project)  # the latest record decides
+    assert states(project)["equivalence"] == "pass"
+
+
+@pytest.mark.parametrize(
+    ("stage", "word"),
+    [
+        ("timeout", "ran out of time"),
+        ("too_big", "too big"),
+        ("synth_failed", "synthesis found a problem"),
+    ],
+)
+def test_a_check_that_stopped_before_the_verdict_is_a_fail(
+    tmp_path: Path, stage: str, word: str
+) -> None:
+    project = make_project(tmp_path)
+    add_equiv(project, None, ok=False, stage=stage, facts=False)
+    state, text = evidence(project)
+    assert state == "fail" and word in text
+
+
+def test_a_check_that_stopped_at_lint_says_nothing_about_equivalence(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    add_equiv(project, None, ok=False, stage="lint", facts=False)
+    assert states(project)["equivalence"] == "not_run"
+    add_equiv(project)
+    add_equiv(project, None, ok=False, stage="elaborate", facts=False)
+    assert states(project)["equivalence"] == "pass"  # the earlier verdict still stands
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"verdict": "not_proven", "ok": True, "stage": "equivalent"},  # contradicting records
+        {"verdict": "not_proven", "ok": True, "stage": "not_proven"},
+        {"verdict": "equivalent", "ok": False, "stage": "equivalent"},
+        {"verdict": "equivalent", "ok": True, "stage": "not_proven"},
+        {"verdict": "error", "ok": True, "stage": "equivalent"},
+        {"verdict": None, "ok": True, "stage": "equivalent", "facts": False},  # no facts at all
+        {"verdict": "equivalent", "ok": True, "stage": "equivalent", "facts": False},
+    ],
+    ids=lambda r: f"{r['verdict']}-{r['ok']}-{r['stage']}-{r.get('facts', True)}",
+)
+def test_only_an_ok_equivalent_record_with_its_facts_ever_reads_as_pass(
+    tmp_path: Path, record: dict[str, Any]
+) -> None:
+    project = make_project(tmp_path)
+    add_equiv(project, **record)
+    assert states(project)["equivalence"] == "fail"
+
+
+def test_equivalence_records_never_change_the_other_rows(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    all_pass(project)
+    add_synth(project)
+    add_gl(project)
+    before = states(project)
+    for kind in (
+        dict(verdict="equivalent"),
+        dict(verdict="not_equivalent"),
+        dict(verdict="not_proven", reason="time_limit", method=None),
+        dict(verdict="error", reason="yosys_failed", method=None),
+        dict(verdict=None, ok=False, stage="synth_failed", facts=False),
+        dict(verdict=None, ok=False, stage="too_big", facts=False),
+        dict(verdict=None, ok=False, stage="timeout", facts=False),
+        dict(verdict=None, ok=False, stage="lint", facts=False),
+        dict(verdict=None, ok=False, stage="elaborate", facts=False),
+    ):
+        add_equiv(project, **kind)
+        after = states(project)
+        assert {k: v for k, v in after.items() if k != "equivalence"} == {
+            k: v for k, v in before.items() if k != "equivalence"
+        }, kind
+
+
+def test_an_equivalence_record_alone_is_not_check_evidence(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    add_equiv(project)
+    got = states(project)
+    assert got["check"] == "not_run" and got["synthesis"] == "not_run"
+    assert got["gate_sim"] == "not_run" and got["equivalence"] == "pass"
+
+
+def test_ledgers_without_equivalence_records_still_load(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    all_pass(project)
+    add_synth(project)
+    path = project.dir / LEDGER_REL
+    data = json.loads(path.read_text())
+    assert all("equiv" not in run or run["equiv"] is None for run in data["runs"])
+    for run in data["runs"]:
+        run.pop("equiv", None)  # a ledger written before M1-3
+    path.write_text(json.dumps(data))
+    assert load_ledger(project.dir).problem is None
+    assert states(project)["synthesis"] == "pass" and states(project)["equivalence"] == "not_run"
+    add_equiv(project)
+    again = load_ledger(project.dir).ledger.runs[-1]
+    assert again.tool == "check_equivalence" and again.equiv is not None

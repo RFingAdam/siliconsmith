@@ -83,7 +83,6 @@ DIGITAL_STEPS: tuple[Step, ...] = (
         "equivalence",
         "Equivalence",
         "The gates are proven to do the same thing as the Verilog design",
-        "M1",
     ),
     Step("layout", "Layout signoff", "The layout fits the tile and passes the rules", "M2"),
     Step("tt_precheck", "Tiny Tapeout checks", "Tiny Tapeout's own checks accept it", "M3"),
@@ -231,7 +230,10 @@ def _spec_approved(f: _Facts) -> tuple[State, str, str | None]:
 
 
 def _check(f: _Facts) -> tuple[State, str, str | None]:
-    run = _latest(f.ledger.runs, lambda r: r.stage in CHECK_STAGES)
+    # check_equivalence records are about the netlist only and never move this row.
+    run = _latest(
+        f.ledger.runs, lambda r: r.stage in CHECK_STAGES and r.tool != "check_equivalence"
+    )
     if run is None:
         return "not_run", "Call emit_verilog to generate and lint the Verilog", None
     when = _when(run.at)
@@ -353,6 +355,71 @@ def _gate_sim(f: _Facts) -> tuple[State, str, str | None]:
     )
 
 
+# A check_equivalence run that stopped at the emit or lint step says nothing about the netlist.
+EQUIV_STAGES = frozenset(
+    {
+        "equivalent",
+        "not_equivalent",
+        "not_proven",
+        "equiv_error",
+        "synth_failed",
+        "too_big",
+        "timeout",
+    }
+)
+EQUIV_REASONS = {
+    "rtl_initial_value": "the RTL relies on initial values",
+    "power_up_dependent": "a value depends on registers that reset does not set",
+    "base_case": "a value depends on registers that reset does not set",
+    "unproven_points": "some points could not be proven",
+    "unpaired_outputs": "some outputs could not be matched by name",
+    "time_limit": "it ran out of time",
+    "guard_clocking": "a latch or a clock the proof cannot model",
+    "guard_tristate": "tri-state logic is not supported",
+    "guard_async_set_reset": "a flip-flop with async set and reset is not supported",
+}
+
+
+def _equivalence(f: _Facts) -> tuple[State, str, str | None]:
+    run = _latest(
+        f.ledger.runs, lambda r: r.tool == "check_equivalence" and r.stage in EQUIV_STAGES
+    )
+    if run is None:
+        return "not_run", "Call check_equivalence to compare the gates with the RTL", None
+    when = _when(run.at)
+    if run.digests.synth is None or run.digests.synth != f.digests.synth:
+        return "stale", "Design, src/config.json or info.yaml changed since check_equivalence", when
+    if f.spec is not None and not files_match_spec(f.project, f.spec):
+        return "stale", "spec.yaml clock or tiles changed; call check_equivalence", when
+    facts = run.equiv
+    verdict = facts.verdict if facts is not None else None
+    # Pass needs all three: the run's ok, the verdict and the stage. A not proven or error
+    # result is a fail here, and never reads as pass.
+    if run.ok and verdict == "equivalent" and run.stage == "equivalent":
+        assert facts is not None
+        how = f" ({facts.method})" if facts.method else ""
+        return "pass", _clip(f"check_equivalence: the gates match the RTL{how}"), when
+    reason = EQUIV_REASONS.get(facts.reason or "", "") if facts is not None else ""
+    if run.stage == "not_equivalent":
+        text = "check_equivalence: the gates do NOT match the RTL" + (
+            f" ({reason})" if reason else ""
+        )
+    elif run.stage == "not_proven":
+        text = "check_equivalence: not proven, which is NOT a pass" + (
+            f" ({reason})" if reason else ""
+        )
+    elif run.stage == "equiv_error":
+        text = "check_equivalence: the check itself failed"
+    else:
+        what = {
+            "timeout": "ran out of time",
+            "too_big": "stopped: the design is too big for its tile",
+            "synth_failed": "stopped: synthesis found a problem in the gates",
+        }.get(run.stage, f"stopped at the {run.stage} stage")
+        text = f"check_equivalence {what}"
+    return "fail", _clip(text), when
+
+
 Evaluator = Callable[[_Facts], tuple[State, str, str | None]]
 
 EVALUATORS: dict[str, Evaluator] = {
@@ -364,6 +431,7 @@ EVALUATORS: dict[str, Evaluator] = {
     "coverage": _coverage,
     "synthesis": _synthesis,
     "gate_sim": _gate_sim,
+    "equivalence": _equivalence,
 }
 
 
