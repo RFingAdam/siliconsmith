@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+# Pinned snapshot of Tiny Tapeout's sky130 tile size table, used for the utilization estimate and
+# for the allowed values of spec.yaml "tiles". Files here are verbatim copies. Do not edit them;
+# tests check the hashes below.
+# To update: fetch the file at the new tt-support-tools commit (the one recorded in tt.lock),
+# replace it, and refresh this manifest.
+repo: https://github.com/TinyTapeout/tt-support-tools
+commit: 9d13ff3e3e6202090740110438c6a10c1d62ca0f
+commit_date: 2026-11-05
+retrieved: 2026-11-12
+license: Apache-2.0  # the repository's LICENSE file (same text as templates/tt/LICENSE)
+
+# Upstream path of tile_sizes.yaml: tech/sky130A/tile_sizes.yaml. Each line maps a tile name
+# ("1x1") to its die area "x0 y0 x1 y1" in micrometres. LICENSE is the repository's top-level one.
+
+sha256:
+  c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  LICENSE
+  448c05bc1ddfadc6527d25d6db2c546ead7805b0085caa99bdacbd63cec0fcc1  tile_sizes.yaml

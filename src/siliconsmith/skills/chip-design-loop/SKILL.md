@@ -19,7 +19,7 @@ Rules that always apply:
 ## The steps
 
 1. `create_project` once (name first, then every other tool takes that name). Pick the front-end the user asked for: amaranth, myhdl or verilog.
-2. `write_spec`: write `spec.yaml` first. It holds `clock_hz`, the pin meanings and numbered requirements R1, R2, ... taken from the user's own words. Replace the placeholder spec.
+2. `write_spec`: write `spec.yaml` first. It holds `clock_hz`, the optional `tiles` (leave it at `"1x1"`; a bigger tile costs the owner money, so ask first), the pin meanings and numbered requirements R1, R2, ... taken from the user's own words. Replace the placeholder spec.
 3. `write_test`: write the cocotb tests before the design. Every test docstring says `Covers: R1` (or `Covers: R1, R2`). Every requirement needs at least one test that covers it.
 4. `write_rtl`: write the design (the core module named after the project). Whole files only, never diffs.
 5. `emit_verilog`: turns the design into Verilog and lints it. Fix every lint finding before simulating. A latch or a multiply driven signal is an error.

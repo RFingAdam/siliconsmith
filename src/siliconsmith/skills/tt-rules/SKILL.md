@@ -34,7 +34,11 @@ Put the clock in `spec.yaml` as `clock_hz`; it is the only place the clock is wr
 
 ## Size
 
-A 1x1 tile is 161.00 x 111.52 um, roughly a thousand gates of logic in the standard cell library. Small counters, state machines and shift registers fit easily. Sizes above 1x1 cost more. This milestone does not synthesize yet, so it cannot tell you the area.
+A 1x1 tile is 161.00 x 111.52 um, roughly a thousand gates of logic in the standard cell library. Small counters, state machines and shift registers fit easily. Bigger tiles cost the owner more money.
+
+The size is `tiles` in `spec.yaml` (default `"1x1"`; a wrong value lists the allowed ones). Never choose a bigger tile on your own: ask the owner, or in a headless run keep the tile you need and write the assumption to `open_questions`.
+
+The tools copy `clock_hz` and `tiles` into `src/config.json` and `info.yaml` for you; you cannot edit those two files.
 
 ## Style rules that keep the design buildable
 

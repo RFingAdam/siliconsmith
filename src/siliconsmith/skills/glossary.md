@@ -124,7 +124,7 @@ Getting every path to meet its setup and hold requirements at the chosen clock s
 
 ## Tile
 
-The unit of area on a Tiny Tapeout chip. A 1x1 tile is 161.00 x 111.52 um, roughly a thousand gates. Bigger designs buy more tiles.
+The unit of area on a Tiny Tapeout chip. A 1x1 tile is 161.00 x 111.52 um, roughly a thousand gates. Bigger designs buy more tiles, and each extra tile costs money. The `tiles` field in `spec.yaml` says how many (default `1x1`).
 
 ## Shuttle
 
