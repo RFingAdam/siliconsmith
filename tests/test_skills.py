@@ -220,14 +220,9 @@ def test_no_line_is_cut_in_a_summary(kb: Knowledge) -> None:
                 assert len(part) <= MAX_LINE_CHARS, f"{doc.name}: {part[:60]}"
 
 
-# Names that the skills mention before their tool exists on this branch. The status tool arrives
-# with the ledger PR (M0-8); delete this set when it is merged so the check covers it too.
-PENDING_TOOLS = {"status"}
-
-
 async def test_skills_only_name_tools_that_exist(tmp_path: Path, kb: Knowledge) -> None:
     async with Client(build_server(tmp_path, None)) as client:
-        tools = {t.name for t in (await client.list_tools()).tools} | PENDING_TOOLS
+        tools = {t.name for t in (await client.list_tools()).tools}
     steps = next(s for s in kb.skills[1].sections if s.heading == "The steps")
     assert kb.skills[1].name == "chip-design-loop"
     step_tools = re.findall(r"^\d+\. `([a-z_]+)`", steps.text, re.M)

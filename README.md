@@ -22,8 +22,8 @@ The server runs on your machine and talks to the agent over standard input and o
 nothing is exposed on the network.
 
 Today the server offers `toolchain_info`, `create_project`, `list_files`, `read_file`,
-`write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests`, `inspect_waves` and
-`explain`. `explain` answers from the packaged skills and a plain-English glossary: ask it for
+`write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests`, `inspect_waves`,
+`status` and `explain`. `explain` answers from the packaged skills and a plain-English glossary: ask it for
 `explain('chip-design-loop')` first. New to digital design? Read the
 [beginner guide](docs/beginner-guide.md). Start
 with `write_spec`: `spec.yaml` says the clock, the pins and the numbered requirements, and
@@ -34,6 +34,21 @@ and lints first), and a failure comes back as the test name, the file and line, 
 and the expected and actual values. With `waves=True` it keeps a wave file, and `inspect_waves`
 shows how chosen signals changed as a short table. Emitting and testing need Docker and the
 toolchain image.
+
+`status` shows, in plain English, how far the design has got: is the spec valid, has the owner
+approved it, does the Verilog check out, do the tests pass on both simulators, and does every
+requirement have a passing test. Each step is `pass`, `fail`, `stale` (a file it depends on has
+changed since it ran, so run it again), `not run` or `not available` (it belongs to a later
+milestone). The same table is written to `docs/verification.md` and printed by
+`siliconsmith status <project folder>`. A test run with a `test_filter` never counts, because it
+did not run every test.
+
+Approving the spec is your step, not the agent's. Read `spec.yaml`, then run
+`siliconsmith approve <project folder>` in a terminal; it shows the requirements, asks you to
+type `approve`, and records your git `user.name` and the spec's hash in
+`.siliconsmith/ledger.json`. There is no tool for this and the command refuses to run without a
+terminal. That is an honest-use convention, not a security boundary: it keeps an honest agent
+from approving its own work, and the ledger shows who approved what.
 
 ### Install
 
@@ -129,6 +144,6 @@ Every simulator and Python tool runs inside one Docker image, so the only things
 
 Size (linux/amd64): about 800 MB unpacked, and about 255 MB to download. The unpacked figure is the sum of the layer sizes that `docker history --human=false` lists, which gives the same number on every Docker setup. `docker images` can show a larger figure (1.05 GB on a Docker that uses the containerd image store) because it counts disk use, not the size of the files.
 
-Get it with `docker pull ghcr.io/rfingadam/siliconsmith-toolchain:ctx-ab445ef2bfa2`. The tag changes whenever anything in `docker/` changes, and the server always asks for the tag that matches the checkout you are running. To use a different image, set `SILICONSMITH_IMAGE`. The tool `toolchain_info` checks that Docker and the image work and lists every tool's version.
+Get it with `docker pull ghcr.io/rfingadam/siliconsmith-toolchain:ctx-ab445ef2bfa2`. The tag changes whenever anything in `docker/` changes, and the server always asks for the tag that matches the checkout you are running. To use a different image, set `SILICONSMITH_IMAGE` (for the server, and pass the same name to `siliconsmith status --image`, because the image is part of what makes a result stale). The tool `toolchain_info` checks that Docker and the image work and lists every tool's version.
 
 To build it yourself instead: `docker build -t ghcr.io/rfingadam/siliconsmith-toolchain:ctx-ab445ef2bfa2 docker/` (about two minutes with a warm cache).

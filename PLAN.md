@@ -267,16 +267,16 @@ open_questions:  [...]
 
 **Coverage tags.** Each cocotb test says in its docstring which requirements it checks, for example `Covers: R1, R2`. The tool reads these tags with Python's `ast` module; it never runs the test file to find them. An unknown requirement id is a warning. A skipped test does not count as coverage.
 
-**Ledger.** `.siliconsmith/ledger.json` in the project folder stores facts only: the spec approval (spec hash, who, when) and one record per `emit_verilog` or `run_tests` run (tool, simulator, design digest, image id, whether a test filter was used, time, `ok`, and for each test its name, the requirement ids it covers and its outcome). Only the host writes it (the container never sees it), and only `emit_verilog`, `run_tests` and the `approve` command add to it.
+**Ledger.** `.siliconsmith/ledger.json` in the project folder stores facts only: the spec approval (spec hash, who, when) and one record per `emit_verilog` or `run_tests` run (tool, simulator, the check, sim and spec digests, image name and tag, image id when known, whether a test filter was used, time, `ok`, and for each test its name, the requirement ids it covers and its outcome). Only the host writes it (the container never sees it), and only `emit_verilog`, `run_tests` and the `approve` command add to it.
 
 **Derived status.** `status` works out each step's state when it is asked, from the ledger and the current files: `pass`, `fail`, `stale` (an input changed since the last run), `not_run`, or `not_available` (the step belongs to a later milestone). Each step has its own inputs:
 
 - approval ← `spec.yaml`;
-- check ← `hdl/**/*.py`, `src/<name>.v`, `info.yaml`, the toolchain image id and the Siliconsmith version (the version fixes the files the tool owns: the generated wrapper and TT's `test/tb.v` and `test/Makefile`);
+- check ← `hdl/**/*.py` (Amaranth, MyHDL) or `src/<name>.v` (Verilog), `info.yaml`, `test/tb.v` and `test/Makefile`, the toolchain image and the Siliconsmith version (the version fixes the files the tool owns: the generated wrapper and the TT template files). The image is identified by its name and tag, which is content-addressed (`ctx-<hash>`), so status never needs Docker; the ledger also records the image id when it is known;
 - simulation ← the check inputs plus `test/**/*.py`;
 - coverage ← the spec plus the latest unfiltered simulation runs.
 
-These file patterns match the write allow-list (section 5.3), so every design or test file an agent can write is an input to some step. The digest is a sha256 over the image id, the Siliconsmith version and the files those patterns match (path and content hash of each), never whole folders, so build output, `__pycache__` and wave files do not affect it.
+These file patterns match the write allow-list (section 5.3), so every design or test file an agent can write is an input to some step. The digest is a sha256 over the image name and tag, the Siliconsmith version and the files those patterns match (path and content hash of each), never whole folders, so build output, `__pycache__` and wave files do not affect it. The write allow-list rejects any path with a `build`, `sim_build` or `__pycache__` component, so nothing an agent can write is skipped. A run's digests are taken before the run starts, so a file edited during the run shows as stale, never as tested.
 
 **Steps for the digital track.** The steps are stored as data per track, so analog and acoustic add their own later.
 
@@ -292,6 +292,8 @@ These file patterns match the write allow-list (section 5.3), so every design or
 10. Silicon bring-up on the TT demo board (shown as `not_available` with its milestone).
 
 A run with a test filter, or with zero tests, never sets a simulation or coverage step.
+
+The check step (3) is set by the latest `emit_verilog` **or** `run_tests` run that reached the lint stage, because `run_tests` re-emits and lints in the same container call. A run that passed the lint stage and then failed in the simulator still counts as a clean check. Each ledger run also stores the `spec.yaml` hash, so that editing the spec makes the coverage step stale (coverage depends on the spec as well as on the simulation runs).
 
 **Approval is the owner's step.** `siliconsmith approve <dir>` is a command-line command only; there is no MCP tool for it. It asks for confirmation on a terminal and records the git `user.name` and the spec hash. This is an **honest-use convention, not a security boundary**: an agent with its own shell could run the command. The docs and the `chip-design-loop` skill say so, and the skill forbids agents from running it.
 

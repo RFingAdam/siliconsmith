@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from siliconsmith.context import ServerContext
 from siliconsmith.frontends import Frontend, get_frontend
+from siliconsmith.ledger import record_run, snapshot_digests
 from siliconsmith.paths import (
     FileTooLargeError,
     MissingFileError,
@@ -425,23 +426,30 @@ def emit(ctx: ServerContext, project_name: str) -> ToolResult:
     project = get_project(ctx, project_name)
     frontend = get_frontend(project.frontend)
     with project_lock(project.dir):
-        author = read_author(project)
-        early = precheck(project, frontend)
-        if early is not None:
-            return early
+        before = snapshot_digests(project, ctx.image)
+        result = _emit_locked(ctx, project, frontend)
+        # Every result is a fact about these files (a ToolError is not, and is not recorded).
+        return record_run(project, ctx.image, "emit_verilog", result, before)
+
+
+def _emit_locked(ctx: ServerContext, project: Project, frontend: Frontend) -> ToolResult:
+    author = read_author(project)
+    early = precheck(project, frontend)
+    if early is not None:
+        return early
+    try:
         try:
-            try:
-                outcome = ctx.get_runner().run(
-                    "emit",
-                    frontend.worker_request(project.name, author),
-                    project_dir=project.dir,
-                    timeout_s=EMIT_TIMEOUT_S,
-                )
-            except ToolchainError as exc:
-                raise ToolError(str(exc)) from exc
-            return handle_outcome(ctx, project, frontend, author, outcome)
-        finally:
-            remove_run_dirs(project.dir / "build")
+            outcome = ctx.get_runner().run(
+                "emit",
+                frontend.worker_request(project.name, author),
+                project_dir=project.dir,
+                timeout_s=EMIT_TIMEOUT_S,
+            )
+        except ToolchainError as exc:
+            raise ToolError(str(exc)) from exc
+        return handle_outcome(ctx, project, frontend, author, outcome)
+    finally:
+        remove_run_dirs(project.dir / "build")
 
 
 DESCRIPTION = """\
