@@ -65,6 +65,10 @@ class _Finding(_Strict):
     col: int = Field(ge=0)
     msg: str = Field(max_length=lim.FINDING_MSG_MAX)
     detail: str = Field(default="", max_length=lim.FINDING_DETAIL_MAX)
+    # MyHDL only: the function in hdl/ that the generated line came from.
+    hdl_file: str = Field(default="", max_length=lim.FILE_MAX)
+    hdl_line: int = Field(default=0, ge=0)
+    hdl_function: str = Field(default="", max_length=lim.SYNTH_SIGNAL_MAX)
 
 
 class _PythonError(_Strict):
@@ -234,6 +238,12 @@ def _hints_for_lint(frontend: Frontend, project: Project, findings: list[_Findin
     editable = frontend.entry(project.name)
     if first.file == "src/project.v":
         return ["The wrapper is generated; fix the core so that the finding goes away."]
+    if first.hdl_file:
+        return [
+            f"Fix the first finding ({first.code}) in {first.hdl_file}:{first.hdl_line} "
+            f"(function {first.hdl_function}); src/{project.name}.v is generated from it. "
+            "Then call emit_verilog again."
+        ]
     if frontend.generated:
         return [
             f"Fix the first finding ({first.code}, {first.file}:{first.line}) in {editable}: "

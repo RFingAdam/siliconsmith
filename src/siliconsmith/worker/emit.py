@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from siliconsmith.worker import lint, pyerror
+from siliconsmith.worker import lint, myhdl_map, pyerror
 from siliconsmith.worker.elaborate import DesignError, hdl_file
 from siliconsmith.worker.limits import MAX_FINDINGS, MAX_GENERATED_BYTES, clamp_result
 from siliconsmith.worker.wrapper_gen import (
@@ -234,8 +234,13 @@ def _lint(
     generated: bool,
     core_only: bool = False,
     width_checks: bool = True,
+    frontend: str = "",
 ) -> list[dict[str, Any]]:
-    """Run Verilator over the wrapper and the core (or over the core alone)."""
+    """Run Verilator over the wrapper and the core (or over the core alone).
+
+    For a MyHDL project the findings in the generated `src/<name>.v` also name the `hdl/`
+    function and line they come from (`hdl_file`, `hdl_line`, `hdl_function`).
+    """
     command = [
         "verilator",
         "--lint-only",
@@ -279,10 +284,25 @@ def _lint(
         item["file"] = _lint_file(item["file"], name, out_dir)
         for key in ("msg", "detail"):
             item[key] = _project_files(_out_paths(item[key], name, out_dir), name)
+    if frontend == "myhdl":
+        _annotate_myhdl(found, out_dir, name)
     return found
 
 
-def _yosys_check(out_dir: Path, name: str) -> list[dict[str, Any]]:
+_SIGNAL_IN_MESSAGE = re.compile(r"signal '([^']+)'")
+
+
+def _annotate_myhdl(found: list[dict[str, Any]], out_dir: Path, name: str) -> None:
+    """Add the `hdl/` function and line to findings in the generated MyHDL Verilog."""
+    for item in found:
+        signal = _SIGNAL_IN_MESSAGE.search(str(item.get("msg", "")))
+        item["signal"] = signal.group(1).rsplit(".", 1)[-1] if signal else ""
+    myhdl_map.annotate(found, _read_text(str(out_dir / f"{name}.v")), name)
+    for item in found:
+        item.pop("signal", None)
+
+
+def _yosys_check(out_dir: Path, name: str, frontend: str = "") -> list[dict[str, Any]]:
     """What Verilator does not catch: multiple drivers (except across clocking), logic loops."""
     script = f"read_verilog -sv {name}.v; hierarchy -top {name}; proc; check -assert"
     try:
@@ -303,6 +323,8 @@ def _yosys_check(out_dir: Path, name: str) -> list[dict[str, Any]]:
     for item in found:
         item["file"] = _lint_file(item["file"], name, out_dir)
         item["msg"] = _project_files(_out_paths(item["msg"], name, out_dir), name)
+    if frontend == "myhdl":
+        _annotate_myhdl(found, out_dir, name)
     return found or [
         _finding("error", "YOSYS_CHECK", _tool_tail(output, name, out_dir) or "failed")
     ]
@@ -442,8 +464,10 @@ def _emit(request: dict[str, Any]) -> dict[str, Any]:
         )
 
     # 4. lint
-    found = _lint(out_dir, name, generated=generated, width_checks=frontend != "amaranth")
-    found += _yosys_check(out_dir, name)
+    found = _lint(
+        out_dir, name, generated=generated, width_checks=frontend != "amaranth", frontend=frontend
+    )
+    found += _yosys_check(out_dir, name, frontend)
     return _result(
         out_dir,
         ok=not found,
