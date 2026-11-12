@@ -265,7 +265,7 @@ requirements:    [{id: R<n>, text, limit: {min, typ, max, unit}}]    (limit is o
 open_questions:  [...]
 ```
 
-`write_spec` validates it and reports errors with the field path. `create_project` writes a valid stub. The optional `limit` is a datasheet-style min/typ/max, meant mainly for the analog and acoustic tracks. The optional `tiles` field (default `"1x1"`, only Tiny Tapeout's own tile names) is how the agent can act on "too big"; a bigger tile costs the owner money, so the loop skill says to ask the owner, or in a headless run to write the assumption to `open_questions`. `src/config.json` `CLOCK_PERIOD` and `info.yaml` `clock_hz` and `tiles` are written by the tools from the spec and are never agent-writable (M1-1).
+`write_spec` validates it and reports errors with the field path. `create_project` writes a valid stub. The optional `limit` is a datasheet-style min/typ/max, meant mainly for the analog and acoustic tracks. The optional `tiles` field (default `"1x1"`, only Tiny Tapeout's own tile names) is how the agent can act on "too big"; a bigger tile costs the owner money, so the loop skill says to ask the owner, or in a headless run to write the assumption to `open_questions`. `src/config.json` `CLOCK_PERIOD` (a one-line text patch that keeps TT's `"//"` comment keys) and `info.yaml` `clock_hz`, `tiles` and `pinout` are written by the tools from the spec (`tt_sync.py`: at `create_project`, after every valid `write_spec`, and under the lock before each M1 tool's digest snapshot) and are never agent-writable (M1-1). A clock above 66 MHz (the TT IO limit) is a warning.
 
 **Coverage tags.** Each cocotb test says in its docstring which requirements it checks, for example `Covers: R1, R2`. The tool reads these tags with Python's `ast` module; it never runs the test file to find them. An unknown requirement id is a warning. A skipped test does not count as coverage.
 
@@ -277,7 +277,7 @@ open_questions:  [...]
 - check ← `hdl/**/*.py` (Amaranth, MyHDL) or `src/<name>.v` (Verilog), `test/tb.v` and `test/Makefile`, the toolchain image and the Siliconsmith version (the version fixes the files the tool owns: the generated wrapper and the TT template files). The image is identified by its name and tag, which is content-addressed (`ctx-<hash>`), so status never needs Docker; the ledger also records the image id when it is known;
 - simulation ← the check inputs plus `test/**/*.py`;
 - coverage ← the spec plus the latest unfiltered simulation runs;
-- synthesis (M1) ← the check inputs plus `src/config.json` (the clock period and tile settings that synthesis reads), `info.yaml` (tile size and clock; it does not affect the RTL, which is why it leaves the check inputs; this move lands with M1-1, until then `ledger.py` still counts it as a check input) and the image (the sky130 files live in it);
+- synthesis (M1) ← the check inputs plus `src/config.json` (the clock period and tile settings that synthesis reads), `info.yaml` (tile size and clock; it does not affect the RTL, which is why it leaves the check inputs; this move landed with M1-1) and the image (the sky130 files live in it);
 - gate-level simulation (M1) ← the simulation inputs plus the synthesis inputs;
 - equivalence (M1) ← the synthesis inputs.
 

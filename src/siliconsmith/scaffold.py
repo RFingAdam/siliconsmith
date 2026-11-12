@@ -27,6 +27,7 @@ from siliconsmith.project import (
     validate_text,
 )
 from siliconsmith.spec import SPEC_NAME, Spec, pinout, render_spec, stub_spec
+from siliconsmith.tt_sync import patch_config_json, render_info_yaml
 from siliconsmith.wrapper import TT_PORTS, generate_wrapper
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -34,7 +35,7 @@ TT_DIR = TEMPLATE_DIR / "tt"
 STUB_DIR = TEMPLATE_DIR / "stubs"
 
 # Template files copied as they are (the patched ones are handled in `build_files`).
-VERBATIM = ("src/config.json", "test/requirements.txt", "docs/info.md")
+VERBATIM = ("test/requirements.txt", "docs/info.md")
 
 LANGUAGE = {"amaranth": "Amaranth", "myhdl": "MyHDL", "verilog": "Verilog"}
 
@@ -72,16 +73,12 @@ def _info_yaml(name: str, frontend: str, author: str, description: str, spec: Sp
     project["language"] = LANGUAGE[frontend]
     project["top_module"] = f"tt_um_{name}"
     project["source_files"] = ["project.v", f"{name}.v"]
-    project["tiles"] = "1x1"
-    # The clock and the pin meanings come from spec.yaml, the single source.
+    # The clock, the tile size and the pin meanings come from spec.yaml, the single source; the
+    # tools keep them in step afterwards (tt_sync.py).
+    project["tiles"] = spec.tiles
     project["clock_hz"] = spec.clock_hz
     info["pinout"] = pinout(spec)
-    header = (
-        "# Tiny Tapeout project information (written by Siliconsmith).\n"
-        "# clock_hz and pinout are a copy of spec.yaml made when the project was created;\n"
-        "# they are regenerated from spec.yaml when the project is exported.\n"
-    )
-    return header + yaml.safe_dump(info, sort_keys=False, allow_unicode=True)
+    return render_info_yaml(info)
 
 
 def _with_header(text: str, author: str, comment: str, *, tiny_tapeout: bool = False) -> str:
@@ -113,6 +110,8 @@ def build_files(
     else:
         files[f"hdl/{name}.py"] = _with_header(_stub(f"{frontend}.py.tmpl", name), author, "#")
     files["src/project.v"] = generate_wrapper(name, STUB_PORTS[frontend], author)
+    # src/config.json is the template's with CLOCK_PERIOD set from the spec (a one-line patch).
+    files["src/config.json"] = patch_config_json(_tt_text("src/config.json"), spec.clock_hz)
     for rel in VERBATIM:
         files[rel] = _tt_text(rel)
     files["test/tb.v"] = _replace_once(
