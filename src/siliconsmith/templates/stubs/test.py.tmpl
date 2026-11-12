@@ -1,0 +1,34 @@
+"""Starter cocotb test for {name}. It mirrors the example test from Tiny Tapeout.
+
+Each test says in its docstring which requirements it covers ("Covers: R1, R2"). The
+requirement ids come from spec.yaml. Replace this test with tests for your own design.
+"""
+
+import cocotb
+from cocotb.clock import Clock
+from cocotb.triggers import ClockCycles
+
+
+@cocotb.test()
+async def test_adds_inputs(dut):
+    """Covers: R1
+
+    The output is the sum of the two input buses.
+    """
+    # Requirement ids (R1, R2, ...) come from spec.yaml; list the ones this test checks above.
+    dut._log.info("Start")
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+
+    # Reset: hold rst_n low (active low) for a few clock cycles, then release it.
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut.ui_in.value = 20
+    dut.uio_in.value = 30
+    await ClockCycles(dut.clk, 2)
+
+    assert int(dut.uo_out.value) == 50

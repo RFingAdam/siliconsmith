@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+# Pinned snapshot of the Tiny Tapeout Verilog template, used by create_project.
+# Files here are verbatim copies. Do not edit them; tests check the hashes below.
+# To update: fetch the new commit, replace the files, refresh this manifest, and re-check the patches.
+repo: https://github.com/TinyTapeout/ttsky-verilog-template
+commit: a42e6662fab316e93b4e26399e21d41664a460b7
+commit_date: 2026-10-14
+retrieved: 2026-11-11
+license: Apache-2.0  # the template's LICENSE file; GitHub reports Apache-2.0
+
+# Reference only (never copied into a project): src/project.v, test/test.py, test/README.md, LICENSE.
+# The files not listed in "patches" are copied into a new project as they are.
+
+patches:
+  # Two of our stubs are adapted from upstream files and keep the Tiny Tapeout copyright line:
+  # stubs/verilog.v.tmpl (from src/project.v) and stubs/test.py.tmpl (from test/test.py).
+  # Everything else the scaffold does is generate our own files from our own stubs.
+  - file: info.yaml
+    change: >-
+      Loaded with yaml.safe_load and written back with yaml.safe_dump (comments are lost).
+      Fields set: project.title, project.author, project.description, project.language,
+      project.top_module (tt_um_<name>), project.source_files ([project.v, <name>.v]),
+      project.tiles (1x1). All other values are kept.
+  - file: test/tb.v
+    change: "The instance line 'tt_um_example user_project (' becomes 'tt_um_<name> user_project ('."
+  - file: test/Makefile
+    change: "'PROJECT_SOURCES = project.v' becomes 'PROJECT_SOURCES = project.v <name>.v'."
+
+sha256:
+  c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  LICENSE
+  5136c8e93ed18107c6524a964cfe46f72282f02b6c6b83790e35ffad7a873b8a  docs/info.md
+  3b149957d61b8516f55e0d613919691eb04c1728daa762e17343b919f13b78f2  info.yaml
+  8dfa9d29537da2a16c748f8264b2839d4af84250b7c043174041ef154bfda2cc  src/config.json
+  743b565c95299d3f7a7a36fbecf62573b495f52b96118d4db2e0656a24c35ef8  src/project.v
+  d67a6fb84035bb068d160f6ab89ff73b233e775a9c9dd4b7ce3d1df0ec1b66ad  test/Makefile
+  725c04fcc2293d2ac2b3bdca4faad1125a424ee7fcebc8fd66276d87bf30a6e6  test/README.md
+  c1ba8e1b931e68c3ff600bb849f20975435fedbb7e5f83932095a05d2dca1372  test/requirements.txt
+  71b38b1fcb451671468e5516e375c1740568915cb6aeed2706628baec39b412b  test/tb.v
+  f75fe7a019ec0666b2705f7962b3a4ce5e4697d7ce18c31e27a1b9e95be66833  test/test.py
