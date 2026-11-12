@@ -78,7 +78,6 @@ DIGITAL_STEPS: tuple[Step, ...] = (
         "gate_sim",
         "Gate-level simulation",
         "The tests still pass on those gates, so reset and start-up behave on the real netlist",
-        "M1",
     ),
     Step(
         "equivalence",
@@ -179,10 +178,34 @@ def _ran(run: RunRecord) -> list[Any]:
 
 
 def _latest_full(runs: list[RunRecord], sim: str) -> RunRecord | None:
-    """The latest unfiltered run_tests run on `sim` in which at least one test ran."""
+    """The latest unfiltered RTL run_tests run on `sim` in which at least one test ran.
+
+    Gate-level runs are skipped: they never change the RTL simulation rows or coverage.
+    """
     return _latest(
         runs,
-        lambda r: r.tool == "run_tests" and r.sim == sim and not r.filtered and bool(_ran(r)),
+        lambda r: (
+            r.tool == "run_tests" and r.sim == sim and not r.gl and not r.filtered and bool(_ran(r))
+        ),
+    )
+
+
+# A gate-level run that stopped before or at the simulator still says something about the gates:
+# the stage it stopped at is a failure of this step. A run that failed the emit step says nothing.
+GL_FAILURE_STAGES = frozenset({"synth_failed", "too_big", "timeout", "build"})
+
+
+def _latest_full_gl(runs: list[RunRecord]) -> RunRecord | None:
+    """The latest unfiltered gate-level run_tests run that got as far as synthesis."""
+    return _latest(
+        runs,
+        lambda r: (
+            r.tool == "run_tests"
+            and r.gl
+            and r.sim == "icarus"
+            and not r.filtered
+            and (bool(_ran(r)) or r.stage in GL_FAILURE_STAGES)
+        ),
     )
 
 
@@ -212,7 +235,7 @@ def _check(f: _Facts) -> tuple[State, str, str | None]:
     if run is None:
         return "not_run", "Call emit_verilog to generate and lint the Verilog", None
     when = _when(run.at)
-    name = f"{run.tool} {run.sim}" if run.sim else run.tool
+    name = f"{run.tool} gl" if run.gl else f"{run.tool} {run.sim}" if run.sim else run.tool
     if run.digests.check != f.digests.check:
         return "stale", _clip(f"Design files changed since {name} last ran"), when
     if run.stage in LINT_CLEAN_STAGES:
@@ -301,6 +324,35 @@ def _synthesis(f: _Facts) -> tuple[State, str, str | None]:
     return "pass", _clip(text), when
 
 
+def _gate_sim(f: _Facts) -> tuple[State, str, str | None]:
+    run = _latest_full_gl(f.ledger.runs)
+    if run is None:
+        return "not_run", "Call run_tests with simulator icarus and gl=True, no test_filter", None
+    when = _when(run.at)
+    if run.digests.sim != f.digests.sim or run.digests.synth != f.digests.synth:
+        return "stale", "Design, test, config or info files changed since the gate-level run", when
+    if f.spec is not None and not files_match_spec(f.project, f.spec):
+        return "stale", "spec.yaml clock or tiles changed; run the gate-level test again", when
+    ran = _ran(run)
+    passed = [t for t in ran if t.outcome == "pass"]
+    if run.ok:
+        return "pass", f"run_tests gl: {len(passed)}/{len(ran)} passed on the sky130 netlist", when
+    if not ran:
+        what = {
+            "timeout": "ran out of time",
+            "too_big": "stopped: the design is too big for its tile",
+            "synth_failed": "stopped: synthesis found a problem in the gates",
+            "build": "could not build the netlist",
+        }.get(run.stage, f"stopped at the {run.stage} stage")
+        return "fail", _clip(f"run_tests gl {what}"), when
+    failed = [t.name for t in ran if t.outcome != "pass"]
+    return (
+        "fail",
+        _clip(f"run_tests gl: {len(passed)}/{len(ran)} passed; failed: " + ", ".join(failed)),
+        when,
+    )
+
+
 Evaluator = Callable[[_Facts], tuple[State, str, str | None]]
 
 EVALUATORS: dict[str, Evaluator] = {
@@ -311,6 +363,7 @@ EVALUATORS: dict[str, Evaluator] = {
     "sim_verilator": _sim_step("verilator"),
     "coverage": _coverage,
     "synthesis": _synthesis,
+    "gate_sim": _gate_sim,
 }
 
 

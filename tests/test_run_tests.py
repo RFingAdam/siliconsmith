@@ -135,7 +135,9 @@ def test_pass(tmp_path: Path) -> None:
         "simulator": "icarus",
         "test_filter": None,
         "waves": False,
+        "gl": False,
     }
+    assert details["gl"] is None  # an RTL run
     assert not list((project / "build" / ".ss").glob("*"))
     assert any("verilator" in hint for hint in result.next_hints)
 
@@ -376,13 +378,6 @@ def test_gl_with_verilator_is_refused(tmp_path: Path) -> None:
     ctx, _, runner = setup(tmp_path)
     with pytest.raises(ToolError, match="gate-level simulation runs on icarus only"):
         run(ctx, "chip", "verilator", None, False, gl=True)
-    assert runner.calls == []
-
-
-def test_gl_with_icarus_says_it_is_not_there_yet(tmp_path: Path) -> None:
-    ctx, _, runner = setup(tmp_path)
-    with pytest.raises(ToolError, match=r"arrives with milestone M1-2 \(issue #8\)"):
-        run(ctx, "chip", "icarus", None, False, gl=True)
     assert runner.calls == []
 
 

@@ -104,8 +104,9 @@ async def test_ledger_follows_full_runs_only(server: Client, tmp_path: Path) -> 
         )
         assert states["spec_approved"] == "not_run"  # only the owner can approve
         assert states["synthesis"] == "not_run"  # nothing has called synthesize yet
-        later = ("gate_sim", "equivalence", "layout", "tt_precheck", "bring_up")
-        assert [states[k] for k in later] == ["not_available"] * 5
+        assert states["gate_sim"] == "not_run"  # nothing has run the tests on the gates yet
+        later = ("equivalence", "layout", "tt_precheck", "bring_up")
+        assert [states[k] for k in later] == ["not_available"] * 4
 
         # A filtered run, even a failing one, changes nothing.
         filtered = await call(

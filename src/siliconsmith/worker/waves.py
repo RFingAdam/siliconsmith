@@ -31,7 +31,7 @@ from siliconsmith.worker.limits import (
 )
 
 WAVES_DIR = "/work/build/waves"
-PATH_RE = re.compile(r"^build/waves/(icarus|verilator)/tb\.(fst|vcd)$")
+PATH_RE = re.compile(r"^build/waves/(icarus|icarus-gl|verilator)/tb\.(fst|vcd)$")
 SIGNAL_RE = re.compile(r"^[A-Za-z_$\\][\w$.\[\]:\\ -]{0,299}$")
 _UNIT_NS = {"fs": 1e-6, "ps": 1e-3, "ns": 1.0, "us": 1e3, "µs": 1e3, "ms": 1e6, "s": 1e9}
 _DUPLICATE_ROOTS = ("TOP.", "$rootio.")

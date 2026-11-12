@@ -136,6 +136,7 @@ async def test_verify_passes_a_correct_counter(
         ("agent", "verilator"): True,
         ("reference", "icarus"): True,
         ("reference", "verilator"): True,
+        ("reference", "icarus-gl"): True,
     }
     assert [c for c in report.checks if not c.passed] == []
     assert report.passed
@@ -156,6 +157,7 @@ async def test_verify_fails_the_seeded_wrap_bug(
     outcome = runs(report)
     assert outcome[("reference", "icarus")] is False
     assert outcome[("reference", "verilator")] is False
+    assert outcome[("reference", "icarus-gl")] is False  # the gates have the same wrap bug
     assert not report.passed
 
 

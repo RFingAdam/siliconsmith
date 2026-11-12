@@ -200,9 +200,19 @@ def test_status_summary_wording() -> None:
         {"key": k, "state": "pass"}
         for k in ("spec_valid", "check", "sim_icarus", "sim_verilator", "coverage")
     ] + [{"key": "spec_approved", "state": "not_run"}]
-    assert vd.summarize_status(steps) == "spec valid, check, sim x2, coverage pass; approval open"
+    # The demo agents do not run synthesis or the gates; the line says so instead of hiding it.
+    assert vd.summarize_status(steps) == (
+        "spec valid, check, sim x2, coverage pass (synthesis not_run, gate_sim not_run); "
+        "approval open"
+    )
+    steps += [{"key": "synthesis", "state": "pass"}, {"key": "gate_sim", "state": "pass"}]
+    assert vd.summarize_status(steps) == (
+        "spec valid, check, sim x2, coverage pass, synthesis pass, gate-level pass; approval open"
+    )
     steps[3]["state"] = "stale"
     assert "sim_verilator stale" in vd.summarize_status(steps)
+    steps[-1]["state"] = "fail"
+    assert "gate_sim fail" in vd.summarize_status(steps)
 
 
 # -- project discovery ---------------------------------------------------------------------
@@ -407,6 +417,7 @@ def test_record_appends_rows_and_regenerates_the_table(tmp_path: Path) -> None:
         for lab in ("agent", "reference")
         for sim in vd.SIMULATORS
     ]
+    reruns.append(vd.Rerun("reference", "icarus-gl", True, 1, 0, "", ["test_counter_reference"]))
     first = vd.record_attempt(
         demos, "# t\n", meta, metrics, reruns, "spec valid; approval open", True
     )
@@ -416,6 +427,7 @@ def test_record_appends_rows_and_regenerates_the_table(tmp_path: Path) -> None:
     rows = json.loads((demos / "metrics.json").read_text())
     assert [r["passed"] for r in rows] == [True, False]
     assert rows[1]["reference_verilator"] is False and rows[0]["agent_icarus"] is True
+    assert rows[0]["reference_icarus_gl"] is True
     readme = (demos / "README.md").read_text()
     assert readme.count("verilog-20261112-") == 4  # label and link, two rows
     assert rows[0]["result_subtype"] is None and "(exit " in readme

@@ -17,6 +17,14 @@ Unknown bits have several causes: a register that has not been reset yet, an out
 
 Start the clock once with `cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())`. Set `ena` to 1 and every input to a known value, hold `rst_n` at 0 for a few cycles, then set it to 1. Reset is active low and synchronous, so it only takes effect on a clock edge: hold it for at least two or three edges.
 
+## The same tests at gate level
+
+`run_tests(simulator="icarus", gl=True)` runs these same test files on the synthesized sky130 netlist. In a netlist your own signal names are gone or look like `\core.count[0]`. So a gate-level test may only use the `tb` pins: `dut.ui_in`, `dut.uo_out`, `dut.uio_in`, `dut.uio_out`, `dut.uio_oe`, `dut.ena`, `dut.clk` and `dut.rst_n`.
+
+Do not read `dut.user_project...` or any internal register in a test that must also pass at gate level.
+
+Real flip-flops start unknown (`x`) until reset has run. So drive every input from time 0 (`ena`, `ui_in`, `uio_in`, `rst_n`), start the clock at once, and hold `rst_n` low for at least two or three clock edges before you read an output. A test that reads before reset passes in RTL (where a value may start at 0) and fails on the gates: that is a finding, not a flaky test.
+
 ## Waiting and sampling
 
 - `await ClockCycles(dut.clk, n)` waits for n rising edges.

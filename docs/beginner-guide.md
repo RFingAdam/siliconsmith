@@ -29,11 +29,12 @@ You can ask the agent for an explanation at any time: the `explain` tool answers
 | Spec | The requirements are written down in one place. | That they are what you meant, until you read them. |
 | Emit and lint | The design converts to Verilog, uses exactly the Tiny Tapeout pins, and has no latches, multiple drivers or logic loops. | That the design does the right thing. |
 | Simulation on Icarus and Verilator | Under the tests, the design behaves as the tests say, on two independent simulators. | Anything the tests do not check. Simulation has no real delays, noise or temperature. |
-| Synthesis | The design turns into real sky130 gates with no combinational loop, no signal driven twice, no undriven output and no forbidden cell, and you learn its size (cells, area, estimated **utilization**). | That the gates behave like the RTL (gate-level simulation and the equivalence check come later), that the design meets timing, or the real size: utilization is an estimate until layout. |
+| Synthesis | The design turns into real sky130 gates with no combinational loop, no signal driven twice, no undriven output and no forbidden cell, and you learn its size (cells, area, estimated **utilization**). | That the gates behave like the RTL (gate-level simulation shows that for your tests; the equivalence check comes later), that the design meets timing, or the real size: utilization is an estimate until layout. |
+| Gate-level simulation | Your same tests, run on the real sky130 gates from synthesis, pass. This catches a register with no reset (it starts unknown on real gates) and other simulation-versus-gates differences. | Real timing: the gates use a fixed 1 ns unit delay. Anything the tests do not check. |
 | Requirement coverage | Every requirement has at least one passing test that says it covers it. | That the tests are strong enough. A weak test still counts. |
 | Spec approval | You read the spec and accepted it. This is your step. | Nothing technical. |
 
-Not available yet: **gate-level simulation**, the **equivalence** check, **place and route**, **DRC**, **LVS**, **timing closure** (**slack**, **setup and hold**), and the Tiny Tapeout export. A design that passes today's checks is a good simulated design, not working silicon.
+Not available yet: the **equivalence** check, **place and route**, **DRC**, **LVS**, **timing closure** (**slack**, **setup and hold**), and the Tiny Tapeout export. A design that passes today's checks is a good simulated design, not working silicon.
 
 ## From RTL to gates
 
@@ -46,6 +47,14 @@ The `synthesize` tool does this with Yosys, using the same recipe as Tiny Tapeou
 - **Utilization**: how full your tile would be, about the cell area divided by the area the placer may fill. A 1x1 tile holds about 9,900 um2 of cells. Under 90% is comfortable. It is an **estimate**: the real number comes from layout, in a later milestone.
 - **Warnings and problems**: an accidental **latch** or a **combinational loop** is reported with the file and line (for MyHDL, with your `hdl/` function too). A latch you wrote on purpose is allowed and shown as a warning. Cells that Tiny Tapeout's flow does not allow (**do-not-use cells**) are rejected.
 - **Too big**: if the design is far larger than the tile, the tool says so quickly, without doing the slow part. Make the design smaller, or ask the owner (you) whether a bigger tile is worth the money. The agent never changes the tile itself.
+
+### Simulating the gates
+
+`run_tests` with `gl=true` (on Icarus) synthesizes the design again and then runs your same test files on the netlist, with a model of each sky130 cell. It is the closest thing to the real chip that a simulator can show before layout.
+
+The classic thing it catches is a register without a reset. In RTL simulation a register can start at 0 because the simulator (or an `initial` line) says so. A real flip-flop powers up as an unknown 0 or 1, and gate-level simulation shows that as **X** (unknown). When your tests fail on the gates, the report says "First difference on the pins": which output, at which clock cycle, what the RTL had and what the gates had, for example `RTL 00000000, gate level xxxxxxxx`. The fix is almost always a proper reset. The waves of the gate-level run are in `build/waves/icarus-gl/tb.fst`.
+
+Two limits to remember. The tests can only look at the chip's pins, because inside a netlist the names are changed (`\core.count[0]`) or gone. And the delay is a fixed 1 ns on every flip-flop (the **unit delay**), not the real timing of the cells and wires: timing comes with layout.
 
 Clocks above about 66 MHz get a warning, because Tiny Tapeout's pins cannot move data that fast. Synthesis does not check timing; that comes with layout.
 

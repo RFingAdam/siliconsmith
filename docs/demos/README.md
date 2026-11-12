@@ -19,7 +19,8 @@ Siliconsmith's whole first milestone is built around. The prompt is exactly:
   prompt: the count goes up by one on each clock while `ui_in[0]` is 1, holds while it is 0, and
   wraps from 255 to 0. We wrote it before the demo, and it is not changed to fit a result.
 - **Two different simulators agree.** Both the agent's tests and the reference test are run on
-  Icarus and on Verilator, so four runs have to pass.
+  Icarus and on Verilator, so four runs have to pass, and a fifth: the frozen reference test on
+  the real sky130 gates (gate-level simulation on Icarus).
 - **How many tries it took.** Each `run_tests` call is one turn of the write-test-fix loop; the
   table counts them.
 
@@ -76,9 +77,9 @@ skill, the fix is a commit to this repository and the next attempt is a new row.
 never edited.
 
 <!-- metrics:start -->
-| Date | Front-end | Model | Claude Code | Siliconsmith | Turns | Result | run_tests calls | Cost (USD) | Minutes | Agent: Icarus | Agent: Verilator | Reference: Icarus | Reference: Verilator | Status | Passed | Transcript |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-11-12 | verilog | claude-sonnet-5-5 | 2.1.322 | ec7ed2d | 14 | success (exit 0) | 4 | 0.14 | 1.0 | pass | pass | pass | pass | spec valid, check, sim x2, coverage pass; approval open | yes | [verilog-20261112-1.md](verilog-20261112-1.md) |
-| 2026-11-12 | myhdl | claude-sonnet-5-5 | 2.1.322 | ec7ed2d+dirty | 12 | success (exit 0) | 2 | 0.12 | 0.8 | pass | pass | pass | pass | spec valid, check, sim x2, coverage pass; approval open | yes | [myhdl-20261112-1.md](myhdl-20261112-1.md) |
-| 2026-11-12 | amaranth | claude-sonnet-5-5 | 2.1.322 | ec7ed2d+dirty | 12 | success (exit 0) | 2 | 0.12 | 0.8 | pass | pass | pass | pass | spec valid, check, sim x2, coverage pass; approval open | yes | [amaranth-20261112-1.md](amaranth-20261112-1.md) |
+| Date | Front-end | Model | Claude Code | Siliconsmith | Turns | Result | run_tests calls | Cost (USD) | Minutes | Agent: Icarus | Agent: Verilator | Reference: Icarus | Reference: Verilator | Reference: Icarus gates | Status | Passed | Transcript |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-12 | verilog | claude-sonnet-5-5 | 2.1.322 | ec7ed2d | 14 | success (exit 0) | 4 | 0.14 | 1.0 | pass | pass | pass | pass | n/a | spec valid, check, sim x2, coverage pass; approval open | yes | [verilog-20261112-1.md](verilog-20261112-1.md) |
+| 2026-11-12 | myhdl | claude-sonnet-5-5 | 2.1.322 | ec7ed2d+dirty | 12 | success (exit 0) | 2 | 0.12 | 0.8 | pass | pass | pass | pass | n/a | spec valid, check, sim x2, coverage pass; approval open | yes | [myhdl-20261112-1.md](myhdl-20261112-1.md) |
+| 2026-11-12 | amaranth | claude-sonnet-5-5 | 2.1.322 | ec7ed2d+dirty | 12 | success (exit 0) | 2 | 0.12 | 0.8 | pass | pass | pass | pass | n/a | spec valid, check, sim x2, coverage pass; approval open | yes | [amaranth-20261112-1.md](amaranth-20261112-1.md) |
 <!-- metrics:end -->
