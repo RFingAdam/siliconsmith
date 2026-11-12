@@ -69,9 +69,9 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - `inspect_waves(path, signals, time_range, max_rows=50)` reads VCD or FST with pywellen and returns a compact value table.
 - The 6-cell integration matrix (3 front-ends × 2 simulators), a seeded wrap bug, and a parity test against TT's own `test/Makefile` flow.
 **Acceptance criteria**
-- [ ] Counter tests pass on **both** Icarus and Verilator for **all three** front-ends (CI matrix). *Proof:* `test_counter_sim[fe-sim]`, 6 cells.
-- [ ] A seeded bug (off-by-one wrap) produces a failure summary naming the test, the assertion, and the expected vs actual value, with the first failing assertion in ≤20 lines. *Proof:* `test_seeded_wrap_bug` asserts `{test, file:line, expected, actual}` and the 20-line limit.
-- [ ] Waveform output stays under 50 rows unless more are requested. *Proof:* `test_inspect_waves_rows`.
+- [x] Counter tests pass on **both** Icarus and Verilator for **all three** front-ends (CI matrix). *Proof:* `test_counter_sim[fe-sim]`, 6 cells.
+- [x] A seeded bug (off-by-one wrap) produces a failure summary naming the test, the assertion, and the expected vs actual value, with the first failing assertion in ≤20 lines. *Proof:* `test_seeded_wrap_bug` asserts `{test, file:line, expected, actual}` and the 20-line limit.
+- [x] Waveform output stays under 50 rows unless more are requested. *Proof:* `test_inspect_waves_rows`.
 
 ## [M0-6] Skill pack v1 + end-to-end agent demo
 **Labels:** `track:digital` `milestone:M0` `skills` `docs`
