@@ -79,6 +79,21 @@ def frame(source: str, last: str) -> str:
             "(3, 4)",
         ),
         (
+            frame(
+                "assert x == 255, 'msg'",
+                "AssertionError: Expected the counter to wrap but it was still counting\n"
+                "assert 254 == 255",
+            ),
+            "255",
+            "254",
+        ),
+        (
+            frame("assert a == b", "AssertionError: expected (1, 2), got (3, 4)"),
+            "(1, 2)",
+            "(3, 4)",
+        ),
+        (frame("assert a == b", "AssertionError: Expected the counter to wrap but it was"), "", ""),
+        (
             frame("assert a == b", "AssertionError: assert 'a == b' == 'c'"),
             "'c'",
             "'a == b'",
@@ -87,7 +102,7 @@ def frame(source: str, last: str) -> str:
 )
 def test_expected_and_actual(text: str, expected: str, actual: str) -> None:
     found = results.analyze_failure(text)
-    assert (found["expected"], found["actual"]) == (expected, actual)
+    assert (found["expected"] or "", found["actual"] or "") == (expected, actual)
     assert found["file"] == "test/test.py"
 
 

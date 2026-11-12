@@ -129,7 +129,7 @@ def format_value(value: Any, width: int | None, is_bit: bool) -> str:
         if is_bit or width == 1:
             return str(value & 1)
         digits = max(1, -(-(width or value.bit_length() or 1) // 4))
-        return f"0x{value:0{digits}x}"
+        return clip(f"0x{value:0{digits}x}", WAVE_VALUE_MAX)
     text = str(value).lower()
     if is_bit or width == 1 or not set(text) <= set("01xzuwlh-"):
         return clip(text, WAVE_VALUE_MAX)
@@ -141,7 +141,7 @@ def format_value(value: Any, width: int | None, is_bit: bool) -> str:
             nibbles.append(f"{int(chunk, 2):x}")
         else:
             nibbles.append("z" if set(chunk) == {"z"} else "x")
-    return "0x" + "".join(nibbles)
+    return clip("0x" + "".join(nibbles), WAVE_VALUE_MAX)
 
 
 def _time_text(ns: float) -> str:
@@ -154,6 +154,35 @@ def _open(path: str) -> Any:
     from pywellen import Waveform  # in the image only
 
     return Waveform(path)
+
+
+def window_changes(
+    signal: Any, tick_ns: float, start_ns: float | None, end_ns: float | None
+) -> tuple[Any, list[tuple[float, Any]]]:
+    """`(value in effect before the window, changes inside it)` for one signal.
+
+    `signal` is a pywellen Signal: `len()` and integer indexing give `(time, value)` pairs in time
+    order, so the start of the window is found by bisection and nothing outside the window is
+    read. At most MAX_CHANGES_PER_SIGNAL changes are returned. Times are in nanoseconds.
+    """
+    count = len(signal)
+    low, high = 0, count
+    if start_ns is not None:
+        while low < high:  # first change at or after start_ns
+            mid = (low + high) // 2
+            if signal[mid][0] * tick_ns < start_ns:
+                low = mid + 1
+            else:
+                high = mid
+    before = signal[low - 1][1] if low > 0 and start_ns is not None else None
+    changes: list[tuple[float, Any]] = []
+    for index in range(low, min(count, low + MAX_CHANGES_PER_SIGNAL)):
+        time, value = signal[index]
+        time_ns = time * tick_ns
+        if end_ns is not None and time_ns > end_ns:
+            break
+        changes.append((time_ns, value))
+    return before, changes
 
 
 def _checked_file(rel: str) -> Path | None:
@@ -211,11 +240,13 @@ def read(request: dict[str, Any]) -> dict[str, Any]:
         return {**base, "state": "signal_problem", "problems": problems}
     columns = []
     series: list[list[tuple[float, str]]] = []
+    current: list[str] = []
     for full, var in chosen:
         width = var.bitwidth
         is_bit = bool(var.is_1bit)
-        changes = list(var.tv)[:MAX_CHANGES_PER_SIGNAL]
-        series.append([(t * tick_ns, format_value(v, width, is_bit)) for t, v in changes])
+        before, changes = window_changes(var.tv, tick_ns, start_ns, end_ns)
+        series.append([(t, format_value(v, width, is_bit)) for t, v in changes])
+        current.append("-" if before is None else format_value(before, width, is_bit))
         columns.append(
             {
                 "name": clip(full, WAVE_SIGNAL_MAX),
@@ -224,30 +255,32 @@ def read(request: dict[str, Any]) -> dict[str, Any]:
         )
     times = sorted({t for column in series for t, _ in column})
     rows: list[list[Any]] = []
-    current = ["-"] * len(series)
+    rows_total = 0
     pointers = [0] * len(series)
+    last: list[str] | None = None
+    # The state in effect when the window starts, unless a change lands exactly there.
+    if (
+        start_ns is not None
+        and any(value != "-" for value in current)
+        and (not times or times[0] > start_ns)
+    ):
+        rows.append([_time_text(start_ns), *current])
+        rows_total += 1
+        last = list(current)
     for time in times:
         for index, column in enumerate(series):
             while pointers[index] < len(column) and column[pointers[index]][0] <= time:
                 current[index] = column[pointers[index]][1]
                 pointers[index] += 1
-        if start_ns is not None and time < start_ns:
-            row_time = start_ns  # the state in effect when the window starts
-            snapshot = [_time_text(row_time), *current]
-            if rows:
-                rows[-1] = snapshot
-            else:
-                rows.append(snapshot)
-            continue
-        if end_ns is not None and time > end_ns:
-            break
-        row = [_time_text(time), *current]
-        if rows and rows[-1][1:] == row[1:]:
+        if last is not None and last == current:
             continue  # nothing changed in the requested columns
-        rows.append(row)
+        last = list(current)
+        rows_total += 1
+        if len(rows) < max_rows:  # later rows are only counted, never built
+            rows.append([_time_text(time), *current])
     base["columns"] = columns
-    base["rows_total"] = len(rows)
-    base["rows"] = rows[:max_rows]
+    base["rows_total"] = rows_total
+    base["rows"] = rows
     if times:
         base["t_first_ns"] = _time_text(times[0])
         base["t_last_ns"] = _time_text(times[-1])

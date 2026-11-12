@@ -43,6 +43,7 @@ MAX_FILTER_CHARS = 200
 MAX_WAVE_BYTES = 256 * 1024 * 1024
 WAVE_EXTENSIONS = {"fst": ".fst", "vcd": ".vcd"}
 _ERROR_LINE = re.compile(r"error|fatal|cannot|not found|undefined|no such", re.IGNORECASE)
+_TEST_FRAME = re.compile(r'^\s*File "test/[^"]*", line \d+')
 
 
 def _check(request: dict[str, Any]) -> tuple[str, str | None, bool]:
@@ -91,12 +92,18 @@ def map_log_paths(text: str, out_dir: Path, name: str) -> str:
 def log_lines(text: str, out_dir: Path, name: str) -> list[str]:
     """The lines worth showing for a failed build or a crashed simulation (clipped, at most 15).
 
-    Lines that look like errors come first; if there are none, the last lines of the log.
+    Lines that look like errors come first; if there are none, the last lines of the log. The
+    last two traceback frames in the project's own test files (`File "test/x.py", line N`) are
+    kept too, so a Python error in a test comes back with its file and line.
     """
     mapped = [ln.rstrip() for ln in map_log_paths(text, out_dir, name).splitlines() if ln.strip()]
-    errors = [ln for ln in mapped if _ERROR_LINE.search(ln)]
-    chosen = errors[:MAX_LOG_LINES] if errors else mapped[-MAX_LOG_LINES:]
-    return [clip(ln, LOG_LINE_MAX) for ln in chosen]
+    errors = [i for i, ln in enumerate(mapped) if _ERROR_LINE.search(ln)]
+    if not errors:
+        return [clip(ln, LOG_LINE_MAX) for ln in mapped[-MAX_LOG_LINES:]]
+    frames = [i for i, ln in enumerate(mapped) if _TEST_FRAME.match(ln)][-2:]
+    room = max(MAX_LOG_LINES - len(frames), 1)
+    chosen = sorted(set(errors[:room]) | set(frames))[:MAX_LOG_LINES]
+    return [clip(mapped[i], LOG_LINE_MAX) for i in chosen]
 
 
 def _outcome(state: str, **fields: Any) -> dict[str, Any]:
@@ -151,6 +158,26 @@ def _mkdir_nofollow(base: Path, *parts: str) -> Path:
     return current
 
 
+def clear_waves(simulator: str) -> None:
+    """Empty `build/waves/<simulator>/` so a later `inspect_waves` cannot read an older run's
+    trace. Symlinks are removed, never followed. Problems are ignored: keeping a new wave file
+    reports them."""
+    folder = WORK / "build" / "waves" / simulator
+    with contextlib.suppress(OSError):
+        if folder.parent.is_symlink() or not folder.parent.exists():
+            return
+        if folder.is_symlink():
+            folder.unlink()
+            return
+        if not folder.is_dir():
+            return
+        for old in folder.iterdir():
+            if old.is_dir() and not old.is_symlink():
+                shutil.rmtree(old, ignore_errors=True)
+            else:
+                old.unlink()
+
+
 def keep_waves(simulator: str, source: Path) -> tuple[str | None, str | None]:
     """Copy the wave file to `build/waves/<simulator>/tb.<fst|vcd>`: `(project path, note)`."""
     fmt = wavefile.sniff_format(source)
@@ -190,7 +217,14 @@ def simulate(
     modules = discover_modules(test_dir)
     if not modules:
         return _outcome("no_modules", message="there is no test/test*.py file with tests in it")
-    sim_dir, build_dir = _prepare_dirs(simulator, waves, run_dir)
+    try:
+        sim_dir, build_dir = _prepare_dirs(simulator, waves, run_dir)
+    except OSError as exc:
+        return _outcome(
+            "build_failed",
+            log=[clip(f"build/sim/{simulator} cannot be used: {exc}", LOG_LINE_MAX)],
+            message="the build folder is not a plain folder",
+        )
     build_log, test_log = sim_dir / "build.log", sim_dir / "test.log"
     results_xml = sim_dir / "results.xml"
     from cocotb_tools.runner import get_runner  # in the image only
@@ -246,11 +280,12 @@ def simulate(
     try:
         records = results.parse_junit(results_xml.read_bytes())
     except (OSError, results.ResultsError) as exc:
+        why = str(exc) if isinstance(exc, results.ResultsError) else "the file is missing"
         return _outcome(
             "no_results",
             exit_code=exit_code,
             log=log_lines(_read_text(test_log), out_dir, name),
-            message=clip(f"no usable results.xml: {exc}", 200),
+            message=clip(f"the simulator wrote no usable results.xml ({why})", 200),
         )
     kept: str | None = None
     note: str | None = None
@@ -274,6 +309,7 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
     """The `test` verb. Returns the emit result plus a `sim` entry (None unless emit was ok)."""
     simulator, test_filter, waves = _check(request)
     name, _frontend, _author, run_dir = emit._check_request(request)
+    clear_waves(simulator)  # whatever happens next, build/waves holds this run's trace or nothing
     result = emit.emit(request)
     result["sim"] = None
     if not result.get("ok"):

@@ -6,7 +6,8 @@
 Each record is `{name, outcome, sim_time_ns, message, file, line, assertion, expected, actual}`.
 cocotb 2.x rewrites `assert` statements in test modules, so a failure reads like
 `assert 255 == 0` (left side = what the design produced, right side = what the test wanted).
-A test can also carry its own wording, such as `expected 10, got 0`; that wins when present.
+A test can also carry its own wording, such as `expected 10, got 0`; it is used only when
+there is no rewritten `==` comparison.
 
 The file is written by cocotb inside the simulator process that runs the agent's test code, so it
 is treated as untrusted: no DOCTYPE or entity (no expansion tricks), a size cap, and every text
@@ -37,14 +38,19 @@ _EXC_LINE = re.compile(
     r"^([A-Za-z_][\w.]*(?:Error|Exception|Failure|Timeout|Exit|Interrupt)\w*)(?::\s?(.*))?$"
 )
 _LOGIC_ARRAY = re.compile(r"^(?:cocotb\.types\.)?LogicArray\('([^']*)'")
+# One value token: a bracketed group, a quoted string, or a run without spaces or separators.
+# Single tokens keep prose such as "expected the counter to wrap but it was still counting" from
+# being read as a comparison.
+_VALUE = r"(?:[(\[{][^)\]}]*[)\]}]|'[^']*'|\"[^\"]*\"|[^\s,;:]+)"
+_SAW = r"(?:got|actual|was|saw|found|received)"
 _EXPECTED_GOT = re.compile(
-    r"expected\s*[:=]?\s*(?P<e>.+?)\s*[,;:]?\s+(?:but\s+)?"
-    r"(?:got|actual|was|saw|found|received)\s*[:=]?\s*(?P<a>.+)$",
+    rf"expected\s*[:=]?\s*(?P<e>{_VALUE})\s*[,;:]?\s+(?:but\s+)?{_SAW}\s*[:=]?\s*"
+    rf"(?P<a>{_VALUE})[\s.]*$",
     re.IGNORECASE,
 )
 _GOT_EXPECTED = re.compile(
-    r"(?:got|actual|was|saw|found|received)\s*[:=]?\s*(?P<a>.+?)\s*[,;:]?\s+(?:but\s+)?"
-    r"expected\s*[:=]?\s*(?P<e>.+)$",
+    rf"{_SAW}\s*[:=]?\s*(?P<a>{_VALUE})\s*[,;:]?\s+(?:but\s+)?expected\s*[:=]?\s*"
+    rf"(?P<e>{_VALUE})[\s.]*$",
     re.IGNORECASE,
 )
 
@@ -137,13 +143,14 @@ def analyze_failure(text: str) -> dict[str, Any]:
                     break
         break
     expected = actual = None
-    found = _from_message(exc_text) if exc_text else None
-    if found is not None:
-        expected, actual = found
-    elif rewritten is not None:
-        sides = _split_equal(rewritten[len("assert ") :])
-        if sides is not None:
-            actual, expected = _normalize(sides[0]), _normalize(sides[1])
+    # The rewritten `assert L == R` holds the real values, so it wins over the message's wording.
+    sides = _split_equal(rewritten[len("assert ") :]) if rewritten is not None else None
+    if sides is not None:
+        actual, expected = _normalize(sides[0]), _normalize(sides[1])
+    else:
+        found = _from_message(exc_text) if exc_text else None
+        if found is not None:
+            expected, actual = found
     if message and rewritten and message.endswith(rewritten[: TEST_TEXT_MAX // 2]):
         message = None  # a bare assert: the assertion text says it all
     return {

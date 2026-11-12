@@ -166,3 +166,83 @@ def test_keep_waves_refuses_a_symlinked_target(
     source.write_bytes(FST_HEAD)
     assert sim.keep_waves("icarus", source)[0] == "build/waves/icarus/tb.fst"
     assert victim.read_text() == "keep"  # the old link was removed, not written through
+
+
+def test_log_lines_keep_test_traceback_frames() -> None:
+    text = "\n".join(
+        [
+            "Traceback (most recent call last):",
+            '  File "/work/test/test.py", line 7, in <module>',
+            "    import nothing",
+            "ModuleNotFoundError: No module named 'nothing'",
+        ]
+    )
+    lines = sim.log_lines(text, Path("/work/build/.ss/abc/out"), "chip")
+    assert lines == [
+        '  File "test/test.py", line 7, in <module>',
+        "ModuleNotFoundError: No module named 'nothing'",
+    ]
+
+
+def test_clear_waves_removes_old_traces_without_following_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sim, "WORK", tmp_path)
+    folder = tmp_path / "build" / "waves" / "icarus"
+    folder.mkdir(parents=True)
+    other = tmp_path / "build" / "waves" / "verilator"
+    other.mkdir()
+    (other / "tb.fst").write_bytes(FST_HEAD)
+    (folder / "tb.fst").write_bytes(FST_HEAD)
+    (folder / "sub").mkdir()
+    (folder / "sub" / "x").write_text("x")
+    victim = tmp_path / "victim"
+    victim.write_text("keep")
+    (folder / "tb.vcd").symlink_to(victim)
+    sim.clear_waves("icarus")
+    assert list(folder.iterdir()) == []
+    assert victim.read_text() == "keep"
+    assert (other / "tb.fst").exists()  # another simulator's trace is not this run's business
+    sim.clear_waves("icarus")  # and an empty or missing folder is fine
+    sim.clear_waves("nothing")
+
+
+def test_clear_waves_unlinks_a_symlinked_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sim, "WORK", tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "tb.fst").write_bytes(FST_HEAD)
+    waves = tmp_path / "build" / "waves"
+    waves.mkdir(parents=True)
+    (waves / "icarus").symlink_to(elsewhere)
+    sim.clear_waves("icarus")
+    assert not (waves / "icarus").exists() and (elsewhere / "tb.fst").exists()
+
+
+def test_run_clears_old_waves_even_when_emit_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sim, "WORK", tmp_path)
+    folder = tmp_path / "build" / "waves" / "icarus"
+    folder.mkdir(parents=True)
+    (folder / "tb.fst").write_bytes(FST_HEAD)
+    monkeypatch.setattr(emit, "_check_request", lambda r: ("chip", "verilog", "a", tmp_path))
+    monkeypatch.setattr(emit, "emit", lambda r: {"ok": False})
+    assert sim.run(request())["sim"] is None
+    assert list(folder.iterdir()) == []
+
+
+def test_a_symlinked_build_folder_is_a_design_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sim, "WORK", tmp_path)
+    (tmp_path / "test").mkdir()
+    (tmp_path / "test" / "tb.v").write_text("module tb; endmodule\n")
+    (tmp_path / "test" / "test.py").write_text("")
+    (tmp_path / "build" / "sim").mkdir(parents=True)
+    (tmp_path / "build" / "sim" / "icarus").symlink_to(tmp_path)
+    outcome = sim.simulate("chip", "icarus", tmp_path / "run", None, False)
+    assert outcome["state"] == "build_failed"
+    assert "build/sim/icarus" in outcome["log"][0]

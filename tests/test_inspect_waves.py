@@ -169,6 +169,7 @@ def test_malformed_results(tmp_path: Path) -> None:
     bad_results: list[dict[str, Any] | None] = [
         wave_result(rows=[["0", "0x00"]]),  # a row with the wrong number of cells
         wave_result(rows_total=1),
+        wave_result(rows=[["0", "y" * 500_000]], columns=[{"name": "a", "width": 8}]),
         wave_result(format="gtkw"),
         wave_result(columns=[{"name": 3}]),
         {"ok": True, "state": "ok", "rows": "no"},
@@ -292,3 +293,47 @@ def test_sniff_format(tmp_path: Path) -> None:
 def test_worker_checks_its_request(request_: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         waves.check_request(request_)
+
+
+def test_a_killed_reader_is_reported_as_too_large(tmp_path: Path) -> None:
+    runner = EmitRunner(outcome(None, exit_code=137))
+    ctx, _ = make(tmp_path, "verilog", runner)
+    with pytest.raises(ToolError, match="too large to read"):
+        inspect(ctx, "chip", PATH, ["uo_out"], None, None, 50)
+
+
+def test_wide_bus_values_are_clipped() -> None:
+    text = waves.format_value(2**1023, 1024, False)
+    assert len(text) <= 80 and text.endswith("…")
+
+
+class FakeSignal:
+    """The part of pywellen's Signal the reader uses: len() and integer indexing."""
+
+    def __init__(self, changes: list[tuple[int, Any]]) -> None:
+        self.changes = changes
+        self.reads = 0
+
+    def __len__(self) -> int:
+        return len(self.changes)
+
+    def __getitem__(self, index: int) -> tuple[int, Any]:
+        self.reads += 1
+        return self.changes[index]
+
+
+def test_window_changes_reads_only_the_window() -> None:
+    signal = FakeSignal([(t, t % 256) for t in range(0, 1_000_000, 10)])
+    before, changes = waves.window_changes(signal, 1.0, 500.0, 530.0)
+    assert before == 490 % 256
+    assert [t for t, _ in changes] == [500.0, 510.0, 520.0, 530.0]
+    assert signal.reads < 100  # bisection plus the window, not the whole file
+    assert waves.window_changes(FakeSignal([]), 1.0, 5.0, None) == (None, [])
+    first = waves.window_changes(FakeSignal([(10, 1), (20, 2)]), 1.0, 5.0, None)
+    assert first == (None, [(10.0, 1), (20.0, 2)])
+
+
+def test_window_changes_caps_the_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(waves, "MAX_CHANGES_PER_SIGNAL", 3)
+    _, changes = waves.window_changes(FakeSignal([(t, t) for t in range(10)]), 1.0, None, None)
+    assert len(changes) == 3

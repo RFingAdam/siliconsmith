@@ -114,9 +114,10 @@ def test_pass(tmp_path: Path) -> None:
     assert (details["sim"], details["stage"], details["filtered"]) == ("icarus", "sim", False)
     assert [(t["name"], t["covers"]) for t in details["tests"]] == [
         ("test_adds", ["R1"]),
-        ("test_expected_failure", ["R1"]),
+        ("test_expected_failure", []),  # expect_fail covers nothing
         ("test_plain", []),
     ]
+    assert details["tests"][1]["declared_covers"] == ["R1"]
     assert details["tests"][1]["expects_failure"] is True
     assert details["coverage"] == {"covered": ["R1"], "uncovered": [], "unknown": []}
     assert details["waves"] is None and details["lint"] == []
@@ -170,7 +171,7 @@ def test_failure_names_test_assertion_expected_and_actual(tmp_path: Path) -> Non
 def test_failure_without_waves_hints_at_waves(tmp_path: Path) -> None:
     ctx, _, _ = setup(tmp_path, outcome(sim_result(sim_part([FAIL], simulator="verilator"))))
     result = run(ctx, "chip", "verilator", None, False)
-    assert "waves=True" in result.next_hints[0] and "'test_adds'" in result.next_hints[0]
+    assert "waves=True" in result.next_hints[0] and "test_adds$'" in result.next_hints[0]
 
 
 def test_a_bogus_wave_path_is_dropped(tmp_path: Path) -> None:
@@ -208,10 +209,41 @@ def test_zero_tests_is_a_failure(tmp_path: Path) -> None:
     assert filtered.ok is False and "matched no test" in filtered.summary
 
 
-def test_skipped_only_is_ok(tmp_path: Path) -> None:
+def test_skipped_only_is_a_failure(tmp_path: Path) -> None:
     ctx, _, _ = setup(tmp_path, outcome(sim_result(sim_part([sim_test("test_plain", "skip")]))))
     result = run(ctx, "chip", "icarus", None, False)
-    assert result.ok and "0 passed, 0 failed, 1 skipped" in result.summary
+    assert result.ok is False
+    assert "no test ran: all 1 test was skipped" in result.summary
+    assert "skip=True" in result.next_hints[0]
+    assert result.details["tests"][0]["outcome"] == "skip"
+
+
+def test_skips_next_to_a_pass_are_still_ok(tmp_path: Path) -> None:
+    tests = [sim_test("test_plain", "skip"), sim_test("test_adds")]
+    ctx, _, _ = setup(tmp_path, outcome(sim_result(sim_part(tests))))
+    result = run(ctx, "chip", "icarus", None, False)
+    assert result.ok and "1 passed, 0 failed, 1 skipped" in result.summary
+
+
+def test_failure_hint_filter_is_anchored(tmp_path: Path) -> None:
+    ctx, _, _ = setup(tmp_path, outcome(sim_result(sim_part([FAIL]))))
+    result = run(ctx, "chip", "icarus", None, False)
+    assert "test_filter='test.test_adds$'" in result.next_hints[0]
+
+
+def test_every_path_has_a_lint_key(tmp_path: Path) -> None:
+    ctx, _, _ = setup(tmp_path, outcome(sim_result(sim_part([sim_test("test_adds")]))))
+    assert run(ctx, "chip", "icarus", None, False).details["lint"] == []
+    (tmp_path / "t").mkdir()
+    ctx, _, _ = setup(tmp_path / "t", outcome(None, timed_out=True))
+    assert run(ctx, "chip", "icarus", None, False).details["lint"] == []
+
+
+def test_oversized_log_lines_are_rejected(tmp_path: Path) -> None:
+    sim_bad = sim_part([sim_test("test_adds")], log=["x" * 500_000])
+    ctx, _, _ = setup(tmp_path, outcome(sim_result(sim_bad)))
+    result = run(ctx, "chip", "icarus", None, False)
+    assert result.ok is False and "unreadable result" in result.summary
 
 
 def test_emit_failure_means_no_simulation(tmp_path: Path) -> None:

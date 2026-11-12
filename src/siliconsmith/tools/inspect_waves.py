@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -53,7 +53,9 @@ class _WavesResult(_Strict):
     format: Literal["fst", "vcd"] | None = None
     timescale: str | None = Field(default=None, max_length=40)
     columns: list[_Column] = Field(default_factory=list, max_length=lim.MAX_WAVE_SIGNALS)
-    rows: list[list[str]] = Field(default_factory=list, max_length=lim.MAX_WAVE_ROWS)
+    rows: list[list[Annotated[str, Field(max_length=lim.WAVE_VALUE_MAX)]]] = Field(
+        default_factory=list, max_length=lim.MAX_WAVE_ROWS
+    )
     rows_total: int = Field(default=0, ge=0)
     t_first_ns: str | None = Field(default=None, max_length=40)
     t_last_ns: str | None = Field(default=None, max_length=40)
@@ -154,6 +156,12 @@ def inspect(
             "range or fewer signals, or run run_tests with a test_filter for one short test"
         )
     raw = outcome.result
+    if raw is None and outcome.exit_code in (137, -9):
+        raise ToolError(
+            f"the wave file {rel} is too large to read in one go (the reader ran out of memory); "
+            "ask for a short time range (start_ns and end_ns) and fewer signals, or run "
+            "run_tests with a test_filter for one short test"
+        )
     if raw is None or raw.get("error") is not None:
         detail = ""
         if raw and isinstance(raw.get("error"), dict):

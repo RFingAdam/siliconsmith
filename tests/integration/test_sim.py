@@ -21,7 +21,6 @@ from integration.test_emit import (
     FRONTENDS,
     call,
     make_project,
-    put_design,
 )
 from siliconsmith.runners.docker import DockerRunner
 from siliconsmith.server import build_server
@@ -51,10 +50,11 @@ async def counter_project(
 ) -> Path:
     """A counter project with the fixture spec and tests, written through the MCP tools."""
     project = await make_project(client, root, fe)
-    if design is None:
-        put_design(project, fe, (FIXTURES / FIXTURE_FILE[fe]).read_text())
-    else:
-        put_design(project, fe, (FIXTURES / design).read_text())
+    source = (FIXTURES / (FIXTURE_FILE[fe] if design is None else design)).read_text()
+    wrote_design = await call(
+        client, "write_rtl", project="counter", path=ENTRY[fe], content=source
+    )
+    assert wrote_design["ok"] is True, wrote_design["summary"]
     spec = await call(
         client, "write_spec", project="counter", content=(FIXTURES / "spec.yaml").read_text()
     )
@@ -288,6 +288,61 @@ async def test_hanging_test_times_out(
         )
         assert listing.stdout.strip() == ""  # the container is gone
         assert not list((project / "build" / ".ss").glob("*"))
+
+
+# -- skipped tests, prose messages, stale waves --------------------------------------------------
+
+PROSE = """\
+import cocotb
+
+
+@cocotb.test()
+async def test_prose(dut):
+    x = 254
+    assert x == 255, "Expected the counter to wrap but it was still counting"
+"""
+
+SKIPPED = """\
+import cocotb
+
+
+@cocotb.test(skip=True)
+async def test_skipped(dut):
+    pass
+"""
+
+
+async def put_test(client: Client, text: str) -> None:
+    wrote = await call(client, "write_test", project="counter", path="test/test.py", content=text)
+    assert wrote["ok"] is True, wrote["summary"]
+
+
+async def test_all_skipped_is_not_a_pass(server: Client, tmp_path: Path) -> None:
+    async with server as client:
+        await counter_project(client, tmp_path, "verilog")
+        await put_test(client, SKIPPED)
+        result = await call(client, "run_tests", project="counter", simulator="icarus")
+        assert result["ok"] is False and "all 1 test was skipped" in result["summary"]
+
+
+async def test_prose_message_does_not_confuse_expected_and_actual(
+    server: Client, tmp_path: Path
+) -> None:
+    async with server as client:
+        await counter_project(client, tmp_path, "verilog")
+        await put_test(client, PROSE)
+        result = await call(client, "run_tests", project="counter", simulator="icarus")
+        (bad,) = result["details"]["tests"]
+        assert (bad["expected"], bad["actual"]) == ("255", "254"), result["summary"]
+
+
+async def test_old_waves_are_gone_after_a_run_without_waves(server: Client, tmp_path: Path) -> None:
+    async with server as client:
+        project = await counter_project(client, tmp_path, "verilog")
+        ran = await call(client, "run_tests", project="counter", simulator="icarus", waves=True)
+        assert (project / ran["details"]["waves"]).is_file()
+        await call(client, "run_tests", project="counter", simulator="icarus")
+        assert not list((project / "build" / "waves" / "icarus").glob("*"))
 
 
 # -- parity with Tiny Tapeout's own test/Makefile flow -------------------------------------------

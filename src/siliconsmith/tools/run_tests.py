@@ -9,6 +9,9 @@ is ok, builds and runs the tests. The emit part is handled by the same code as `
 same files in `src/`. The simulation part comes back as untrusted data and is validated with
 pydantic before anything is shown.
 
+The result's `ok` is true only if the emit step was ok, at least one test passed (skipped tests
+do not count) and none failed or errored.
+
 `details` shape (stable; the ledger added in M0-8 records from it):
 
     sim            "icarus" | "verilator"
@@ -16,8 +19,10 @@ pydantic before anything is shown.
     filtered       true if a test_filter was given (such a run never counts as a full run)
     test_filter    the regex, or null
     lint           the emit step's lint findings (empty when the emit step was ok)
-    tests          [{name, module, outcome pass|fail|skip|error, covers[], expects_failure,
-                     sim_time_ns, message, file, line, assertion, expected, actual}]
+    tests          [{name, module, outcome pass|fail|skip|error, covers[], declared_covers[],
+                     expects_failure, sim_time_ns, message, file, line, assertion, expected,
+                     actual}]; `covers` is empty for an expect_fail/expect_error test (it
+                     covers nothing), `declared_covers` keeps the ids its docstring names
     tests_total    number of tests reported
     waves          project-relative wave file, or null
     coverage       {covered, uncovered, unknown} against spec.yaml, or null without a valid spec
@@ -28,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -80,7 +85,9 @@ class _Sim(_Strict):
     tests: list[_Test] = Field(default_factory=list, max_length=lim.MAX_TESTS)
     tests_total: int = Field(default=0, ge=0)
     waves: str | None = Field(default=None, max_length=lim.WAVES_PATH_MAX)
-    log: list[str] = Field(default_factory=list, max_length=lim.MAX_LOG_LINES)
+    log: list[Annotated[str, Field(max_length=lim.LOG_LINE_MAX)]] = Field(
+        default_factory=list, max_length=lim.MAX_LOG_LINES
+    )
     exit_code: int | None = None
     message: str | None = Field(default=None, max_length=lim.TEST_TEXT_MAX)
 
@@ -102,7 +109,7 @@ def _check_filter(test_filter: str | None) -> str | None:
     except re.error as exc:
         raise ToolError(
             f"test_filter {test_filter!r} is not a valid regular expression ({exc}); it is "
-            "matched against test names, for example 'wrap' or 'test_count.*'"
+            "searched in '<module>.<test name>', for example 'wrap' or 'test_count.*'"
         ) from exc
     return test_filter
 
@@ -125,6 +132,7 @@ def _base_details(simulator: str, test_filter: str | None) -> dict[str, Any]:
         "sim": simulator,
         "filtered": test_filter is not None,
         "test_filter": test_filter,
+        "lint": [],
         "tests": [],
         "tests_total": 0,
         "waves": None,
@@ -226,7 +234,11 @@ def _sim_problem(
 def _no_tests(sim: _Sim, test_filter: str | None, details: dict[str, Any]) -> ToolResult:
     if test_filter is not None:
         line = f"test_filter {test_filter!r} matched no test."
-        hint = "The filter is a regular expression matched against test names; check the spelling."
+        hint = (
+            "The filter is a regular expression searched in '<module>.<test name>' (for "
+            "example 'test.test_wraps_at_255'), so '^' and '$' anchor that whole name; check "
+            "the spelling."
+        )
     else:
         line = "The test files contain no cocotb tests (@cocotb.test)."
         hint = (
@@ -237,6 +249,21 @@ def _no_tests(sim: _Sim, test_filter: str | None, details: dict[str, Any]) -> To
         [f"run_tests failed on {sim.simulator}: no test ran.", line],
         details=details,
         next_hints=[hint],
+    )
+
+
+def _all_skipped(sim: _Sim, count: int, details: dict[str, Any]) -> ToolResult:
+    return ToolResult.from_lines(
+        False,
+        [
+            f"run_tests failed on {sim.simulator}: no test ran: all {count} "
+            f"test{'s were' if count != 1 else ' was'} skipped."
+        ],
+        details=details,
+        next_hints=[
+            "Remove skip=True from the @cocotb.test() decorators (and any test_filter that "
+            "leaves only skipped tests), then call run_tests again."
+        ],
     )
 
 
@@ -258,8 +285,13 @@ def _finish(
     for item in sim.tests:
         info = static.get((item.module, item.name))
         entry = item.model_dump()
-        entry["covers"] = list(info.covers) if info else []
-        entry["expects_failure"] = info.expects_failure if info else False
+        declared = list(info.covers) if info else []
+        expects_failure = info.expects_failure if info else False
+        # An expect_fail/expect_error test reports a failing check as a pass, so it covers
+        # nothing; its ids stay visible as declared_covers.
+        entry["covers"] = [] if expects_failure else declared
+        entry["declared_covers"] = declared
+        entry["expects_failure"] = expects_failure
         tests.append(entry)
     details["tests"] = tests
     details["tests_total"] = len(tests)
@@ -273,6 +305,8 @@ def _finish(
 
     passed, failed = _count(tests, "pass"), _count(tests, "fail") + _count(tests, "error")
     skipped = _count(tests, "skip")
+    if passed == 0 and failed == 0:
+        return _all_skipped(sim, len(tests), details)
     ok = failed == 0
     verdict = "ok" if ok else "failed"
     scope = f" (filter {test_filter!r})" if test_filter is not None else ""
@@ -292,8 +326,11 @@ def _finish(
                 "signals=[...]) around the failure."
             )
         else:
+            only = bad[0]["name"] + "$"  # identifiers, so nothing to escape
+            if bad[0]["module"]:
+                only = f"{bad[0]['module']}.{only}"
             hints.append(
-                f"Rerun with waves=True and test_filter={bad[0]['name']!r}, then use "
+                f"Rerun with waves=True and test_filter={only!r}, then use "
                 "inspect_waves to look at the signals."
             )
     elif _count(tests, "pass"):
@@ -435,12 +472,13 @@ DESCRIPTION = """\
 Run the project's cocotb tests (every test/test*.py) against the design on Icarus Verilog or \
 Verilator. It first does what emit_verilog does (elaborate, check ports, regenerate the wrapper, \
 lint); only if that is ok does it simulate the Tiny Tapeout testbench test/tb.v. ok is true only \
-if at least one test ran and none failed. The summary names the first failing test, its \
-file:line, the assertion, and expected vs actual. test_filter is a regex matched against test \
-names (a filtered run never counts as a full run). waves=True keeps a wave file under \
-build/waves/ for inspect_waves. details.tests lists every test with outcome and the \
-requirement ids it covers; details.coverage says which spec.yaml requirements have a passing \
-test. The first Verilator run takes about half a minute; later runs reuse the build.
+if at least one test ran (skipped tests do not count) and none failed. The summary names the \
+first failing test, its file:line, the assertion, and expected vs actual. test_filter is a regex \
+that cocotb searches in '<module>.<test name>' (for example 'test.test_wraps_at_255$'); a \
+filtered run never counts as a full run. waves=True keeps a wave file under build/waves/ for \
+inspect_waves. details.tests lists every test with outcome and the requirement ids it covers; \
+details.coverage says which spec.yaml requirements have a passing test. The first Verilator run \
+takes about half a minute; later runs reuse the build.
 """
 
 
