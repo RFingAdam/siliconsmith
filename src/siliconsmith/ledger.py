@@ -4,16 +4,17 @@
 """The validation ledger: `.siliconsmith/ledger.json` (PLAN.md section 5.7).
 
 The ledger stores facts only: the owner's approval of the spec, and one record per
-`emit_verilog` or `run_tests` run. It never says whether a step "passes"; `status.py` works that
-out from these facts and the current files. Only the host writes it (the container never sees
-`.siliconsmith`), and every write here is atomic. The caller holds `paths.project_lock`: the lock
-is not re-entrant, so nothing in this module takes it.
+`emit_verilog`, `run_tests` or `synthesize` run. It never says whether a step "passes";
+`status.py` works that out from these facts and the current files. Only the host writes it (the
+container never sees `.siliconsmith`), and every write here is atomic. The caller holds
+`paths.project_lock`: the lock is not re-entrant, so nothing in this module takes it.
 
 A digest is a sha256 over a sorted list of `(relative path, sha256 of the bytes)` for an explicit
 set of files, plus the image name and the Siliconsmith version. It never covers whole folders, so
 build output, `__pycache__` and wave files cannot change it. The `check` digest covers what the
-Verilog depends on; the `sim` digest adds the cocotb tests; the `spec` digest is the hash of
-`spec.yaml`.
+Verilog depends on; the `sim` digest adds the cocotb tests; the `synth` digest is the check
+inputs plus `src/config.json` and `info.yaml` (the clock and tile size do not change the RTL, but
+they change synthesis); the `spec` digest is the hash of `spec.yaml`.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ RESCUE_LEDGER_BYTES = 256 * 1024 * 1024
 MAX_HASHED_FILE_BYTES = 2 * 1024 * 1024
 SPEC_REL = "spec.yaml"
 
-Tool = Literal["emit_verilog", "run_tests"]
+Tool = Literal["emit_verilog", "run_tests", "synthesize"]
 Simulator = Literal["icarus", "verilator"]
 Outcome = Literal["pass", "fail", "skip", "error"]
 
@@ -74,6 +75,19 @@ class Digests(_Model):
     check: str
     sim: str | None = None
     spec: str | None = None
+    synth: str | None = None  # absent in ledgers written before M1
+
+
+class SynthFacts(_Model):
+    """Facts of a `synthesize` run (all optional: a run can stop before there is a netlist)."""
+
+    cells: int | None = None
+    flip_flops: int | None = None
+    area_um2: float | None = None
+    utilization: float | None = None  # the estimate: cell area / cell budget
+    tiles: str | None = None
+    verdict: str | None = None  # ok | warn | too_big
+    netlist_sha256: str | None = None
 
 
 class RunRecord(_Model):
@@ -88,6 +102,7 @@ class RunRecord(_Model):
     siliconsmith_version: str
     digests: Digests
     tests: list[RunTest] = Field(default_factory=list)
+    synth: SynthFacts | None = None  # only on synthesize records
 
 
 class Ledger(_Model):
@@ -208,7 +223,7 @@ def check_inputs(project: Project, files: list[str]) -> list[str]:
             hit = rel == f"src/{project.name}.v"
         else:
             hit = rel.startswith("hdl/") and rel.endswith(".py")
-        if hit or rel in ("info.yaml", "test/tb.v", "test/Makefile"):
+        if hit or rel in ("test/tb.v", "test/Makefile"):
             wanted.append(rel)
     return wanted
 
@@ -219,6 +234,17 @@ def sim_inputs(project: Project, files: list[str]) -> list[str]:
     return sorted({*check_inputs(project, files), *tests})
 
 
+SYNTH_EXTRA_INPUTS = ("src/config.json", "info.yaml")
+
+
+def synth_inputs(project: Project, files: list[str]) -> list[str]:
+    """The check inputs plus `src/config.json` and `info.yaml`, which synthesis reads.
+
+    The two extra files are always listed, so a missing one still changes the digest.
+    """
+    return sorted({*check_inputs(project, files), *SYNTH_EXTRA_INPUTS})
+
+
 def _digest(project_dir: Path, rels: list[str], image: str) -> str:
     entries = [[rel, _file_hash(project_dir, rel)] for rel in sorted(rels)]
     blob = json.dumps({"files": entries, "image": image, "version": __version__}, sort_keys=True)
@@ -226,11 +252,12 @@ def _digest(project_dir: Path, rels: list[str], image: str) -> str:
 
 
 def compute_digests(project: Project, image: str) -> Digests:
-    """The check, sim and spec digests of the project's current files."""
+    """The check, sim, synth and spec digests of the project's current files."""
     files = [rel for rel, _ in walk_files(project.dir, skip_dirs=_SKIP_DIRS)]
     return Digests(
         check=_digest(project.dir, check_inputs(project, files), image),
         sim=_digest(project.dir, sim_inputs(project, files), image),
+        synth=_digest(project.dir, synth_inputs(project, files), image),
         spec=spec_digest(project.dir),
     )
 
@@ -277,6 +304,12 @@ def record_from_result(
             )
         )
     sim = details.get("sim") if tool == "run_tests" else None
+    synth: SynthFacts | None = None
+    if tool == "synthesize" and isinstance(details.get("synth"), dict):
+        try:
+            synth = SynthFacts.model_validate(details["synth"])
+        except ValidationError:
+            synth = None  # facts only: drop what cannot be read rather than guess
     return RunRecord(
         tool=tool,
         sim=sim,
@@ -289,6 +322,7 @@ def record_from_result(
         siliconsmith_version=__version__,
         digests=digests if digests is not None else compute_digests(project, image),
         tests=tests,
+        synth=synth,
     )
 
 

@@ -15,9 +15,11 @@ import itertools
 import math
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated, Any
 
 import yaml
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -29,6 +31,9 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from siliconsmith.paths import safe_read
+from siliconsmith.tiles import DEFAULT_TILES, allowed_tiles, unknown_tiles_message
 
 SPEC_NAME = "spec.yaml"
 SPEC_VERSION = 1
@@ -44,6 +49,7 @@ _TOP_KEYS = (
     "title",
     "summary",
     "clock_hz",
+    "tiles",
     "reset",
     "pins",
     "requirements",
@@ -185,6 +191,7 @@ class Spec(_Strict):
     title: Line100
     summary: Block1000
     clock_hz: StrictInt = Field(gt=0, le=MAX_CLOCK_HZ)
+    tiles: StrictStr = DEFAULT_TILES
     reset: Line200
     pins: Pins = Field(default_factory=Pins)
     requirements: list[Requirement] = Field(min_length=1, max_length=100)
@@ -195,6 +202,13 @@ class Spec(_Strict):
     def _version_is_one(cls, value: int) -> int:
         if value != SPEC_VERSION:
             raise ValueError(f"only spec version {SPEC_VERSION} is supported")
+        return value
+
+    @field_validator("tiles")
+    @classmethod
+    def _tiles_allowed(cls, value: str) -> str:
+        if value not in allowed_tiles():
+            raise ValueError(unknown_tiles_message(value))
         return value
 
     def requirement_ids(self) -> list[str]:
@@ -359,6 +373,25 @@ def parse_spec(text: str) -> Spec | list[SpecError]:
     return duplicates if duplicates else spec
 
 
+def read_spec(project_dir: Path) -> tuple[Spec | None, str | None]:
+    """Read and check `<project_dir>/spec.yaml`: `(spec, None)` or `(None, plain-English reason)`.
+
+    The reason says "not found" when the file is missing, so callers can tell missing from bad.
+    """
+    try:
+        text = safe_read(project_dir, SPEC_NAME, MAX_SPEC_BYTES).decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "spec.yaml is not valid UTF-8 text"
+    except ToolError:
+        return None, "spec.yaml was not found or cannot be read"
+    parsed = parse_spec(text)
+    if isinstance(parsed, Spec):
+        return parsed, None
+    first = parsed[0]
+    more = f" (+{len(parsed) - 1} more)" if len(parsed) > 1 else ""
+    return None, f"{first.path}: {first.message}{more}"
+
+
 def pinout(spec: Spec) -> dict[str, str]:
     """All 24 pins as Tiny Tapeout `info.yaml` keys (`ui[0]` ...), `""` where the spec is silent."""
     out: dict[str, str] = {}
@@ -426,6 +459,11 @@ def render_spec(spec: Spec) -> str:
     lines = [_STUB_HEADER, f"version: {spec.version}", f"title: {_q(spec.title)}"]
     lines.append(f"summary: {_q(spec.summary)}")
     lines.append(f"clock_hz: {spec.clock_hz}  # {spec.clock_hz / 1e6:g} MHz")
+    lines.append(
+        "# tiles: how much chip area the design rents on Tiny Tapeout. Bigger tiles cost more\n"
+        "# money, so ask the owner before changing it. Allowed: " + ", ".join(allowed_tiles()) + "."
+    )
+    lines.append(f"tiles: {_q(spec.tiles)}")
     lines.append(f"reset: {_q(spec.reset)}")
     lines.append("")
     lines.append("# What each pin means. ui = inputs, uo = outputs, uio = bidirectional pins.")

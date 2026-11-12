@@ -624,3 +624,20 @@ def test_host_status_digest(
 def test_errors_share_a_base() -> None:
     assert issubclass(ImageMissingError, ToolchainError)
     assert issubclass(DockerUnavailableError, ToolchainError)
+
+
+def test_remove_in_build_deletes_a_folder_and_never_follows_a_symlink(
+    build: Path, tmp_path: Path
+) -> None:
+    (build / "synth").mkdir()
+    (build / "synth" / "n.v").write_text("x")
+    dk.remove_in_build(build, "synth")
+    assert not (build / "synth").exists()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    (build / "synth").symlink_to(outside)
+    dk.remove_in_build(build, "synth")
+    assert not (build / "synth").exists() and not (build / "synth").is_symlink()
+    assert (outside / "keep.txt").read_text() == "keep"
+    dk.remove_in_build(build, "synth")  # nothing there: no error

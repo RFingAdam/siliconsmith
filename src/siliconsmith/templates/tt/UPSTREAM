@@ -31,6 +31,16 @@ patches:
       Fields set: project.title, project.author, project.description, project.language,
       project.top_module (tt_um_<name>), project.source_files ([project.v, <name>.v]),
       project.tiles (1x1). All other values are kept.
+      Kept in sync afterwards from spec.yaml by siliconsmith/tt_sync.py (create_project,
+      write_spec, synthesize): project.clock_hz, project.tiles and the pinout block are
+      rewritten the same way, and the header comment is replaced by ours.
+  - file: src/config.json
+    change: >-
+      Text patch of the one line '"CLOCK_PERIOD": 20,': the number becomes 1e9 / spec clock_hz
+      (nanoseconds, up to 3 decimals, an integer when whole). Done by siliconsmith/tt_sync.py at
+      create_project, after every valid write_spec and before each M1 tool's digest snapshot.
+      The file is never loaded and saved as JSON, so the duplicate "//" comment keys and the
+      layout stay as upstream wrote them. All other lines are kept.
   - file: test/tb.v
     change: "The instance line 'tt_um_example user_project (' becomes 'tt_um_<name> user_project ('."
   - file: test/Makefile

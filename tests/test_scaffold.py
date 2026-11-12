@@ -102,8 +102,14 @@ def test_scaffold_patched_template_files(tmp_path: Path, fe: str) -> None:
     assert "PROJECT_SOURCES = project.v chip.v\n" in makefile
     upstream = (TT_DIR / "test" / "Makefile").read_text()
     assert makefile.replace("project.v chip.v", "project.v") == upstream
-    for rel in ("src/config.json", "test/requirements.txt", "docs/info.md"):
+    for rel in ("test/requirements.txt", "docs/info.md"):
         assert (d / rel).read_bytes() == (TT_DIR / rel).read_bytes()
+    # src/config.json differs from the template only in the CLOCK_PERIOD line (10 MHz = 100 ns).
+    config = (d / "src/config.json").read_text()
+    assert (
+        config.replace('"CLOCK_PERIOD": 100,', '"CLOCK_PERIOD": 20,')
+        == (TT_DIR / "src/config.json").read_text()
+    )
 
 
 @FRONTEND_PARAMS

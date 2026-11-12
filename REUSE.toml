@@ -33,7 +33,10 @@ SPDX-FileCopyrightText = "2026 Adam Engelbrecht"
 SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
-path = "src/siliconsmith/templates/tt/**"
+path = [
+  "src/siliconsmith/templates/tt/**",
+  "src/siliconsmith/templates/tt_support/**",
+]
 precedence = "closest"
 SPDX-FileCopyrightText = "Tiny Tapeout"
 SPDX-License-Identifier = "Apache-2.0"

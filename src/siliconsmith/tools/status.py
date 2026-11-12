@@ -17,11 +17,11 @@ from siliconsmith.tools._common import get_project
 
 DESCRIPTION = """\
 Show the validation sequence for the project: for each step (spec valid, spec approved, Verilog \
-check, simulation on Icarus and on Verilator, requirement coverage, and the later milestones) \
-whether it is pass, fail, stale (a file it depends on changed since it ran), not run, or not \
-available. It also writes the same table to docs/verification.md. It reads the ledger that \
-emit_verilog and run_tests keep; it never runs a simulation. Approving the spec is the owner's \
-step on the command line; no tool can do it, so do not try.
+check, simulation on Icarus and on Verilator, requirement coverage, synthesis, and the later \
+milestones) whether it is pass, fail, stale (a file it depends on changed since it ran), not \
+run, or not available. It also writes the same table to docs/verification.md. It reads the \
+ledger that emit_verilog, run_tests and synthesize keep; it never runs a simulation. Approving \
+the spec is the owner's step on the command line; no tool can do it, so do not try.
 """
 
 

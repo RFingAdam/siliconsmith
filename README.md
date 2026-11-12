@@ -2,7 +2,7 @@
 
 An open-source AI chip-design agent. One MCP server, one pinned Docker toolchain, and a write-test-fix loop that an AI coding agent (Claude Code, Cursor, Codex) can run end to end.
 
-**Status:** digital milestone M0 tools work: create a project, write the spec, RTL and tests, emit Verilog and lint it, simulate on Icarus and Verilator, look at waveforms, track what has passed with `status` and the validation ledger, and ask `explain` for the guides. Milestone M1 (turning the design into real sky130 gates, simulating those gates, and checking they match the Verilog) is in progress: the sky130 library files are now in the toolchain image and `run_tests` accepts `gl=true` but for now only answers that gate-level simulation arrives later in M1, and synthesis itself is not available yet, so `status` shows those three rows as not available. Layout and Tiny Tapeout export come in milestones M2 and M3. [ISSUES.md](ISSUES.md) and the GitHub issues track what has landed.
+**Status:** digital milestone M0 tools work: create a project, write the spec, RTL and tests, emit Verilog and lint it, simulate on Icarus and Verilator, look at waveforms, track what has passed with `status` and the validation ledger, and ask `explain` for the guides. Milestone M1 (turning the design into real sky130 gates, simulating those gates, and checking they match the Verilog) is in progress: `synthesize` is available (it builds the design out of sky130 cells and reports cells, area and the estimated tile utilization; the sky130 library files are in the toolchain image), while gate-level simulation and the equivalence check are still to come (`run_tests` accepts `gl=true` but for now only answers that gate-level simulation arrives later in M1), so `status` shows those two rows as not available. Layout and Tiny Tapeout export come in milestones M2 and M3. [ISSUES.md](ISSUES.md) and the GitHub issues track what has landed.
 
 Three tracks share the same server and toolchain:
 
@@ -23,7 +23,7 @@ nothing is exposed on the network.
 
 Today the server offers `toolchain_info`, `create_project`, `list_files`, `read_file`,
 `write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests`, `inspect_waves`,
-`status` and `explain`. `explain` answers from the packaged skills and a plain-English glossary: ask it for
+`synthesize`, `status` and `explain`. `explain` answers from the packaged skills and a plain-English glossary: ask it for
 `explain('chip-design-loop')` first. New to digital design? Read the
 [beginner guide](docs/beginner-guide.md). Start
 with `write_spec`: `spec.yaml` says the clock, the pins and the numbered requirements, and
@@ -32,8 +32,13 @@ into a checked Verilog core plus the Tiny Tapeout wrapper and lints it with Veri
 `run_tests` runs your cocotb tests against the design on Icarus Verilog or Verilator (it emits
 and lints first), and a failure comes back as the test name, the file and line, the assertion,
 and the expected and actual values. With `waves=True` it keeps a wave file, and `inspect_waves`
-shows how chosen signals changed as a short table. Emitting and testing need Docker and the
-toolchain image.
+shows how chosen signals changed as a short table. `synthesize` turns the design into real sky130
+gates with Yosys, following the recipe of Tiny Tapeout's own flow, and tells you the number of
+cells (flip-flops and logic), the area in um2, the most used cell types and the estimated
+utilization of your tile (an estimate: layout in M2 gives the real number). It also reports
+latches, combinational loops, signals driven twice and undriven outputs with file and line, stops
+a design that is far too big for its tile early, and saves the netlist in `build/synth/`.
+Emitting, testing and synthesizing need Docker and the toolchain image.
 
 `status` shows, in plain English, how far the design has got: is the spec valid, has the owner
 approved it, does the Verilog check out, do the tests pass on both simulators, and does every
@@ -140,12 +145,12 @@ files." It should call `create_project` and then `list_files`.
 
 Every simulator and Python tool runs inside one Docker image, so the only things you install on your own machine are Docker and Python. The image holds Icarus Verilog, Verilator 5.046, Yosys 0.62, cocotb, Amaranth, MyHDL and a waveform reader, and it has no network access when Siliconsmith runs it.
 
-    ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3a85666cceb4
+    ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3694aba408b5
 
 Size (linux/amd64): about 816 MB unpacked, and about 257 MB to download. The unpacked figure is the sum of the layer sizes that `docker history --human=false` lists, which gives the same number on every Docker setup. `docker images` can show a larger figure (about 1.07 GB on a Docker that uses the containerd image store) because it counts disk use, not the size of the files.
 
 Since M1-0 the image also holds ten sky130 files (the standard-cell library data that synthesis and gate-level simulation read, about 17 MB), downloaded at build time from the open_pdks release Tiny Tapeout uses and checked against a pinned sha256. `toolchain_info` reports them as `pdk`. The full PDK and the layout tools are not in the image; they come with milestone M2.
 
-Get it with `docker pull ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3a85666cceb4`. The tag changes whenever anything in `docker/` changes, and the server always asks for the tag that matches the checkout you are running. To use a different image, set `SILICONSMITH_IMAGE` (for the server, and pass the same name to `siliconsmith status --image`, because the image is part of what makes a result stale). The tool `toolchain_info` checks that Docker and the image work and lists every tool's version.
+Get it with `docker pull ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3694aba408b5`. The tag changes whenever anything in `docker/` changes, and the server always asks for the tag that matches the checkout you are running. To use a different image, set `SILICONSMITH_IMAGE` (for the server, and pass the same name to `siliconsmith status --image`, because the image is part of what makes a result stale). The tool `toolchain_info` checks that Docker and the image work and lists every tool's version.
 
-To build it yourself instead: `docker build -t ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3a85666cceb4 docker/` (about two minutes with a warm cache).
+To build it yourself instead: `docker build -t ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3694aba408b5 docker/` (about two minutes with a warm cache).

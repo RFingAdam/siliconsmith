@@ -65,6 +65,10 @@ class _Finding(_Strict):
     col: int = Field(ge=0)
     msg: str = Field(max_length=lim.FINDING_MSG_MAX)
     detail: str = Field(default="", max_length=lim.FINDING_DETAIL_MAX)
+    # MyHDL only: the function in hdl/ that the generated line came from.
+    hdl_file: str = Field(default="", max_length=lim.FILE_MAX)
+    hdl_line: int = Field(default=0, ge=0)
+    hdl_function: str = Field(default="", max_length=lim.SYNTH_SIGNAL_MAX)
 
 
 class _PythonError(_Strict):
@@ -94,6 +98,15 @@ class _EmitResult(_Strict):
     message: str | None = Field(default=None, max_length=lim.MESSAGE_MAX)
     core_generated: bool = False
     error: _WorkerError | None = None
+
+
+def _finding_dict(item: _Finding) -> dict[str, Any]:
+    """A finding for `details`; the MyHDL fields are only there when they say something."""
+    data = item.model_dump()
+    if not item.hdl_file:
+        for key in ("hdl_file", "hdl_line", "hdl_function"):
+            del data[key]
+    return data
 
 
 def read_author(project: Project) -> str:
@@ -234,6 +247,12 @@ def _hints_for_lint(frontend: Frontend, project: Project, findings: list[_Findin
     editable = frontend.entry(project.name)
     if first.file == "src/project.v":
         return ["The wrapper is generated; fix the core so that the finding goes away."]
+    if first.hdl_file:
+        return [
+            f"Fix the first finding ({first.code}) in {first.hdl_file}:{first.hdl_line} "
+            f"(function {first.hdl_function}); src/{project.name}.v is generated from it. "
+            "Then call emit_verilog again."
+        ]
     if frontend.generated:
         return [
             f"Fix the first finding ({first.code}, {first.file}:{first.line}) in {editable}: "
@@ -315,7 +334,7 @@ def _success_or_lint(
         "top": f"tt_um_{name}",
         "ports": {n: p.model_dump() for n, p in result.ports.items()},
         "wrapper_ports": {n: p.model_dump() for n, p in result.wrapper_ports.items()},
-        "lint": [f.model_dump() for f in result.lint],
+        "lint": [_finding_dict(f) for f in result.lint],
         "lint_total": result.lint_total,
     }
     source_note = (
@@ -417,7 +436,7 @@ def _core_syntax_failure(project: Project, frontend: Frontend, result: _EmitResu
         ["Stage: lint (the Verilog core does not parse).", *(_finding_line(f) for f in shown)],
         stage="lint",
         hints=_hints_for_lint(frontend, project, result.lint),
-        lint=[f.model_dump() for f in result.lint],
+        lint=[_finding_dict(f) for f in result.lint],
         lint_total=result.lint_total,
     )
 

@@ -47,6 +47,8 @@ def clamp_result(result: dict[str, Any]) -> dict[str, Any]:
                 "file": FILE_MAX,
                 "msg": FINDING_MSG_MAX,
                 "detail": FINDING_DETAIL_MAX,
+                "hdl_file": FILE_MAX,
+                "hdl_function": SYNTH_SIGNAL_MAX,
             },
         )
     error = result.get("python_error")
@@ -79,3 +81,11 @@ MAX_SUGGESTIONS = 8
 
 # What the host reads back from a generated core before it decides it is too large.
 MAX_CORE_READ_BYTES = 1024 * 1024
+
+# The `synth` verb's own result (clipped in the worker, enforced again on the host).
+MAX_SYNTH_FINDINGS = 50
+SYNTH_SIGNAL_MAX = 200
+MAX_TOP_CELLS = 10
+CELL_NAME_MAX = 100
+MAX_FORBIDDEN_CELLS = 20
+MAX_SYNTH_LOG_LINES = 12

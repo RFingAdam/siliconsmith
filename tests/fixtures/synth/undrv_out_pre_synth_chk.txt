@@ -1,0 +1,6 @@
+
+20. Executing CHECK pass (checking for obvious problems).
+Checking module tt_um_counter...
+Checking module counter...
+Warning: Wire counter.\uo_out [7] is used but has no driver.
+Found and reported 1 problems.

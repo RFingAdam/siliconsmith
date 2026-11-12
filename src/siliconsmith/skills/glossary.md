@@ -40,7 +40,7 @@ An automatic check of the source for likely mistakes without running it: width m
 
 ## Latch
 
-A memory element made by accident when combinational logic does not give a signal a value on every path. It is level-sensitive instead of clocked, which makes timing hard to analyze. Tiny Tapeout designs should have none, and the lint step treats them as errors.
+A memory element made by accident when combinational logic does not give a signal a value on every path. It is level-sensitive instead of clocked, which makes timing hard to analyze. Tiny Tapeout designs should have none, and the lint step treats them as errors. A latch you write on purpose (`always_latch` in Verilog) is allowed: synthesis maps it to a latch cell and warns, naming the file and line.
 
 ## Combinational logic
 
@@ -68,11 +68,11 @@ The small generated module `tt_um_<name>` that gives your core the fixed Tiny Ta
 
 ## Synthesis
 
-Turning RTL into a netlist of standard cells (a gate-level circuit). It is the step where the design becomes real gates. Not available in this milestone.
+Turning RTL into a netlist of standard cells (a gate-level circuit). It is the step where the design becomes real gates: a program (Yosys) picks gates and flip-flops from the chip factory's library that do what your RTL says, trying to keep them small. Siliconsmith's `synthesize` tool does it with the same recipe as Tiny Tapeout's own flow, and reports the cell count, the area and the estimated utilization.
 
 ## Netlist
 
-A list of gates and the wires between them, the output of synthesis. Like a schematic as a text file.
+A list of gates and the wires between them, the output of synthesis. Like a schematic as a text file. `synthesize` saves it in `build/synth/` (the copy from the latest run that produced one).
 
 ## Gate-level simulation
 
@@ -80,7 +80,15 @@ Simulating the netlist instead of the RTL, using the gate models, to check that 
 
 ## Standard cell
 
-A small pre-designed building block (a NAND gate, a flip-flop, an inverter) with a fixed height, from the chip factory's library. Synthesis builds your design out of these.
+A small pre-designed building block (a NAND gate, a flip-flop, an inverter) with a fixed height, from the chip factory's library. Synthesis builds your design out of these. Think of the parts bin of a very small gate library: every cell has a known area and delay.
+
+## Utilization
+
+How full the chip area is: the area of all the cells divided by the area the placer may fill. Before layout it can only be estimated, and `synthesize` says so. Under about 90% is comfortable, above 100% the design does not fit the tile.
+
+## Do-not-use cell
+
+A library cell that Tiny Tapeout's flow keeps out of designs (it fails the factory's drawing rules, has awkward pins, or is a low-power `lpflow_` cell). The synthesis tool is told not to use them, and `synthesize` fails if one shows up in the netlist.
 
 ## PDK
 
@@ -124,7 +132,7 @@ Getting every path to meet its setup and hold requirements at the chosen clock s
 
 ## Tile
 
-The unit of area on a Tiny Tapeout chip. A 1x1 tile is 161.00 x 111.52 um, roughly a thousand gates. Bigger designs buy more tiles.
+The unit of area on a Tiny Tapeout chip. A 1x1 tile is 161.00 x 111.52 um, roughly a thousand gates. Bigger designs buy more tiles, and each extra tile costs money. The `tiles` field in `spec.yaml` says how many (default `1x1`).
 
 ## Shuttle
 

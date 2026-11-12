@@ -31,15 +31,18 @@ from siliconsmith.ledger import (
     compute_digests,
     load_ledger,
 )
-from siliconsmith.paths import atomic_write, project_lock, safe_read
+from siliconsmith.paths import atomic_write, project_lock
 from siliconsmith.project import Project
-from siliconsmith.spec import MAX_SPEC_BYTES, SPEC_NAME, Spec, parse_spec
+from siliconsmith.spec import Spec, read_spec
+from siliconsmith.tt_sync import files_match_spec
 
 DOC_REL = "docs/verification.md"
 SIMULATORS = ("icarus", "verilator")
 SIM_NAMES = {"icarus": "Icarus", "verilator": "Verilator"}
 # Stages of the emit pipeline. A run that got to `build` or beyond had clean lint.
-LINT_CLEAN_STAGES = frozenset({"done", "build", "sim"})
+# `synthesize` records use "too_big" (stopped before abc), "synth_failed" (Yosys or a netlist check
+# failed) and "synth" (ran to the end) after a clean lint, so they count as lint clean as well.
+LINT_CLEAN_STAGES = frozenset({"done", "build", "sim", "synth", "too_big", "synth_failed"})
 CHECK_STAGES = frozenset({"elaborate", "ports", "lint", *LINT_CLEAN_STAGES})
 MAX_EVIDENCE = 90
 
@@ -68,8 +71,8 @@ DIGITAL_STEPS: tuple[Step, ...] = (
     Step(
         "synthesis",
         "Synthesis",
-        "The design turns into real chip gates (sky130 cells) with no latch or wiring problems",
-        "M1",
+        "The design turns into real chip gates (sky130 cells) with no accidental latch or wiring "
+        "problem",
     ),
     Step(
         "gate_sim",
@@ -162,21 +165,6 @@ class _Facts:
     digests: Digests
     spec: Spec | None
     spec_errors: str | None  # why spec.yaml is not usable, or None
-
-
-def _read_spec(project: Project) -> tuple[Spec | None, str | None]:
-    try:
-        text = safe_read(project.dir, SPEC_NAME, MAX_SPEC_BYTES).decode("utf-8")
-    except UnicodeDecodeError:
-        return None, "spec.yaml is not valid UTF-8 text"
-    except ToolError:
-        return None, "spec.yaml was not found or cannot be read"
-    parsed = parse_spec(text)
-    if isinstance(parsed, Spec):
-        return parsed, None
-    first = parsed[0]
-    more = f" (+{len(parsed) - 1} more)" if len(parsed) > 1 else ""
-    return None, f"{first.path}: {first.message}{more}"
 
 
 def _latest(runs: list[RunRecord], keep: Callable[[RunRecord], bool]) -> RunRecord | None:
@@ -286,6 +274,33 @@ def _coverage(f: _Facts) -> tuple[State, str, str | None]:
     return "pass", f"All {len(ids)} requirement(s) covered on both simulators", when
 
 
+def _synthesis(f: _Facts) -> tuple[State, str, str | None]:
+    run = _latest(f.ledger.runs, lambda r: r.tool == "synthesize")
+    if run is None:
+        return "not_run", "Call synthesize to turn the design into sky130 gates", None
+    when = _when(run.at)
+    if run.digests.synth is None or run.digests.synth != f.digests.synth:
+        return "stale", "Design, src/config.json or info.yaml changed since synthesize", when
+    if f.spec is not None and not files_match_spec(f.project, f.spec):
+        return "stale", "spec.yaml clock or tiles changed; call synthesize", when
+    if not run.ok:
+        what = {
+            "timeout": "ran out of time",
+            "too_big": "stopped: the design is too big for its tile",
+            "synth_failed": "found a problem in the gates",
+        }.get(run.stage, f"failed at the {run.stage} stage")
+        return "fail", _clip(f"synthesize {what}"), when
+    facts = run.synth
+    if facts is None or facts.cells is None or facts.area_um2 is None:
+        return "pass", "synthesize: the design turned into sky130 gates", when
+    text = f"synthesize: {facts.cells} cells, {facts.area_um2:.0f} um2"
+    if facts.utilization is not None and facts.tiles:
+        text += (
+            f", about {facts.utilization * 100:.0f}% of the {facts.tiles} cell budget (estimate)"
+        )
+    return "pass", _clip(text), when
+
+
 Evaluator = Callable[[_Facts], tuple[State, str, str | None]]
 
 EVALUATORS: dict[str, Evaluator] = {
@@ -295,6 +310,7 @@ EVALUATORS: dict[str, Evaluator] = {
     "sim_icarus": _sim_step("icarus"),
     "sim_verilator": _sim_step("verilator"),
     "coverage": _coverage,
+    "synthesis": _synthesis,
 }
 
 
@@ -303,7 +319,7 @@ def compute_status(
 ) -> StatusReport:
     """Work out every step's state. The caller holds the project lock (or accepts a race)."""
     loaded: LedgerLoad = load_ledger(project.dir)
-    spec, spec_errors = _read_spec(project)
+    spec, spec_errors = read_spec(project.dir)
     facts = _Facts(
         project, image, loaded.ledger, compute_digests(project, image), spec, spec_errors
     )

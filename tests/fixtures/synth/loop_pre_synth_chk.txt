@@ -1,0 +1,45 @@
+
+20. Executing CHECK pass (checking for obvious problems).
+Checking module tt_um_counter...
+Checking module counter...
+Warning: found logic loop in module counter:
+    cell $not$counter.v:11$3 ($not) source: counter.v:11.14-11.16
+      A[0] --> Y[0]
+    cell $xor$counter.v:10$2 ($xor) source: counter.v:10.14-10.23
+      A[0] --> Y[0]
+Warning: found logic loop in module counter:
+    cell $not$counter.v:11$3 ($not) source: counter.v:11.14-11.16
+      A[1] --> Y[1]
+    cell $xor$counter.v:10$2 ($xor) source: counter.v:10.14-10.23
+      A[1] --> Y[1]
+Warning: found logic loop in module counter:
+    cell $not$counter.v:11$3 ($not) source: counter.v:11.14-11.16
+      A[2] --> Y[2]
+    cell $xor$counter.v:10$2 ($xor) source: counter.v:10.14-10.23
+      A[2] --> Y[2]
+Warning: found logic loop in module counter:
+    cell $not$counter.v:11$3 ($not) source: counter.v:11.14-11.16
+      A[3] --> Y[3]
+    cell $xor$counter.v:10$2 ($xor) source: counter.v:10.14-10.23
+      A[3] --> Y[3]
+Warning: found logic loop in module counter:
+    cell $not$counter.v:11$3 ($not) source: counter.v:11.14-11.16
+      A[4] --> Y[4]
+    cell $xor$counter.v:10$2 ($xor) source: counter.v:10.14-10.23
+      A[4] --> Y[4]
+Warning: found logic loop in module counter:
+    cell $not$counter.v:11$3 ($not) source: counter.v:11.14-11.16
+      A[5] --> Y[5]
+    cell $xor$counter.v:10$2 ($xor) source: counter.v:10.14-10.23
+      A[5] --> Y[5]
+Warning: found logic loop in module counter:
+    cell $not$counter.v:11$3 ($not) source: counter.v:11.14-11.16
+      A[6] --> Y[6]
+    cell $xor$counter.v:10$2 ($xor) source: counter.v:10.14-10.23
+      A[6] --> Y[6]
+Warning: found logic loop in module counter:
+    cell $not$counter.v:11$3 ($not) source: counter.v:11.14-11.16
+      A[7] --> Y[7]
+    cell $xor$counter.v:10$2 ($xor) source: counter.v:10.14-10.23
+      A[7] --> Y[7]
+Found and reported 8 problems.
