@@ -1,0 +1,24 @@
+[
+  {
+    "demo_id": "ss-demo-verilog.vyu9jah2",
+    "date": "2026-11-12",
+    "frontend": "verilog",
+    "model": "claude-sonnet-5-5",
+    "claude_code_version": "2.1.322 (Claude Code)",
+    "tools_sha": "ec7ed2d07d535c97e62b10545ec0665f8e9a706b",
+    "tools_dirty": false,
+    "num_turns": 14,
+    "result_subtype": "success",
+    "claude_exit_code": 0,
+    "run_tests_calls": 4,
+    "cost_usd": 0.1389023,
+    "duration_min": 1.0,
+    "agent_icarus": true,
+    "agent_verilator": true,
+    "reference_icarus": true,
+    "reference_verilator": true,
+    "status_summary": "spec valid, check, sim x2, coverage pass; approval open",
+    "passed": true,
+    "transcript": "verilog-20261112-1.md"
+  }
+]

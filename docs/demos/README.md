@@ -72,5 +72,7 @@ skill, the fix is a commit to this repository and the next attempt is a new row.
 never edited.
 
 <!-- metrics:start -->
-_No attempts recorded yet._
+| Date | Front-end | Model | Claude Code | Siliconsmith | Turns | Result | run_tests calls | Cost (USD) | Minutes | Agent: Icarus | Agent: Verilator | Reference: Icarus | Reference: Verilator | Status | Passed | Transcript |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-12 | verilog | claude-sonnet-5-5 | 2.1.322 | ec7ed2d | 14 | success (exit 0) | 4 | 0.14 | 1.0 | pass | pass | pass | pass | spec valid, check, sim x2, coverage pass; approval open | yes | [verilog-20261112-1.md](verilog-20261112-1.md) |
 <!-- metrics:end -->

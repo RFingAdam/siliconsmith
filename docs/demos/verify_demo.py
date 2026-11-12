@@ -796,19 +796,23 @@ def transcript_cell(name: str) -> str:
 
 def metrics_table(rows: list[dict[str, Any]]) -> str:
     head = (
-        "| Date | Front-end | Model | Turns | Result | run_tests calls | Cost (USD) | Minutes "
+        "| Date | Front-end | Model | Claude Code | Siliconsmith | Turns | Result "
+        "| run_tests calls | Cost (USD) | Minutes "
         "| Agent: Icarus | Agent: Verilator | Reference: Icarus | Reference: Verilator "
         "| Status | Passed | Transcript |"
     )
-    lines = [head, "|" + " --- |" * 15]
+    lines = [head, "|" + " --- |" * 17]
     for r in rows:
         cost = r.get("cost_usd")
         lines.append(
-            "| {date} | {fe} | {model} | {turns} | {result} | {runs} | {cost} | {mins} | {ai} "
+            "| {date} | {fe} | {model} | {cc} | {sha} | {turns} | {result} | {runs} | {cost} "
+            "| {mins} | {ai} "
             "| {av} | {ri} | {rv} | {status} | {passed} | {t} |".format(
                 date=r.get("date", ""),
                 fe=r.get("frontend", ""),
                 model=r.get("model", ""),
+                cc=str(r.get("claude_code_version", "")).removesuffix(" (Claude Code)"),
+                sha=str(r.get("tools_sha", ""))[:7] + ("+dirty" if r.get("tools_dirty") else ""),
                 turns=r.get("num_turns", ""),
                 result=f"{r.get('result_subtype')} (exit {exit_text(r.get('claude_exit_code'))})",
                 runs=r.get("run_tests_calls", ""),
