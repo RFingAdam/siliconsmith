@@ -144,11 +144,14 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          size=$(docker image inspect --format '{{.Size}}' "$IMAGE")
+          # Same metric as the README: the sum of the layer sizes `docker history` lists, in bytes.
+          # `docker image inspect .Size` is not used: it is the compressed size on the containerd
+          # store and the unpacked size on the classic store.
+          size=$(docker history --human=false --format '{{.Size}}' "$IMAGE" | awk '{s += $1} END {print s}')
           {
             echo "### Toolchain image published"
             echo ""
             echo "- tags: \`${IMAGE}\`, \`${DATE_IMAGE}\`"
             echo "- digest: \`${DIGEST}\`"
-            echo "- size reported by docker: $((size / 1000000)) MB"
+            echo "- unpacked size (sum of layer sizes from docker history): $((size / 1000000)) MB"
           } >> "$GITHUB_STEP_SUMMARY"
