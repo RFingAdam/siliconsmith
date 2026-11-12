@@ -135,6 +135,7 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 **Tasks**
 - Yosys synthesis to sky130_fd_sc_hd with the liberty file and cell lists baked into the image by M1-0. Follow LibreLane 3.0.14's synthesis script (`librelane/scripts/pyosys/synthesize.py`), with the `no_synth.cells` and `drc_exclude.cells` lists as `-dont_use`. Sky130 only, flat top; the tool has no `target` or `flatten` options.
 - `spec.yaml` gains an optional `tiles` field (default `"1x1"`; Tiny Tapeout values only). `src/config.json` `CLOCK_PERIOD` = 1e9 / `clock_hz` (ns) and `info.yaml` `clock_hz` and `tiles` are written by the tools from the spec (at `create_project` and `write_spec`, and re-synced before every M1 tool's digest snapshot, which also fixes M0 projects). Warn above 66 MHz (the TT IO limit).
+- Move `info.yaml` from the check inputs to the synthesis inputs in `ledger.py` (it does not affect the RTL), and correct the "regenerated at export" wording in the `info.yaml` header (`scaffold.py`) and the `write_spec` hint, since the spec-to-`info.yaml` sync lands here.
 - Parse `stat -json`; detect latches, combinational loops, multiple drivers and undriven outputs with source locations; MyHDL latches are named by the generated `src/<name>.v` line and the `hdl/` function and line.
 **Acceptance criteria**
 - [ ] Counter synthesis reports cell count, flip-flops vs combinational cells, area (µm²), top cell types and utilization, on all three front-ends. *Proof:* integration `test_synth_counter[fe]`.
@@ -143,6 +144,7 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - [ ] `src/config.json` `CLOCK_PERIOD` and `info.yaml` `clock_hz`/`tiles` come from `spec.yaml`, keeping TT's `"//"` comment keys; more than 66 MHz warns. *Proof:* unit tests.
 - [ ] The script follows LibreLane 3.0.14's synthesis order with its do-not-use lists as `-dont_use`; the counter netlist has no do-not-use cell and no `lpflow_` cell. *Proof:* integration assertion on the netlist.
 - [ ] Combinational loops, multiple drivers and undriven outputs are reported with source locations. *Proof:* unit tests on Yosys `check` output fixtures.
+- [ ] `status` shows Synthesis as pass for the counter. Inputs: check inputs + `src/config.json` + `info.yaml` + image; `info.yaml` is no longer a check input; the ledger writers include `synthesize`. It goes stale only on those inputs. *Proof:* unit tests (the stale matrix in `tests/test_status.py` extended, with a `src/config.json` row and an `info.yaml` row) and an integration test.
 - [ ] A design far over budget stops before `abc` with a plain "too big for <tiles>" message, and synthesis has its own timeout. *Proof:* unit test and an integration test with an oversize fixture.
 
 ## [M1-2] Gate-level simulation
@@ -153,6 +155,7 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 **Acceptance criteria**
 - [ ] `run_tests(simulator='icarus', gl=true)` reruns the cocotb tests on the sky130 netlist with `primitives.v` and `sky130_fd_sc_hd.v`, defines `FUNCTIONAL SIM UNIT_DELAY=#1` (never `USE_POWER_PINS` or `GL_TEST`), and passes for the counter on all three front-ends. *Proof:* integration `test_gl_counter[fe]`.
 - [ ] A seeded `initial q = 0;` instead of a reset passes RTL and fails GL; the report names the signal and the first differing cycle with RTL vs GL values (sampled just before each rising `clk`, because the cell models delay flop outputs by 1 ns). *Proof:* integration `test_gl_mismatch`.
+- [ ] `status` shows Gate-level simulation as pass for the counter. Inputs: simulation inputs + synthesis inputs. It goes stale only on those inputs. *Proof:* unit test (stale matrix) and an integration test.
 - [ ] GL runs never change the RTL simulation or coverage rows and never delete the agent's RTL waves (separate `icarus-gl` build, sim and wave folders). *Proof:* unit (ledger) and integration tests.
 
 ## [M1-3] RTL-vs-netlist equivalence check
@@ -166,7 +169,7 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - [ ] `check_equivalence` (which re-synthesizes in the same container call; `build/` is never evidence) proves RTL and netlist equivalent for the counter, a hidden-state shift register (parity output) and an FSM, on the front-ends that can express them. *Proof:* integration `test_equiv[fixture-fe]`.
 - [ ] A seeded non-equivalent netlist is reported as not equivalent, naming the signal. *Proof:* integration `test_equiv_mismatch` (a test-only script runs the worker's equivalence function in the container on a hand-edited fixture netlist; the production worker has no tamper hook).
 - [ ] "Could not prove" is reported as not proven, `ok=false`, distinct from not equivalent, never a pass. *Proof:* unit test.
-- [ ] `status` shows Synthesis, Gate-level simulation and Equivalence as pass for the counter. Inputs: synthesis = check inputs + `src/config.json` + `info.yaml` + image; gate-level = simulation inputs + synthesis inputs; equivalence = synthesis inputs. Each goes stale only on its own inputs; layout, TT checks and silicon stay `not_available`. *Proof:* unit test per input class (the stale matrix in `tests/test_status.py` extended, with a `src/config.json` row) and an integration test.
+- [ ] `status` shows Equivalence as pass for the counter. Inputs: the synthesis inputs (defined in [M1-1]). It goes stale only on those inputs; layout, TT checks and silicon stay `not_available`. *Proof:* unit test (the stale matrix in `tests/test_status.py` extended) and an integration test.
 
 ---
 

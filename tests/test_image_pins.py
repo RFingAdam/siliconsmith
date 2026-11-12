@@ -110,6 +110,6 @@ def test_tt_lock_matches_dockerfile() -> None:
 
 def test_dockerfile_checks_the_pdk_tarball_hashes() -> None:
     text = (REPO_ROOT / "docker" / "Dockerfile").read_text()
-    assert "sha256sum -c" in text
+    assert "sha256sum --strict -c" in text
     assert re.search(r"^ARG PDK_COMMON_SHA256=[0-9a-f]{64}$", text, re.M)
     assert re.search(r"^ARG PDK_HD_SHA256=[0-9a-f]{64}$", text, re.M)

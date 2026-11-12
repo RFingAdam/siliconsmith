@@ -1,9 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
 # SPDX-License-Identifier: Apache-2.0
 #
-# Siliconsmith toolchain image: simulation stage (M0) plus the four sky130 files that synthesis and
+# Siliconsmith toolchain image: simulation stage (M0) plus the ten sky130 files that synthesis and
 # gate-level simulation need (M1). linux/amd64 only.
 # The build context is docker/ and nothing else: the image tag is a hash of this folder.
+
+# Ubuntu archive snapshot, shared by the pdk and final stages (each stage re-declares the ARG).
+ARG APT_SNAPSHOT=20261110T000000Z
 
 # Both base images are pinned by digest, and Dependabot bumps them (.github/dependabot.yml).
 # Verilator v5.046 comes from the official image because Ubuntu 24.04's apt Verilator (5.020) is
@@ -14,15 +17,20 @@ FROM verilator/verilator:v5.046@sha256:8003e282e9ff02eb446083eb5a3c512225a269f0a
 # copied out below). It downloads two PDK tarballs from the fossi-foundation/ciel-releases
 # GitHub release for open_pdks 8afc8346... (the sky130 version LibreLane 3.0.14 and Tiny Tapeout
 # harden with), checks each against a sha256 pinned here, and keeps only the files M1 needs.
-# curl, zstd and ca-certificates come from the live Ubuntu archive; they never reach the final image.
+# ca-certificates comes from the live Ubuntu archive, curl and zstd from the apt snapshot; none of
+# them reach the final image.
 # The pins here must equal tt.lock (tests/test_image_pins.py checks the hash).
 FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5 AS pdk
 ARG SKY130_OPEN_PDKS=8afc8346a57fe1ab7934ba5a6056ea8b43078e71
 ARG PDK_COMMON_SHA256=be8a548341fd9177af9e461ad7b4fdd89afbe03dba68dc42d155321fdc3f86bf
 ARG PDK_HD_SHA256=17047505cfff30841bf53960b8cbf9e7c79b2a3bbb2ebec0bb254eb441e4ce1e
+ARG APT_SNAPSHOT
 ENV DEBIAN_FRONTEND=noninteractive
+# Same pattern as the final stage: ca-certificates from the live archive, the rest from the snapshot.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl zstd \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get update --snapshot "${APT_SNAPSHOT}" \
+ && apt-get install -y --no-install-recommends curl zstd \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /dl
 RUN base="https://github.com/fossi-foundation/ciel-releases/releases/download/sky130-${SKY130_OPEN_PDKS}" \
@@ -30,7 +38,7 @@ RUN base="https://github.com/fossi-foundation/ciel-releases/releases/download/sk
  && curl -fsSL --retry 3 -o sky130_fd_sc_hd.tar.zst "${base}/sky130_fd_sc_hd.tar.zst" \
  && printf '%s  common.tar.zst\n%s  sky130_fd_sc_hd.tar.zst\n' \
       "${PDK_COMMON_SHA256}" "${PDK_HD_SHA256}" > SHA256SUMS \
- && sha256sum -c SHA256SUMS
+ && sha256sum --strict -c SHA256SUMS
 # Only these 10 files are kept (about 17 MB of the 134 MB download): the typical-corner liberty file,
 # the two Verilog cell models for gate-level simulation, and the files LibreLane 3.0.14's
 # synthesis step reads for sky130 (do-not-use list, DRC-exclude list, and the latch, tri-state,
@@ -62,7 +70,7 @@ FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca
 # installed first from the live archive. That step also pulls in openssl and a newer libssl3t64
 # from the live archive, and they stay. Everything else comes from the snapshot, so rebuilding
 # later gives the same packages apart from those three.
-ARG APT_SNAPSHOT=20261110T000000Z
+ARG APT_SNAPSHOT
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
@@ -128,6 +136,6 @@ RUN APT_SNAPSHOT="${APT_SNAPSHOT}" \
 LABEL org.opencontainers.image.source="https://github.com/RFingAdam/siliconsmith" \
       org.opencontainers.image.licenses="LicenseRef-siliconsmith-toolchain-mixed" \
       org.opencontainers.image.version="" \
-      org.opencontainers.image.description="Siliconsmith toolchain: Icarus Verilog, Verilator, Yosys, cocotb, Amaranth, MyHDL and four sky130 files for synthesis"
+      org.opencontainers.image.description="Siliconsmith toolchain: Icarus Verilog, Verilator, Yosys, cocotb, Amaranth, MyHDL and ten sky130 files for synthesis and gate-level simulation"
 
 WORKDIR /work

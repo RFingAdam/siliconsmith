@@ -107,6 +107,14 @@ def verilator_section(images: dict[str, str]) -> list[str]:
     ]
 
 
+def dockerfile_arg(name: str) -> str:
+    """The default value of `ARG <name>=...` in the Dockerfile copy."""
+    for line in Path("/tmp/Dockerfile").read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"ARG {name}="):
+            return line.split("=", 1)[1].strip()
+    return "?"
+
+
 def pdk_section() -> list[str]:
     """The sky130 files under /opt/pdk, described from the manifest the build wrote."""
     manifest = json.loads(Path("/opt/pdk/manifest.json").read_text(encoding="utf-8"))
@@ -115,9 +123,11 @@ def pdk_section() -> list[str]:
     lines = [
         f"SkyWater sky130 PDK, open_pdks {open_pdks} (Apache-2.0), under /opt/pdk:",
         "  Downloaded at build time from the fossi-foundation/ciel-releases GitHub release",
-        f"  sky130-{open_pdks} and checked against the sha256 in docker/Dockerfile:",
+        f"  sky130-{open_pdks} and checked against these sha256 values (also in docker/Dockerfile):",
         f"    {base}/common.tar.zst",
+        f"      sha256 {dockerfile_arg('PDK_COMMON_SHA256')}",
         f"    {base}/sky130_fd_sc_hd.tar.zst",
+        f"      sha256 {dockerfile_arg('PDK_HD_SHA256')}",
         "  Only the files below were kept; /opt/pdk/manifest.json lists each file's sha256.",
         "  Upstream sources: https://github.com/google/skywater-pdk-libs-sky130_fd_sc_hd",
         "    and https://github.com/fossi-foundation/open-pdks",

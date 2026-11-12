@@ -1,6 +1,6 @@
 # Siliconsmith: plan for an open-source AI chip-design agent
 
-**Status:** Digital milestone M0 tools work (create, spec, write, emit, lint, simulate on Icarus and Verilator, waves, status and ledger, explain). Milestone M1 (synthesis, gate-level simulation, equivalence) is in progress: the sky130 files, `tt.lock` and the `run_tests` `gl` option are in, and the tools follow in M1-1 to M1-3. Layout and Tiny Tapeout export come in M2 and M3; `ISSUES.md` and the GitHub issues track what has landed.
+**Status:** Digital milestone M0 tools work (create, spec, write, emit, lint, simulate on Icarus and Verilator, waves, status and ledger, explain). Milestone M1 (synthesis, gate-level simulation, equivalence) is in progress: the sky130 files and `tt.lock` are in, and `run_tests` accepts `gl=true` but for now only answers that gate-level simulation arrives with M1-2; the other tools follow in M1-1 to M1-3. Layout and Tiny Tapeout export come in M2 and M3; `ISSUES.md` and the GitHub issues track what has landed.
 **Owner:** Adam Engelbrecht (GitHub `RFingAdam`).
 **Repo:** [`RFingAdam/siliconsmith`](https://github.com/RFingAdam/siliconsmith)
 **License:** Apache-2.0
@@ -104,7 +104,7 @@ Implement **digital M0 first**. CI must be green before the next milestone on an
                           ┌──────────────────────────────────────┴──────────┐
                           ▼                                                 ▼
  ┌────────────────────────────────────────────────┐  ┌────────────────────────────────────────────┐
- │ siliconsmith-toolchain image (ours)            │  │ LibreLane image, used as is (M1+)          │
+ │ siliconsmith-toolchain image (ours)            │  │ LibreLane image, used as is (M2+)          │
  │ linux/amd64 only for now                       │  │ ghcr.io/librelane/librelane:3.0.14         │
  │ Digital (M0): iverilog, verilator, yosys,      │  │   pinned by digest                         │
  │   cocotb, amaranth, myhdl, pywellen, worker    │  │ yosys, openroad, magic, klayout, netgen    │
@@ -136,7 +136,7 @@ Implement **digital M0 first**. CI must be green before the next milestone on an
 - It does **not** protect against an agent that has its own shell or file tools (for example Claude Code's Bash tool). Such an agent can already do anything the user can. The sandbox only covers what runs through Siliconsmith.
 - It does not defend against Docker or Linux kernel escapes.
 - Whoever can call the server's tools can start containers, so only the local user may reach the server. M0 is stdio only. Streamable HTTP, with Origin checks, DNS-rebinding protection and authentication, is deferred to M5-3.
-- LibreLane (M1 onward) runs the same way, from its own image with our flags. We never use `librelane --dockerized`, which mounts the whole `$HOME` read-write.
+- LibreLane (M2 onward) runs the same way, from its own image with our flags. We never use `librelane --dockerized`, which mounts the whole `$HOME` read-write.
 
 **Result shape.** Every tool returns the same five fields: `{ok, summary, details, artifacts[], next_hints[]}`.
 
@@ -277,7 +277,7 @@ open_questions:  [...]
 - check ← `hdl/**/*.py` (Amaranth, MyHDL) or `src/<name>.v` (Verilog), `test/tb.v` and `test/Makefile`, the toolchain image and the Siliconsmith version (the version fixes the files the tool owns: the generated wrapper and the TT template files). The image is identified by its name and tag, which is content-addressed (`ctx-<hash>`), so status never needs Docker; the ledger also records the image id when it is known;
 - simulation ← the check inputs plus `test/**/*.py`;
 - coverage ← the spec plus the latest unfiltered simulation runs;
-- synthesis (M1) ← the check inputs plus `src/config.json` (the clock period and tile settings that synthesis reads), `info.yaml` (tile size and clock; it does not affect the RTL, which is why it left the check inputs) and the image (the sky130 files live in it);
+- synthesis (M1) ← the check inputs plus `src/config.json` (the clock period and tile settings that synthesis reads), `info.yaml` (tile size and clock; it does not affect the RTL, which is why it leaves the check inputs; this move lands with M1-1, until then `ledger.py` still counts it as a check input) and the image (the sky130 files live in it);
 - gate-level simulation (M1) ← the simulation inputs plus the synthesis inputs;
 - equivalence (M1) ← the synthesis inputs.
 
@@ -335,7 +335,7 @@ The check step (3) is set by the latest `emit_verilog` **or** `run_tests` run th
 - **Host package.** The MCP server is a small Python package, installed with pip from a checkout (`pip install -e .`; there is no PyPI release yet), with `mcp>=2.3,<3`, `pyyaml` and `pydantic>=2`. The extras `[amaranth]` and `[myhdl]` are only for writing designs with editor support; all execution happens in the image. A `--native` mode that uses tools already on `PATH` is deferred and has no milestone yet.
 - **sky130 files for M1 (M1-0).** Synthesis and gate-level simulation need only a handful of PDK files, so the image bakes them in, read-only, under `/opt/pdk/sky130A`, with `/opt/pdk/manifest.json` (name, open_pdks hash, libraries, corner, sha256 of every file) written at build time; `toolchain_info` reports it as `pdk`. The files are the typical-corner liberty file `sky130_fd_sc_hd__tt_025C_1v80.lib` (LibreLane's synthesis default), the Verilog cell models `sky130_fd_sc_hd.v` and `primitives.v`, the do-not-use and DRC-exclude cell lists, and the latch, tri-state, full-adder, ripple-carry and carry-select adder technology maps that LibreLane 3.0.14's synthesis step reads for sky130. About 17 MB. The full PDK in a ciel-filled Docker volume, and the LibreLane image (`ghcr.io/librelane/librelane:3.0.14`, referenced by digest, started directly with our container flags (section 5.1), never with `--dockerized`, never a Python dependency of our package because it would pull in the GPL `klayout` module), arrive in M2-1 (#9). The PDK hashes TT uses, and the LibreLane pin, are recorded in `tt.lock` (section 16).
 - **Analog and acoustic tools** (Xschem, ngspice, Magic, netgen, openEMS, Elmer) are added to the image in A0 / S1, not in digital M0.
-- **Licensing.** We don't modify any GPL/LGPL tool, and the repo contains no tool binaries or sources. Our image does distribute binaries, so it ships `/usr/share/doc/siliconsmith-toolchain/` with `SOURCES.txt` (the source package and version of every Ubuntu package; the upstream URL at the exact tag or version for Verilator v5.046 and every pip package), `THIRD_PARTY_LICENSES.md`, a written offer for the corresponding source, and the license files of bundled components (wellen, Yosys, ABC, yosys-slang, slang). A hosted source bundle per image is M5-3 (section 10).
+- **Licensing.** We don't modify any GPL/LGPL tool, and the repo contains no tool binaries or sources. Our image does distribute binaries, so it ships `/usr/share/doc/siliconsmith-toolchain/` with `SOURCES.txt` (the source package and version of every Ubuntu package; the upstream URL at the exact tag or version for Verilator v5.046 and every pip package), `THIRD_PARTY_LICENSES.md`, a written offer for the corresponding source, and the license files of bundled components (wellen, Yosys, ABC, yosys-slang, slang, sky130_fd_sc_hd). A hosted source bundle per image is M5-3 (section 10).
 - **Size.** The image size is recorded in the README. The M1 sky130 files add about 17 MB unpacked (the build downloads about 134 MB and keeps 10 files). The full PDK stays out of the image until M2-1: the default sky130 library set is about 338 MB to download and 2.1 GB unpacked, and `sky130_fd_sc_hd` alone is about 134 MB and 752 MB. The LibreLane amd64 image is about 1.5 GB compressed.
 
 ## 7. Repo layout (target)
@@ -522,7 +522,7 @@ All workflows run on `ubuntu-24.04` (not `ubuntu-latest`). Actions are pinned by
 | Agent-written HDL and tests are code that we execute | Damage to the user's machine | Runs only in the hardened container (section 5.1); the limits of that sandbox are documented |
 | LLMs write subtly wrong RTL that still passes weak tests | Bad silicon | Skill requires test-first; requirement coverage and a held-out reference test (M0); gate-level sim and an equivalence check (M1); mutation check (M4-6); optional formal checks via SymbiYosys (later) |
 | LibreLane runtime/RAM on laptops | Slow loop | Run layout only after sim and synth pass; cache PDK; small designs take minutes per TT FAQ |
-| Large images and runner disk: GitHub's standard runners guarantee only 14 GB of free disk; the default sky130 library set is about 2.1 GB unpacked and the LibreLane image about 1.5 GB compressed | Setup friction; CI runs out of disk | Sim-only image in M0; PDK in a Docker volume, not the image (only `sky130_fd_sc_hd`, about 752 MB, where that is enough); pin `ubuntu-24.04` runners (the newer runner image's Docker storage uses more disk); free disk space in CI if needed |
+| Large images and runner disk: GitHub's standard runners guarantee only 14 GB of free disk; the default sky130 library set is about 2.1 GB unpacked and the LibreLane image about 1.5 GB compressed | Setup friction; CI runs out of disk | Sim-only image in M0; from M1 the image holds just ten sky130 files (about 17 MB) and the full PDK goes in a Docker volume from M2-1 (only `sky130_fd_sc_hd`, about 752 MB, where that is enough); pin `ubuntu-24.04` runners (the newer runner image's Docker storage uses more disk); free disk space in CI if needed |
 | License mistakes (vendoring GPL code, or copying unlicensed code) | Repo relicensing pain | CI check: `reuse lint` / SPDX headers; rules in CLAUDE.md; never copy mcp4eda |
 | Scope creep (full Bluetooth radio, SAW fab) | Never ships | Digital M0 first; radio and fab are explicit non-goals; skills state the limits |
 | Elmer piezo or openEMS-for-acoustics may not do what we want | Acoustic track stalls | S1 accepts a documented failure; BVD models still land in S0 |

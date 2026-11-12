@@ -2,7 +2,7 @@
 
 An open-source AI chip-design agent. One MCP server, one pinned Docker toolchain, and a write-test-fix loop that an AI coding agent (Claude Code, Cursor, Codex) can run end to end.
 
-**Status:** digital milestone M0 tools work: create a project, write the spec, RTL and tests, emit Verilog and lint it, simulate on Icarus and Verilator, look at waveforms, track what has passed with `status` and the validation ledger, and ask `explain` for the guides. Milestone M1 (turning the design into real sky130 gates, simulating those gates, and checking they match the Verilog) is in progress: the sky130 library files are now in the toolchain image and `run_tests` has a `gl` option, but synthesis itself is not available yet, so `status` shows those three rows as not available. Layout and Tiny Tapeout export come in milestones M2 and M3. [ISSUES.md](ISSUES.md) and the GitHub issues track what has landed.
+**Status:** digital milestone M0 tools work: create a project, write the spec, RTL and tests, emit Verilog and lint it, simulate on Icarus and Verilator, look at waveforms, track what has passed with `status` and the validation ledger, and ask `explain` for the guides. Milestone M1 (turning the design into real sky130 gates, simulating those gates, and checking they match the Verilog) is in progress: the sky130 library files are now in the toolchain image and `run_tests` accepts `gl=true` but for now only answers that gate-level simulation arrives later in M1, and synthesis itself is not available yet, so `status` shows those three rows as not available. Layout and Tiny Tapeout export come in milestones M2 and M3. [ISSUES.md](ISSUES.md) and the GitHub issues track what has landed.
 
 Three tracks share the same server and toolchain:
 
@@ -142,7 +142,7 @@ Every simulator and Python tool runs inside one Docker image, so the only things
 
     ghcr.io/rfingadam/siliconsmith-toolchain:ctx-0645f7f51392
 
-Size (linux/amd64): about 816 MB unpacked, and about 257 MB to download. The unpacked figure is the sum of the layer sizes that `docker history --human=false` lists, which gives the same number on every Docker setup. `docker images` can show a larger figure (1.05 GB on a Docker that uses the containerd image store) because it counts disk use, not the size of the files.
+Size (linux/amd64): about 816 MB unpacked, and about 257 MB to download. The unpacked figure is the sum of the layer sizes that `docker history --human=false` lists, which gives the same number on every Docker setup. `docker images` can show a larger figure (about 1.07 GB on a Docker that uses the containerd image store) because it counts disk use, not the size of the files.
 
 Since M1-0 the image also holds ten sky130 files (the standard-cell library data that synthesis and gate-level simulation read, about 17 MB), downloaded at build time from the open_pdks release Tiny Tapeout uses and checked against a pinned sha256. `toolchain_info` reports them as `pdk`. The full PDK and the layout tools are not in the image; they come with milestone M2.
 

@@ -410,8 +410,8 @@ def _refuse_gate_level(simulator: str) -> None:
     """Temporary plumbing: `gl` is in the tool schema, but gate-level simulation is not built."""
     if simulator != "icarus":
         raise ToolError(
-            "gate-level simulation runs on icarus only; call run_tests with simulator='icarus' "
-            "and gl=true."
+            "gate-level simulation runs on icarus only, and is not available yet (milestone "
+            "M1-2, issue #8). Run run_tests without gl for the RTL simulation."
         )
     raise ToolError(
         "gate-level simulation arrives with milestone M1-2 (issue #8); it is not available "
