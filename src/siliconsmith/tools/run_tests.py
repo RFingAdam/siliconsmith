@@ -153,7 +153,7 @@ class _Diff(_Strict):
     rtl_failed: bool = False
     edges_skipped: int = Field(default=0, ge=0)
     gl_known_before: bool = False
-    input_unknown: str | None = Field(default=None, max_length=lim.TEST_NAME_MAX)
+    input_unknown: Literal["ui_in", "uio_in", "ena"] | None = None
     reset_never_low: bool = False
     reset_low: bool = False
     truncated: bool = False

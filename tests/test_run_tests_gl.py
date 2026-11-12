@@ -471,8 +471,13 @@ def test_the_input_cause_comes_before_the_reset_cause(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "bad",
-    [{"input_unknown": ["x"]}, {"input_unknown": "u" * 500}, {"reset_never_low": "maybe"}],
-    ids=["list", "too-long", "not-a-bool"],
+    [
+        {"input_unknown": ["x"]},
+        {"input_unknown": "u" * 500},
+        {"input_unknown": "uo_out; rm -rf"},
+        {"reset_never_low": "maybe"},
+    ],
+    ids=["list", "too-long", "not-an-input-name", "not-a-bool"],
 )
 def test_the_new_cause_fields_are_validated(tmp_path: Path, bad: dict[str, Any]) -> None:
     result = failing_gl(tmp_path, {**DIFFERS, **bad})
