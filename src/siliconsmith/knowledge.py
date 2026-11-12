@@ -192,6 +192,8 @@ def _keys(heading: str) -> set[str]:
 
 
 def _stem(word: str) -> str:
+    if len(word) > 4 and word.endswith(("ches", "shes", "xes", "sses")):
+        return word[:-2]
     return word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word
 
 
@@ -245,10 +247,10 @@ def search(knowledge: Knowledge, topic: str) -> list[Match]:
 def find(knowledge: Knowledge, topic: str, limit: int = 4) -> tuple[Match | None, list[Match]]:
     """The best match for `topic` and up to `limit` other suggestions.
 
-    A skill name, then a section heading or glossary term, are matched exactly first; otherwise
-    keyword scoring decides.
+    A skill name, then a section heading or glossary term, are matched exactly first; keyword
+    scoring decides otherwise and also supplies the other suggestions after an exact hit.
     """
-    hits = exact(knowledge, topic) or search(knowledge, topic)
+    hits = [*exact(knowledge, topic), *search(knowledge, topic)]
     if not hits:
         return None, []
     best, rest = hits[0], hits[1:]
@@ -259,3 +261,12 @@ def find(knowledge: Knowledge, topic: str, limit: int = 4) -> tuple[Match | None
             seen.add(hit.label)
             others.append(hit)
     return best, others[:limit]
+
+
+def full_text(doc: Doc) -> str:
+    """Everything in a document: description, overview and every section, as Markdown."""
+    parts = [f"{doc.name}: {doc.description}"]
+    if doc.intro:
+        parts.append(doc.intro)
+    parts += [f"## {s.heading}\n\n{s.text}" for s in doc.sections]
+    return "\n\n".join(parts)

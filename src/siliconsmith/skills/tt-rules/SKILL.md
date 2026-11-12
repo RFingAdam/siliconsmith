@@ -22,7 +22,7 @@ Your design sees these signals (all single bits except the buses):
 | `uio_out[7:0]` | out | The same 8 pins, value you drive. |
 | `uio_oe[7:0]` | out | Output enable per pin: 1 means that pin is an output, 0 means an input. |
 
-Assign every output, even to constant 0. If you do not use the bidirectional pins, drive `uio_out` and `uio_oe` with 0.
+Assign every output your core declares. Leave out the pins you do not use: the wrapper ties unused outputs (for example `uio_out` and `uio_oe`) to 0.
 
 ## Core and wrapper
 
@@ -45,7 +45,7 @@ A 1x1 tile is 161.00 x 111.52 um, roughly a thousand gates of logic in the stand
 
 ## Honest limits
 
-- A real analog radio (for example 2.4 GHz Bluetooth) does not fit a digital Tiny Tapeout tile. Digital tiles hold digital logic only.
+- A working 2.4 GHz radio (for example Bluetooth) is not realistic on any Tiny Tapeout tile, digital or analog. The sky130 RF models are limited, the Tiny Tapeout pads and package are not made for GHz signals, and the area is tiny. Digital tiles hold digital logic only. Small analog blocks such as an oscillator, a VCO or a low-noise amplifier are the realistic targets of the later analog track.
 - SAW and BAW filters have no open fabrication path in this project.
 - Passing simulation is not working silicon.
 - Submitting to a shuttle, and paying for it, is always done by the owner by hand. Never try to order or submit anything.

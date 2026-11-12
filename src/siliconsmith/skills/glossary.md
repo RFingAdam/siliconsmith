@@ -22,6 +22,10 @@ A Python library for writing testbenches. Your tests are Python functions that s
 
 Running the design as software to see what it would do. Time moves in small steps and every signal has a value at each step. It checks the logic, not the physics: no real delays, noise or temperature.
 
+## Verilog
+
+The classic hardware description language, and the file format every tool in the chain reads. Amaranth and MyHDL designs are converted to Verilog by `emit_verilog`, and the simulators and later the synthesis step work on that Verilog. A `.v` file describes hardware that all runs at once.
+
 ## Icarus Verilog
 
 An open-source Verilog simulator (iverilog). Slow on big designs, forgiving, and a good first check.
@@ -37,6 +41,14 @@ An automatic check of the source for likely mistakes without running it: width m
 ## Latch
 
 A memory element made by accident when combinational logic does not give a signal a value on every path. It is level-sensitive instead of clocked, which makes timing hard to analyze. Tiny Tapeout designs should have none, and the lint step treats them as errors.
+
+## Combinational logic
+
+Logic whose output depends only on its inputs right now, with no memory, like a passive network or a mixer: change the input and the output follows. In Amaranth it is `m.d.comb`; in MyHDL it is `@always_comb`. Combinational logic that forgets to give a value on some path can turn into a latch.
+
+## Register
+
+Also called a flip-flop: a one-bit memory that copies its input on a clock edge and holds it until the next one. It is the sample-and-hold of a digital design, and a counter or a state machine is built from registers. Logic written with `m.d.sync` or `@always_seq` becomes registers.
 
 ## Multiple drivers
 
@@ -121,6 +133,14 @@ A shared manufacturing run where many small designs are put on one chip to share
 ## Tiny Tapeout
 
 A low-cost program that puts small designs from many people on a shared chip in a shuttle run. Each design gets a fixed set of pins and a tile or more of area. Siliconsmith prepares a project for it but never submits or pays.
+
+## MCP server
+
+The small program that your AI agent starts and talks to. MCP (Model Context Protocol) is the standard way an agent calls tools. Siliconsmith is an MCP server: its tools create projects, write files and run the checks.
+
+## Docker image
+
+A packaged, frozen copy of the chip tools (simulators, synthesis and so on) that runs in a container, so every machine uses the same versions. Siliconsmith runs all design code and tools inside one pinned Docker image; you need Docker installed, not the individual tools.
 
 ## Waveform
 

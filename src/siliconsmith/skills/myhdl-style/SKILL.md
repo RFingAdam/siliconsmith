@@ -5,7 +5,7 @@ description: Use when writing the design in MyHDL (Python HDL, version 0.11) so 
 
 # MyHDL style for this server
 
-MyHDL describes hardware as Python functions. `emit_verilog` runs your file in a container and converts it to Verilog. Fenced examples below are tested against the real tools; the counter is also simulated with the test from `explain('cocotb2-tests')`.
+MyHDL describes hardware as Python functions. `emit_verilog` runs your file in a container and converts it to Verilog. Fenced examples below are tested against the real tools: each is emitted and linted, and simulated on Icarus and Verilator with the tests in `explain('cocotb2-tests')`.
 
 ## The entry point
 
@@ -15,7 +15,7 @@ Only list the pins you use. MyHDL warns about a port that nothing reads or drive
 
 ## Counter
 
-A counter is a phase accumulator. Use `modbv` (modulo bit vector) so the count wraps from 255 to 0; a plain `intbv` raises an error in simulation when it overflows. `@always_seq(clk.posedge, reset=rst_n)` makes a clocked block that is reset by `rst_n`. `@always_comb` makes combinational logic.
+A counter is a phase accumulator. Use `modbv` (modulo bit vector) to state that the count wraps from 255 to 0; a plain `intbv` is a bounded number, and MyHDL's own simulator would stop on overflow. This server simulates the converted Verilog, where both wrap the same way, so `modbv` is about stating your intent. `@always_seq(clk.posedge, reset=rst_n)` makes a clocked block that is reset by `rst_n`. `@always_comb` makes combinational logic.
 
 ```python example=myhdl-counter project=counter frontend=myhdl file=hdl/counter.py tests=cocotb-idioms
 from myhdl import Signal, always_comb, always_seq, block, modbv
@@ -41,9 +41,9 @@ Assign with `.next`: `count.next = ...`. Reading uses the plain signal. A regist
 
 ## State machine
 
-Use `enum` for the states. The first state is the reset state. This one waits for `ui_in[0]`, then reports `busy` on `uo_out[0]` for four clocks.
+Use `enum` for the states. The reset state is the value you give `Signal(...)`, here `t_state.IDLE`. This one waits for `ui_in[0]`, then reports `busy` on `uo_out[0]` for four clocks.
 
-```python example=myhdl-fsm project=pulse frontend=myhdl file=hdl/pulse.py
+```python example=myhdl-fsm project=pulse frontend=myhdl file=hdl/pulse.py tests=fsm-test
 from myhdl import Signal, always_comb, always_seq, block, enum, intbv
 
 
@@ -78,7 +78,7 @@ def pulse(clk, rst_n, ui_in, uo_out):
 
 `sig[7:0]` is a slice of 7 bits (bit 6 down to bit 0): the upper index is excluded, as in Python. `sig[0]` is one bit. `concat(a, b)` joins signals with `a` as the high part. This shift register moves left and takes `ui_in[0]` in at bit 0.
 
-```python example=myhdl-shift project=shifter frontend=myhdl file=hdl/shifter.py
+```python example=myhdl-shift project=shifter frontend=myhdl file=hdl/shifter.py tests=shift-test
 from myhdl import Signal, always_comb, always_seq, block, concat, modbv
 
 
@@ -101,9 +101,9 @@ def shifter(clk, rst_n, ui_in, uo_out):
 
 - Listing a pin you never use (or leaving an output undriven): a `ToVerilogWarning`, which is an error here.
 - A block name that differs from the project name, or pin parameters with other names.
-- Using `intbv` for a counter that wraps. Use `modbv`, or the simulation stops with an error.
-- Forgetting `.next` on an assignment: the assignment does nothing useful.
+- Using `intbv` for a counter that wraps. Use `modbv` to state the wrap; MyHDL's own simulator would stop on overflow, though this server's simulation of the converted Verilog does not.
+- Forgetting `.next` on an assignment: conversion fails with a ConversionError such as `Local variable may be referenced before assignment`.
 - Assigning to a signal from two blocks. Each signal gets one driver.
-- Widths: `intbv(0)[3:]` holds 0 to 7. Assigning 8 raises an error in simulation and breaks conversion.
+- Widths: `intbv(0)[3:]` holds 0 to 7. Any width mismatch is a lint failure: assigning the constant 8 to it gives WIDTHTRUNC, and assigning a 3-bit signal to the 8-bit `uo_out` gives WIDTHEXPAND. Size your signals to 8 bits, or slice or `concat` to match.
 - Leaving a signal unassigned on some path inside `always_comb` makes a latch. Give every signal a value on every path (`explain('tt-rules')`); `emit_verilog` reports latches as lint errors with a file and line.
 - Python features the converter does not support, such as dictionaries, classes, or complex list work inside the block bodies. Keep block bodies simple: `if`, `elif`, `else`, arithmetic, slices.

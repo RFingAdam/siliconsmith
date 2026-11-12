@@ -9,7 +9,9 @@ cocotb lets you write the testbench in Python: it drives the design's pins and c
 
 ## The top level
 
-The design under test is Tiny Tapeout's testbench `tb`, which holds your wrapper. The handle `dut` has the Tiny Tapeout pins: `dut.clk`, `dut.rst_n`, `dut.ena`, `dut.ui_in`, `dut.uio_in`, `dut.uo_out`, `dut.uio_out`, `dut.uio_oe`. Drive inputs with `dut.ui_in.value = 1`. Read outputs with `int(dut.uo_out.value)`. A value with unknown (`x`) or high-impedance (`z`) bits cannot be converted by `int()`; that raises an error, which is often the first sign of a missing reset.
+The design under test is Tiny Tapeout's testbench `tb`, which holds your wrapper. The handle `dut` has the Tiny Tapeout pins: `dut.clk`, `dut.rst_n`, `dut.ena`, `dut.ui_in`, `dut.uio_in`, `dut.uo_out`, `dut.uio_out`, `dut.uio_oe`. Drive inputs with `dut.ui_in.value = 1`. Read outputs with `int(dut.uo_out.value)`. A value with unknown (`x`) or high-impedance (`z`) bits cannot be converted by `int()`; that raises an error.
+
+Unknown bits have several causes: a register that has not been reset yet, an output that nothing has driven yet, or a simulator difference (Icarus leaves some combinational outputs unknown until a register first changes). Wait until after reset before you read. If one simulator shows `x` and the other does not, treat it as a design finding.
 
 ## Clock and reset
 
@@ -28,7 +30,11 @@ Write `assert actual == expected`, with the measured value on the left and the e
 
 ## Requirements and coverage
 
-Every test has a docstring with a line `Covers: R1` (or `Covers: R1, R3`), using the ids in `spec.yaml`. Every requirement needs at least one test. A test that is skipped or marked as an expected failure does not count as coverage. Never assume a reset value that the spec does not state: sample the value after reset and check the change from it. Helper code may live in other files under `test/`, for example `test/helpers.py`; put shared code there and import it from your test file. Only `test/test*.py` files are collected as tests.
+Every test has a docstring with a line `Covers: R1` (or `Covers: R1, R3`), using the ids in `spec.yaml`. Every requirement needs at least one test. A test that is skipped or marked as an expected failure does not count as coverage. Never assume a reset value that the spec does not state: sample the value after reset and check the change from it.
+
+Helper code may live in other files under `test/`, for example `test/helpers.py`; put shared code there and import it from your test file.
+
+Only `test/test*.py` files are collected as tests.
 
 ## Example: the counter design
 
@@ -134,18 +140,112 @@ async def test_wraps_to_zero(dut):
 
 ## Old cocotb 1.x code that no longer works
 
-Most examples online are for cocotb 1.x. These idioms are gone in 2.x:
+Most examples online are for cocotb 1.x. These idioms are removed or deprecated in 2.x. `BinaryValue`, `cocotb.fork`, `@cocotb.coroutine`, `TestFailure` and `cocotb.runner` are removed and fail with an error. `.integer`, `.signed_integer` and `units=` still work in 2.1 but print a DeprecationWarning; do not use them. Use the right-hand column:
 
 | Old (1.x) | Use instead (2.x) |
 |---|---|
 | `from cocotb.binary import BinaryValue` and `BinaryValue(...)` | A plain `int` to write; `int(dut.x.value)` to read. For bit-level work, `LogicArray` from `cocotb.types`. |
-| `dut.x.value.integer` | `int(dut.x.value)` |
-| `dut.x.value.signed_integer` | `dut.x.value.to_signed()` |
+| `dut.x.value.integer` (deprecated) | `int(dut.x.value)` |
+| `dut.x.value.signed_integer` (deprecated) | `dut.x.value.to_signed()` |
 | `cocotb.fork(coro)` | `cocotb.start_soon(coro)` |
-| `Clock(dut.clk, 10, units="ns")` and `Timer(5, units="ns")` | `unit="ns"` (singular) |
+| `Clock(dut.clk, 10, units="ns")` and `Timer(5, units="ns")` (deprecated) | `unit="ns"` (singular) |
 | `from cocotb.runner import get_runner` | `from cocotb_tools.runner import get_runner` (this server runs the simulators for you; you rarely need it) |
 | `@cocotb.coroutine` and `yield trigger` | `async def` and `await trigger` |
 | `raise TestFailure("...")` (`cocotb.result.TestFailure`) | `assert` or `raise AssertionError("...")` |
 | `dut.x <= 1` | `dut.x.value = 1` |
 
 When a test fails with an `ImportError` or `AttributeError` from the cocotb package, look at this table first.
+
+## Example: tests for the pulse and shifter designs
+
+The state machine and shift register examples in `explain('amaranth-style')` and `explain('myhdl-style')` are checked with these tests. Both front-ends behave the same at the pins. The pulse test pulses `ui_in[0]` for one clock and expects `uo_out[0]` high for four clocks. The shift test feeds the bits 1, 0, 1, 1 and expects them in the low four bits of `uo_out`, masking the rest because the spec states no reset value.
+
+```python example=fsm-test project=pulse frontend=verilog file=test/test.py
+import cocotb
+from cocotb.clock import Clock
+from cocotb.triggers import ClockCycles, FallingEdge, ReadOnly, RisingEdge
+
+
+async def reset(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 5)
+    await FallingEdge(dut.clk)
+    dut.rst_n.value = 1
+
+
+async def sample(dut):
+    await RisingEdge(dut.clk)
+    await ReadOnly()
+    return int(dut.uo_out.value)
+
+
+@cocotb.test()
+async def test_idle_after_reset(dut):
+    """Covers: R1"""
+    await reset(dut)
+    actual = await sample(dut)
+    assert actual == 0, "uo_out while idle after reset"
+
+
+@cocotb.test()
+async def test_busy_for_four_clocks(dut):
+    """Covers: R2"""
+    await reset(dut)
+    await FallingEdge(dut.clk)
+    dut.ui_in.value = 1  # one clock of start request
+    seen = [await sample(dut)]
+    await FallingEdge(dut.clk)
+    dut.ui_in.value = 0
+    for _ in range(7):
+        seen.append(await sample(dut))
+    assert seen == [1, 1, 1, 1, 0, 0, 0, 0], "uo_out on the 8 clocks after a start"
+```
+
+```python example=shift-test project=shifter frontend=verilog file=test/test.py
+import cocotb
+from cocotb.clock import Clock
+from cocotb.triggers import ClockCycles, FallingEdge, ReadOnly, RisingEdge
+
+
+async def reset(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 5)
+    await FallingEdge(dut.clk)
+    dut.rst_n.value = 1
+
+
+async def shift_in(dut, bit):
+    """Present one input bit, let one clock edge take it in, and read uo_out."""
+    await FallingEdge(dut.clk)
+    dut.ui_in.value = bit
+    await RisingEdge(dut.clk)
+    await ReadOnly()
+    return int(dut.uo_out.value)
+
+
+@cocotb.test()
+async def test_input_bit_enters_at_bit_0(dut):
+    """Covers: R1"""
+    await reset(dut)
+    first = await shift_in(dut, 1)
+    assert first & 1 == 1, "bit 0 after shifting in a 1"
+    second = await shift_in(dut, 0)
+    assert second & 1 == 0, "bit 0 after shifting in a 0"
+
+
+@cocotb.test()
+async def test_bits_move_up_one_place(dut):
+    """Covers: R2"""
+    await reset(dut)
+    for bit in (1, 0, 1, 1):
+        value = await shift_in(dut, bit)
+    assert value & 0xF == 0b1011, "low four bits after shifting in 1, 0, 1, 1"
+```

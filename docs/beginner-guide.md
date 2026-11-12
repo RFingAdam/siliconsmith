@@ -56,11 +56,11 @@ Or run `claude mcp add --scope project siliconsmith -- siliconsmith-mcp`. In Cla
 
 - **pass**: the step ran on the current files and passed.
 - **fail**: it ran and failed.
-- **stale**: it passed once, but a file it depends on has changed since. Run it again.
+- **stale**: it ran before (pass or fail), but a file it depends on has changed since. Run it again.
 - **not run**: it has never run.
 - **not available**: the step belongs to a later milestone.
 
-The agent cannot edit this file, so what you read is what the tools recorded.
+Siliconsmith's own tools cannot write this file; `status` rebuilds it from the recorded runs. Like approval, this relies on honest use: an agent with its own shell could change files.
 
 ## Approving the spec
 
@@ -70,7 +70,7 @@ The spec approval is yours. When you have read `spec.yaml` and agree, run `silic
 
 When the later milestones land, Siliconsmith will produce a repository that is ready for Tiny Tapeout. You then submit it, by hand, on the Tiny Tapeout website, pick a **shuttle**, and pay. Siliconsmith never orders or pays for anything. Prices, closing dates and slots change, so check [tinytapeout.com](https://tinytapeout.com/) when you decide. A digital **tile** is small (about a thousand gates), so start with something modest, such as a counter, a state machine or a shift register.
 
-Two honest limits: a real analog radio, such as a 2.4 GHz Bluetooth transceiver, does not fit a digital Tiny Tapeout tile, and SAW and BAW filters have no open fabrication path in this project.
+Two honest limits: a working 2.4 GHz radio, such as a Bluetooth transceiver, is not realistic on any Tiny Tapeout tile, digital or analog (the sky130 RF models are limited, the pads and package are not made for GHz signals, and the area is tiny); small analog blocks such as an oscillator, VCO or LNA are the realistic targets of the later analog track. SAW and BAW filters have no open fabrication path in this project.
 
 ## Where to look next
 

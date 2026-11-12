@@ -5,7 +5,7 @@ description: Use when writing the design in Amaranth (Python HDL, version 0.5) s
 
 # Amaranth style for this server
 
-Amaranth is a Python library for describing hardware. Your Python file is a description, not a program that runs on the chip: `emit_verilog` runs it in a container and converts it to Verilog. Fenced examples below are tested against the real tools; the counter is also simulated with the test from `explain('cocotb2-tests')`.
+Amaranth is a Python library for describing hardware. Your Python file is a description, not a program that runs on the chip: `emit_verilog` runs it in a container and converts it to Verilog. Fenced examples below are tested against the real tools: each is emitted and linted, and simulated on Icarus and Verilator with the tests in `explain('cocotb2-tests')`.
 
 ## The entry point
 
@@ -58,7 +58,7 @@ def top() -> wiring.Component:
 
 Use `m.FSM()`. Each `m.State` block runs while the machine is in that state; `m.next = "NAME"` picks the state after the next clock. The first state listed is the reset state. This one waits for `ui_in[0]`, then reports `busy` on `uo_out[0]` for four clocks.
 
-```python example=amaranth-fsm project=pulse frontend=amaranth file=hdl/pulse.py
+```python example=amaranth-fsm project=pulse frontend=amaranth file=hdl/pulse.py tests=fsm-test
 from amaranth.hdl import ClockDomain, Module, Signal
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
@@ -76,18 +76,17 @@ class Core(wiring.Component):
         m.d.comb += [cd.clk.eq(self.clk), cd.rst.eq(~self.rst_n)]
 
         left = Signal(3)
-        busy = Signal()
-        with m.FSM():
+        with m.FSM() as fsm:
             with m.State("IDLE"):
                 with m.If(self.ui_in[0]):
                     m.d.sync += left.eq(3)
                     m.next = "RUN"
             with m.State("RUN"):
-                m.d.comb += busy.eq(1)
                 m.d.sync += left.eq(left - 1)
                 with m.If(~left.any()):
                     m.next = "IDLE"
-        m.d.comb += self.uo_out.eq(busy)
+        # Drive the output from the state register, not from a comb line inside a state.
+        m.d.comb += self.uo_out.eq(fsm.ongoing("RUN"))
         return m
 
 
@@ -99,7 +98,7 @@ def top() -> wiring.Component:
 
 A shift register moves every bit one place per clock and takes a new bit in at one end. `Cat` joins signals with the first argument as the lowest bit, so this one shifts left and takes `ui_in[0]` in at bit 0.
 
-```python example=amaranth-shift project=shifter frontend=amaranth file=hdl/shifter.py
+```python example=amaranth-shift project=shifter frontend=amaranth file=hdl/shifter.py tests=shift-test
 from amaranth.hdl import Cat, ClockDomain, Module, Signal
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
@@ -132,10 +131,14 @@ def top() -> wiring.Component:
 - Writing a register with `m.d.comb`, or a wire with `m.d.sync`. `m.d.comb` is for values that follow their inputs at once; `m.d.sync` is for values that change on the clock edge.
 - Driving one signal from both `m.d.comb` and `m.d.sync`, or from two places. Each signal gets one driver.
 - Widths: `count + 1` is one bit wider than `count`, and assigning it back truncates silently. That is right for a wrapping counter and wrong if you wanted a saturating one. A `Signal(3)` cannot hold 8.
-- A comparison with a literal can generate Verilog with mismatched widths, and the lint step reports it as WIDTHEXPAND (`left == 1` compares 3 bits with a 1-bit constant). Use `~left.any()` for zero, or `Const(1, 3)` for a sized literal.
 - Forgetting to assign an output. Assign every output you declare (`explain('tt-rules')`).
-- Declaring pins you never use, or naming a pin differently: the names must match the Tiny Tapeout pins exactly.
+- Naming a pin differently: the names must match the Tiny Tapeout pins exactly. (Declaring a pin you never use is accepted; it is only clutter.)
 - Python `if` on a signal. Use `with m.If(...)`: a Python `if` is decided once, while the Python runs, not by the hardware.
+
+## Width and simulator traps
+
+- Comparing a signal with a literal that needs fewer bits than the signal fails lint with WIDTHEXPAND: `left == 1` on a 3-bit `left` fails, and so does `left == 2`, `left == 3` or `left > 1`. `left == 0` fails with WIDTHTRUNC. A sized `Const(1, 3)` does not help, because the conversion shrinks the constant back. Compare with zero as `~left.any()`, and with another value `v` as `~(left ^ v).any()`; both are clean. A literal that fills the width (`left == 7` on 3 bits) is fine.
+- Driving an output from a `m.d.comb` line inside `m.If`, `m.Switch` or `m.FSM` that depends only on registers that never change after reset. Icarus then leaves the output unknown (`x`) until those registers first change, while Verilator shows 0, so the two simulators disagree. Drive outputs from a register, from `fsm.ongoing("STATE")`, or from a plain `m.d.comb` line at the top level.
 
 ## Latches
 

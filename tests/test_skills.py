@@ -14,7 +14,7 @@ from mcp import Client
 
 from siliconsmith import knowledge
 from siliconsmith.knowledge import Knowledge, load, parse_skill, split_sections
-from siliconsmith.result import summary_within_limits
+from siliconsmith.result import MAX_LINE_CHARS, summary_within_limits
 from siliconsmith.server import build_server
 from siliconsmith.tools.explain import explain_topic
 
@@ -53,6 +53,11 @@ GLOSSARY_TERMS = (
     "Waveform",
     "Spec",
     "Requirement coverage",
+    "Verilog",
+    "Combinational logic",
+    "Register",
+    "MCP server",
+    "Docker image",
 )
 
 pytestmark = pytest.mark.anyio
@@ -186,6 +191,48 @@ def test_unknown_topic_is_ok_with_suggestions(kb: Knowledge) -> None:
     assert result.ok is True
     assert result.details["matched"] is False
     assert "explain('list')" in result.summary
+    # nothing matched, so the skills and the glossary are offered
+    assert {s["topic"] for s in result.details["suggestions"]} >= {*SKILL_NAMES, "glossary"}
+
+
+def test_skill_overview_carries_the_rules_and_the_whole_skill(kb: Knowledge) -> None:
+    result = explain_topic(kb, "chip-design-loop")
+    assert "Never edit a test to make a wrong design pass" in result.summary
+    assert "open_questions" in result.summary
+    text = result.details["text"]
+    for section in kb.skills[1].sections:
+        assert f"## {section.heading}" in text
+    assert "## What done looks like" in text
+    assert result.next_hints
+
+
+def test_exact_section_hit_still_suggests_related_topics(kb: Knowledge) -> None:
+    result = explain_topic(kb, "latches")
+    assert result.details["title"] == "amaranth-style/Latches"
+    assert any(s["topic"] == "Latch" for s in result.details["suggestions"])
+    assert explain_topic(kb, "latches in verilog").details["matched"] is True
+
+
+def test_no_line_is_cut_in_a_summary(kb: Knowledge) -> None:
+    for doc in kb.docs:
+        for line in [doc.intro, *(s.text for s in doc.sections)]:
+            for part in line.splitlines():
+                assert len(part) <= MAX_LINE_CHARS, f"{doc.name}: {part[:60]}"
+
+
+# Names that the skills mention before their tool exists on this branch. The status tool arrives
+# with the ledger PR (M0-8); delete this set when it is merged so the check covers it too.
+PENDING_TOOLS = {"status"}
+
+
+async def test_skills_only_name_tools_that_exist(tmp_path: Path, kb: Knowledge) -> None:
+    async with Client(build_server(tmp_path, None)) as client:
+        tools = {t.name for t in (await client.list_tools()).tools} | PENDING_TOOLS
+    steps = next(s for s in kb.skills[1].sections if s.heading == "The steps")
+    assert kb.skills[1].name == "chip-design-loop"
+    step_tools = re.findall(r"^\d+\. `([a-z_]+)`", steps.text, re.M)
+    assert len(step_tools) >= 6
+    assert set(step_tools) <= tools, set(step_tools) - tools
 
 
 def test_summaries_always_fit_and_details_keep_the_full_text(kb: Knowledge) -> None:

@@ -7,6 +7,14 @@ description: Use this first, whenever you are asked to design a small digital ch
 
 The loop is: spec, then tests, then the design, then check and simulate on two simulators, then report. It uses only this server's tools. A passing run means the design does what the tests say in simulation. It does not mean working silicon.
 
+Rules that always apply:
+
+- Write the spec and the tests before the design. Every requirement needs a test with `Covers: R<n>`.
+- Never edit a test to make a wrong design pass, and never weaken a requirement silently.
+- Stop after 8 `run_tests` tries per simulator on the same failure and report. If a requirement is unclear, ask the user; in a headless run, write your assumption to `open_questions` with `write_spec` and continue.
+- Approving the spec is the owner's step, never yours.
+- Use only this server's tools. Passing simulation is not working silicon.
+
 ## The steps
 
 1. `create_project` once (name first, then every other tool takes that name). Pick the front-end the user asked for: amaranth, myhdl or verilog.
@@ -29,7 +37,7 @@ Tests are the contract. Write them from the requirements, not from your design. 
 
 ## When something fails
 
-Read the first failing test in the `run_tests` summary: it gives the file, the line, the assertion, and the expected and actual values. If the cause is not clear, rerun that test with `run_tests(waves=True, test_filter=...)` and look at signals with `inspect_waves`. Fix the design.
+Read the first failing test in the `run_tests` summary: it gives the file, the line, the assertion, and the expected and actual values. If the cause is not clear, rerun that test with `run_tests(waves=True, test_filter=...)` and look at signals with `inspect_waves`. Fix the design. A filtered rerun, or one with waves, is for diagnosis only: finish with full runs (no `test_filter`) on both simulators, because only those count in `status`.
 
 Never edit a test to make a wrong design pass. Edit a test only when the test itself is wrong, and say why. Never weaken a requirement silently; change it in `write_spec` and tell the user.
 

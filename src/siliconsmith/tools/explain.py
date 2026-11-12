@@ -11,7 +11,7 @@ from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
 from siliconsmith.context import ServerContext
-from siliconsmith.knowledge import Doc, Knowledge, Match, find, load
+from siliconsmith.knowledge import Doc, Knowledge, Match, find, full_text, load
 from siliconsmith.result import ToolResult
 
 DESCRIPTION = """\
@@ -32,10 +32,6 @@ def _doc_lines(doc: Doc) -> list[str]:
     lines += ["", "Sections (explain('<name>/<section>') shows one):"]
     lines += [f"- {s.heading}" for s in doc.sections]
     return lines
-
-
-def _full_doc(doc: Doc) -> str:
-    return "\n".join(_doc_lines(doc))
 
 
 def catalogue(knowledge: Knowledge) -> ToolResult:
@@ -62,24 +58,32 @@ def explain_topic(knowledge: Knowledge, topic: str) -> ToolResult:
         return catalogue(knowledge)
     best, others = find(knowledge, topic)
     if best is None:
-        names = [d.name for d in knowledge.skills]
+        names = [d.name for d in knowledge.skills] + ["glossary"]
         lines = [
             f"No match for {topic!r}.",
-            f"Skills: {', '.join(names)}, glossary.",
+            f"Skills: {', '.join(names)}.",
             "Try explain('list'), a skill name, or a term such as 'latch' or 'reset'.",
         ]
         return ToolResult.from_lines(
             True,
             lines,
-            details={"matched": False, "topic": topic, "suggestions": []},
+            details={
+                "matched": False,
+                "topic": topic,
+                "suggestions": [{"topic": n, "source": "catalogue"} for n in names],
+            },
             next_hints=["explain('list') shows everything that can be explained"],
         )
     if best.section is None:
-        title, text, body = best.doc.name, _full_doc(best.doc), _doc_lines(best.doc)
+        # The summary is the capped overview; details.text is the whole skill, so one call
+        # delivers every rule in it.
+        title, text, body = best.doc.name, full_text(best.doc), _doc_lines(best.doc)
+        hints = [f"explain('{best.doc.name}/{s.heading}')" for s in best.doc.sections[:4]]
     else:
         title = best.label
         text = f"{best.section.heading}\n\n{best.section.text}"
         body = [f"{best.doc.name}: {best.section.heading}", "", *best.section.text.splitlines()]
+        hints = []
     lines = list(body)
     if others:
         lines.insert(1, "See also: " + "; ".join(f"explain('{m.label}')" for m in others))
@@ -94,7 +98,7 @@ def explain_topic(knowledge: Knowledge, topic: str) -> ToolResult:
             "source": best.doc.source,
             "suggestions": [_suggestion(m) for m in others],
         },
-        next_hints=[f"explain('{m.label}')" for m in others],
+        next_hints=[*hints, *(f"explain('{m.label}')" for m in others)],
     )
 
 

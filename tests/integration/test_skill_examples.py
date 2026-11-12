@@ -4,8 +4,9 @@
 """Every code example in the skills works: it goes through the real MCP tools and the real image.
 
 The examples are the fenced blocks tagged `example=<id>` (see tests/skill_examples.py). Each one
-is written into a fresh project, emitted and linted; examples with tests also run on Icarus and
-Verilator and must cover every requirement of the spec.
+is written into a fresh project, emitted and linted, then run on Icarus and Verilator with the
+tests it names (`tests=`); the tests must cover every requirement of the spec. Test-only examples
+(a block with only `test/` files) are run through the examples that use them.
 """
 
 from __future__ import annotations
@@ -39,6 +40,38 @@ requirements:
 """
 
 
+PULSE_SPEC = """\
+title: Pulse
+summary: Reports busy for four clocks after a start request.
+clock_hz: 10000000
+reset: "rst_n, active-low, synchronous"
+requirements:
+  - id: R1
+    text: uo_out[0] is 0 while the design is idle after reset.
+  - id: R2
+    text: A one-clock pulse on ui_in[0] makes uo_out[0] 1 for exactly four clocks.
+"""
+SHIFTER_SPEC = """\
+title: Shifter
+summary: An 8-bit shift register that takes ui_in[0] in at bit 0.
+clock_hz: 10000000
+reset: "rst_n, active-low, synchronous"
+requirements:
+  - id: R1
+    text: On every clock, ui_in[0] becomes bit 0 of uo_out.
+  - id: R2
+    text: On every clock, the older bits move up one place.
+"""
+SPECS = {"pulse": PULSE_SPEC, "shifter": SHIFTER_SPEC}
+
+
+def runnable() -> list[str]:
+    """Examples with design files; a test-only example (`fsm-test`) is run through its users."""
+    return sorted(
+        i for i, ex in EXAMPLES.items() if any(not p.startswith("test/") for p in ex.files)
+    )
+
+
 @pytest.fixture
 def server(tmp_path: Path, runner: DockerRunner, image: str) -> Client:
     return Client(build_server(tmp_path, None, runner=runner, image=image))
@@ -51,6 +84,12 @@ def test_examples_exist_for_every_front_end_skill() -> None:
     for ex in EXAMPLES.values():
         if ex.tests_from:
             assert any(p.startswith("test/") for p in EXAMPLES[ex.tests_from].files), ex.id
+
+
+def test_every_example_is_simulated() -> None:
+    """The behaviour the prose claims is checked: no runnable example may lack tests."""
+    for example_id in runnable():
+        assert test_files(EXAMPLES[example_id]), f"{example_id} has no tests"
 
 
 def test_files(ex: Example) -> dict[str, str]:
@@ -79,21 +118,19 @@ async def write(client: Client, ex: Example, path: str, text: str) -> None:
     assert out["ok"] is True, f"{ex.id}: {path}: {out['summary']}"
 
 
-@pytest.mark.parametrize("example_id", sorted(EXAMPLES))
+@pytest.mark.parametrize("example_id", runnable())
 async def test_skill_example(server: Client, tmp_path: Path, example_id: str) -> None:
     ex = EXAMPLES[example_id]
     tests = test_files(ex)
     async with server as client:
         await make_project(client, tmp_path, ex.frontend, ex.project)
         if "spec.yaml" not in ex.files:
-            await write(client, ex, "spec.yaml", DEFAULT_SPEC)
+            await write(client, ex, "spec.yaml", SPECS.get(ex.project, DEFAULT_SPEC))
         for path, text in {**ex.files, **tests}.items():
             await write(client, ex, path, text)
         emitted = await call(client, "emit_verilog", project=ex.project)
         assert emitted["ok"] is True, f"{ex.id}: {emitted['summary']}"
         assert emitted["details"]["lint"] == [], f"{ex.id}: {emitted['summary']}"
-        if not tests:
-            return
         for sim in ("icarus", "verilator"):
             result = await call(client, "run_tests", project=ex.project, simulator=sim)
             assert result["ok"] is True, f"{ex.id} on {sim}: {result['summary']}"
@@ -141,7 +178,10 @@ def counter(clk, rst_n, ui_in, uo_out):
 
 @pytest.mark.parametrize(
     ("frontend", "text", "needle"),
-    [("amaranth", NO_DOMAIN, "rst"), ("myhdl", UNUSED_PORT, "ToVerilogWarning")],
+    [
+        ("amaranth", NO_DOMAIN, "port 'rst'"),
+        ("myhdl", UNUSED_PORT, "ToVerilogWarning"),
+    ],
     ids=["amaranth-no-clock-domain", "myhdl-unused-port"],
 )
 async def test_common_mistake_is_rejected(
@@ -153,3 +193,31 @@ async def test_common_mistake_is_rejected(
         emitted = await call(client, "emit_verilog", project="counter")
         assert emitted["ok"] is False
         assert needle in emitted["summary"]
+
+
+@pytest.mark.parametrize(
+    ("cond", "ok"),
+    [
+        ("left == 1", False),
+        ("left == 0", False),
+        ("~(left ^ 1).any()", True),
+        ("~left.any()", True),
+    ],
+)
+async def test_amaranth_literal_comparison_rule(
+    server: Client, tmp_path: Path, cond: str, ok: bool
+) -> None:
+    """The width rule in amaranth-style: a narrow literal fails lint; `~(x ^ v).any()` works."""
+    text = (
+        EXAMPLES["amaranth-fsm"]
+        .files["hdl/pulse.py"]
+        .replace("with m.If(~left.any()):", f"with m.If({cond}):")
+        .replace("pulse", "counter")
+    )
+    async with server as client:
+        await make_project(client, tmp_path, "amaranth")
+        await call(client, "write_rtl", project="counter", path="hdl/counter.py", content=text)
+        emitted = await call(client, "emit_verilog", project="counter")
+        assert emitted["ok"] is ok, emitted["summary"]
+        if not ok:
+            assert "WIDTH" in emitted["summary"]
