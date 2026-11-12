@@ -10,6 +10,7 @@ import shutil
 import subprocess
 
 import pytest
+import yaml
 from conftest import REPO_ROOT
 
 from siliconsmith import _imagetag
@@ -88,3 +89,27 @@ def test_everything_under_docker_is_tracked() -> None:
         check=True,
     ).stdout
     assert out == "", f"untracked files under docker/ are not part of the image tag: {out}"
+
+
+def test_tt_lock_matches_dockerfile() -> None:
+    lock = yaml.safe_load((REPO_ROOT / "tt.lock").read_text())
+    harden = lock["sky130_open_pdks"]["harden"]
+    assert lock["sky130_open_pdks"]["gl"] == harden
+    assert re.fullmatch(r"[0-9a-f]{40}", harden)
+    dockerfile = (REPO_ROOT / "docker" / "Dockerfile").read_text()
+    assert re.search(rf"^ARG SKY130_OPEN_PDKS={harden}$", dockerfile, re.M)
+    assert "sky130-${SKY130_OPEN_PDKS}" in dockerfile
+    # Everything the plan says tt.lock records is there and well formed.
+    assert lock["shuttle"]["tag"] == "ttsky26e"
+    assert re.fullmatch(r"[0-9a-f]{40}", lock["tt_support_tools"]["commit"])
+    assert lock["librelane"]["version"] == "3.0.14"
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", lock["librelane"]["digest"])
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", lock["librelane"]["amd64_digest"])
+    assert re.fullmatch(r"[0-9a-f]{40}", lock["sky130_open_pdks"]["precheck"])
+
+
+def test_dockerfile_checks_the_pdk_tarball_hashes() -> None:
+    text = (REPO_ROOT / "docker" / "Dockerfile").read_text()
+    assert "sha256sum -c" in text
+    assert re.search(r"^ARG PDK_COMMON_SHA256=[0-9a-f]{64}$", text, re.M)
+    assert re.search(r"^ARG PDK_HD_SHA256=[0-9a-f]{64}$", text, re.M)

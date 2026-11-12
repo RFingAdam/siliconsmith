@@ -115,29 +115,35 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 
 ---
 
-## [M1-0] LibreLane image pin, ciel PDK volume, `tt.lock`, native Yosys decision, `run_tests(gl)` plumbing
+## [M1-0] Pinned sky130 files in the image, `tt.lock`, native Yosys decision, `run_tests(gl)` plumbing
 **Labels:** `track:digital` `milestone:M1` `pdk` `infra`
-**Goal:** Everything M1 to M3 depends on, pinned to the versions Tiny Tapeout uses, before any synthesis code is written.
+**Goal:** Everything M1 depends on, pinned to the versions Tiny Tapeout uses, before any synthesis code is written. (Rescoped in the M1 plan pass on 2026-11-12: the LibreLane image pin, the ciel PDK volume, the CI image cache and the EQY option moved to [M2-1], where layout needs them.)
 **Key constraints**
-- Run LibreLane from `ghcr.io/librelane/librelane:3.0.14` referenced by digest (the version tt-gds-action installs at `ttsky26d`/`ttsky26e`), started directly with our container flags (PLAN.md section 5.1). Never `librelane --dockerized` (it mounts the whole `$HOME` read-write). Never a Python dependency of our package (it pulls in the GPL `klayout` module).
-- The sky130 PDK lives in a Docker volume filled by `ciel` at open_pdks `8afc8346a57fe1ab7934ba5a6056ea8b43078e71` (LibreLane 3.0.14's hash); fetch only the libraries we need (`sky130_fd_sc_hd`) where that is enough. Cache it in CI.
-- `tt.lock` records the shuttle tag, the tt-support-tools commit, the LibreLane version, and the sky130 hash per TT step (harden/GL `8afc8346…`, precheck `0536d02d…`).
-- Decide whether to replace the M0 `yowasp-yosys` shim with a native Yosys 0.62 build, and record why. (yowasp-yosys 0.62 already supports `-dont_use`; decide on the speed of the WebAssembly build for synthesis-size designs, and whether synthesis should run in the LibreLane image's native Yosys instead.)
-- Add the `gl` option to `run_tests` and the gate-level plumbing that M1-2 uses.
-Acceptance criteria are finalized in the milestone's plan-mode pass.
+- The sky130 files that synthesis and gate-level simulation read are baked into the toolchain image (`/opt/pdk/sky130A`, read-only, about 17 MB) from the `fossi-foundation/ciel-releases` tag `sky130-8afc8346…` (open_pdks `8afc8346a57fe1ab7934ba5a6056ea8b43078e71`), each tarball checked against a pinned sha256 at build time. `/opt/pdk/manifest.json` lists the files and their sha256; `toolchain_info` reports it.
+- `tt.lock` (repo root) records the shuttle tag, the tt-gds-action tag, the tt-support-tools commit, the LibreLane version and digests, and the sky130 hash per TT step (harden/GL `8afc8346…`, precheck `0536d02d…`). The Dockerfile's sky130 hash equals the `tt.lock` harden hash.
+- Native Yosys decision: keep the M0 `yowasp-yosys` 0.62 (same version as LibreLane 3.0.14) for M1, recorded with measured times in PLAN.md section 6.
+- `run_tests` gets the `gl` option; the status table gets its three M1 rows (Synthesis, Gate-level simulation, Equivalence), still `not_available`.
+**Acceptance criteria**
+- [ ] The image holds the pinned sky130 files, and the build verifies the tarball sha256. *Proof:* Dockerfile `sha256sum -c`; integration test `test_pdk_files_present`.
+- [ ] `toolchain_info.pdk` is `{name: sky130A, open_pdks: 8afc8346…, libraries: [sky130_fd_sc_hd], corner: tt_025C_1v80}`. *Proof:* integration test `test_toolchain_info_pdk`.
+- [ ] `tt.lock` records the shuttle tag, the tt-support-tools commit, the LibreLane version and digest, and the sky130 hash per step, and the Dockerfile ARG equals `tt.lock`. *Proof:* unit test `test_tt_lock_matches_dockerfile`.
+- [ ] The native-Yosys decision is recorded with reasons. *Proof:* PLAN.md section 6 text in the PR.
+- [ ] `run_tests(gl=true)` with `simulator='verilator'` raises a ToolError saying gate-level simulation runs on Icarus only. *Proof:* unit test.
 
 ## [M1-1] `synthesize` tool on sky130
 **Labels:** `track:digital` `milestone:M1` `synth`
 **Tasks**
-- Yosys synthesis to generic gates and sky130_fd_sc_hd (liberty and PDK from the M1-0 volume). Mirror LibreLane 3.0.14's synthesis script so our numbers match TT's flow, and exclude the cells in the PDK's `no_synth.cells` and `drc_exclude.cells` lists as LibreLane does (it trims them from the liberty file; `-dont_use` is the equivalent Yosys option).
-- Write `src/config.json` `CLOCK_PERIOD` = 1e9 / `clock_hz` (in ns) from `spec.yaml`, and `info.yaml` `clock_hz` from the same value; a unit test checks that they agree. Warn when `clock_hz` is above 66 MHz (the TT IO limit).
-- Parse `stat -json`: cell count, area µm², flops vs combinational.
-- Utilization estimate = total standard-cell area ÷ (tile area from tt-support-tools `tech/sky130A/tile_sizes.yaml` × `PL_TARGET_DENSITY_PCT`/100). Validate `tiles` against `tile_sizes.yaml`.
-- Detect latches, combinational loops, multi-driven nets, and undriven outputs with source locations.
+- Yosys synthesis to sky130_fd_sc_hd with the liberty file and cell lists baked into the image by M1-0. Follow LibreLane 3.0.14's synthesis script (`librelane/scripts/pyosys/synthesize.py`), with the `no_synth.cells` and `drc_exclude.cells` lists as `-dont_use`. Sky130 only, flat top; the tool has no `target` or `flatten` options.
+- `spec.yaml` gains an optional `tiles` field (default `"1x1"`; Tiny Tapeout values only). `src/config.json` `CLOCK_PERIOD` = 1e9 / `clock_hz` (ns) and `info.yaml` `clock_hz` and `tiles` are written by the tools from the spec (at `create_project` and `write_spec`, and re-synced before every M1 tool's digest snapshot, which also fixes M0 projects). Warn above 66 MHz (the TT IO limit).
+- Parse `stat -json`; detect latches, combinational loops, multiple drivers and undriven outputs with source locations; MyHDL latches are named by the generated `src/<name>.v` line and the `hdl/` function and line.
 **Acceptance criteria**
-- [ ] Counter synthesis reports cell count and area.
-- [ ] A seeded latch (incomplete `if` in combinational logic) in Verilog and in MyHDL is reported with file and line. Amaranth is not applicable: its combinational domain cannot infer latches.
-- [ ] The utilization estimate warns when it is above 0.9 and predicts a failure above 1.0 of the chosen `tiles` budget; a unit test checks the formula with a known cell area.
+- [ ] Counter synthesis reports cell count, flip-flops vs combinational cells, area (µm²), top cell types and utilization, on all three front-ends. *Proof:* integration `test_synth_counter[fe]`.
+- [ ] A seeded latch (incomplete `if` in combinational logic) in Verilog and in MyHDL is reported with file and line through `synthesize` (its emit and lint stage stops it, as in M0). Amaranth is not applicable (its combinational domain cannot infer latches). An explicit `always_latch` that passes lint is mapped with `latch_map.v` and reported as a warning. MyHDL names the generated `src/<name>.v:line` and the `hdl/` function and line. *Proof:* integration `test_synth_latch[verilog,myhdl]`.
+- [ ] The utilization estimate is cell area ÷ (core area × `PL_TARGET_DENSITY_PCT`/100), where core area is the tile die area (`tile_sizes.yaml`) minus TT's `config.json` margins. It warns above 0.9, predicts failure above 1.0, says it is an estimate (layout in M2 gives the real number), and a bad `tiles` value names the allowed ones. *Proof:* unit test with a known cell area and the 1x1 core area.
+- [ ] `src/config.json` `CLOCK_PERIOD` and `info.yaml` `clock_hz`/`tiles` come from `spec.yaml`, keeping TT's `"//"` comment keys; more than 66 MHz warns. *Proof:* unit tests.
+- [ ] The script follows LibreLane 3.0.14's synthesis order with its do-not-use lists as `-dont_use`; the counter netlist has no do-not-use cell and no `lpflow_` cell. *Proof:* integration assertion on the netlist.
+- [ ] Combinational loops, multiple drivers and undriven outputs are reported with source locations. *Proof:* unit tests on Yosys `check` output fixtures.
+- [ ] A design far over budget stops before `abc` with a plain "too big for <tiles>" message, and synthesis has its own timeout. *Proof:* unit test and an integration test with an oversize fixture.
 
 ## [M1-2] Gate-level simulation
 **Labels:** `track:digital` `milestone:M1` `sim`
@@ -145,24 +151,32 @@ Acceptance criteria are finalized in the milestone's plan-mode pass.
 - `run_tests(gl=true)` on Icarus (as TT does), against the Yosys netlist from M1-1 plus the PDK's `sky130_fd_sc_hd` `primitives.v` and `sky130_fd_sc_hd.v`, with the defines `FUNCTIONAL`, `SIM` and `UNIT_DELAY=#1`. Do **not** define `USE_POWER_PINS` or `GL_TEST`: those are for LibreLane's powered netlist (M2/M3), and with them the unpowered Yosys netlist simulates as all X or fails to elaborate.
 - Verilator gate-level simulation is not in scope.
 **Acceptance criteria**
-- [ ] `run_tests(gl=true)` reruns the cocotb tests against the synthesized sky130 netlist with cell models, and they pass for the counter.
-- [ ] Mismatch between RTL and GL results is reported clearly. Seeded case: a register set by `initial q = 0;` instead of a reset passes RTL simulation and fails GL with X on `uo_out`; the report names the signal and the first differing cycle.
+- [ ] `run_tests(simulator='icarus', gl=true)` reruns the cocotb tests on the sky130 netlist with `primitives.v` and `sky130_fd_sc_hd.v`, defines `FUNCTIONAL SIM UNIT_DELAY=#1` (never `USE_POWER_PINS` or `GL_TEST`), and passes for the counter on all three front-ends. *Proof:* integration `test_gl_counter[fe]`.
+- [ ] A seeded `initial q = 0;` instead of a reset passes RTL and fails GL; the report names the signal and the first differing cycle with RTL vs GL values (sampled just before each rising `clk`, because the cell models delay flop outputs by 1 ns). *Proof:* integration `test_gl_mismatch`.
+- [ ] GL runs never change the RTL simulation or coverage rows and never delete the agent's RTL waves (separate `icarus-gl` build, sim and wave folders). *Proof:* unit (ledger) and integration tests.
 
-## [M1-3] EQY RTL-vs-netlist equivalence
+## [M1-3] RTL-vs-netlist equivalence check
 **Labels:** `track:digital` `milestone:M1` `synth`
 **Goal:** Prove the synthesized netlist does the same thing as the RTL, independent of how good the tests are.
 **Key constraints**
-- Use Yosys EQY (ISC-licensed; the LibreLane image already contains it) with the cell models from the pinned PDK. Verify and record its license in `THIRD_PARTY_LICENSES.md` when it is added.
-- A seeded non-equivalent netlist must be reported clearly.
-- Do not rely on TT's separate `eqy_test` action; it pins a third sky130 hash and is out of date.
-Acceptance criteria are finalized in the milestone's plan-mode pass.
+- `check_equivalence(project)` uses Yosys's built-in `equiv_*` passes (same pinned binary, ISC) against cell models read from the liberty file. EQY in the LibreLane image becomes an option in [M2-1]. Do not rely on TT's separate `eqy_test` action; it pins a third sky130 hash and is out of date.
+- If the spike cannot prove the counter, a hidden-state shift register and an FSM on all front-ends, this issue moves to [M2-1] and M1 closes without it, said plainly in PLAN.md and here.
+- The skills say plainly that equivalence does not catch reset or initial-value bugs (gate-level simulation does).
+**Acceptance criteria**
+- [ ] `check_equivalence` (which re-synthesizes in the same container call; `build/` is never evidence) proves RTL and netlist equivalent for the counter, a hidden-state shift register (parity output) and an FSM, on the front-ends that can express them. *Proof:* integration `test_equiv[fixture-fe]`.
+- [ ] A seeded non-equivalent netlist is reported as not equivalent, naming the signal. *Proof:* integration `test_equiv_mismatch` (a test-only script runs the worker's equivalence function in the container on a hand-edited fixture netlist; the production worker has no tamper hook).
+- [ ] "Could not prove" is reported as not proven, `ok=false`, distinct from not equivalent, never a pass. *Proof:* unit test.
+- [ ] `status` shows Synthesis, Gate-level simulation and Equivalence as pass for the counter. Inputs: synthesis = check inputs + `src/config.json` + `info.yaml` + image; gate-level = simulation inputs + synthesis inputs; equivalence = synthesis inputs. Each goes stale only on its own inputs; layout, TT checks and silicon stay `not_available`. *Proof:* unit test per input class (the stale matrix in `tests/test_status.py` extended, with a `src/config.json` row) and an integration test.
 
 ---
 
 ## [M2-1] LibreLane integration (OpenLane 2 successor)
 **Labels:** `track:digital` `milestone:M2` `layout`
 **Tasks**
-- Use the LibreLane 3.0.14 image pinned by digest in M1-0, run directly with our container flags (PLAN.md section 5.1), never with `--dockerized`. The PDK comes from the M1-0 volume; versions come from `tt.lock`.
+- Run LibreLane from `ghcr.io/librelane/librelane:3.0.14` referenced by the digest in `tt.lock` (the version tt-gds-action installs at `ttsky26d`/`ttsky26e`), started directly with our container flags (PLAN.md section 5.1). Never `librelane --dockerized` (it mounts the whole `$HOME` read-write). Never a Python dependency of our package (it pulls in the GPL `klayout` module).
+- The full sky130 PDK lives in a Docker volume filled by `ciel` at open_pdks `8afc8346a57fe1ab7934ba5a6056ea8b43078e71`; fetch only the libraries we need (`sky130_fd_sc_hd`) where that is enough. Cache the LibreLane image and the PDK volume in CI. (Moved here from M1-0 in the M1 plan pass: M1 bakes only ten sky130 files into the toolchain image.)
+- Consider EQY from the LibreLane image as an option next to the Yosys equivalence passes that M1-3 uses; record its license in `THIRD_PARTY_LICENSES.md` if it is added.
+- Versions come from `tt.lock`.
 - `run_layout(stage=full|floorplan|place|cts|route|signoff, config_overrides)` with a TT 1x1 die-area config.
 **Acceptance criteria**
 - [ ] Counter → GDS on sky130A at 1x1 tile size, 0 DRC (Magic + KLayout), LVS clean, and setup and hold slack ≥ 0 at 50 MHz in every STA corner LibreLane reports for the TT config.

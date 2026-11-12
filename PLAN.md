@@ -1,6 +1,6 @@
 # Siliconsmith: plan for an open-source AI chip-design agent
 
-**Status:** Digital milestone M0 tools work (create, spec, write, emit, lint, simulate on Icarus and Verilator, waves, status and ledger, explain). Synthesis, layout and Tiny Tapeout export come in milestones M1 to M3; `ISSUES.md` and the GitHub issues track what has landed.
+**Status:** Digital milestone M0 tools work (create, spec, write, emit, lint, simulate on Icarus and Verilator, waves, status and ledger, explain). Milestone M1 (synthesis, gate-level simulation, equivalence) is in progress: the sky130 files, `tt.lock` and the `run_tests` `gl` option are in, and the tools follow in M1-1 to M1-3. Layout and Tiny Tapeout export come in M2 and M3; `ISSUES.md` and the GitHub issues track what has landed.
 **Owner:** Adam Engelbrecht (GitHub `RFingAdam`).
 **Repo:** [`RFingAdam/siliconsmith`](https://github.com/RFingAdam/siliconsmith)
 **License:** Apache-2.0
@@ -183,18 +183,19 @@ The server uses the official MCP Python SDK v2 (`mcp>=2.3,<3`). One module per t
 
 | Tool | Inputs | Outputs | From |
 |---|---|---|---|
-| `toolchain_info` | none | Readiness: Docker reachable, rootless or not, image present (if missing, `next_hints` gives the `docker pull` command). Image id and registry digest (null for a local build). Versions of iverilog, verilator, yosys, amaranth, amaranth-yosys, myhdl, cocotb, Python and pywellen. `pdk` is null until M1. | M0 |
+| `toolchain_info` | none | Readiness: Docker reachable, rootless or not, image present (if missing, `next_hints` gives the `docker pull` command). Image id and registry digest (null for a local build). Versions of iverilog, verilator, yosys, amaranth, amaranth-yosys, myhdl, cocotb, Python and pywellen. `pdk` is `{name, open_pdks, libraries, corner}`, read from `/opt/pdk/manifest.json` inside the image (null, with a note, for an image from before M1). | M0; `pdk` from M1 |
 | `create_project` | `name`, `frontend` (amaranth\|myhdl\|verilog; the server's `--default-frontend` sets the default), `author`, `description` | A TT-shaped project (section 5.2) with a `spec.yaml` stub, `info.yaml`, the generated wrapper and a cocotb test stub. Tile size defaults to 1x1 in `info.yaml`; the PDK is sky130A until M5. | M0 |
 | `list_files` / `read_file` | `path`, optional line range | File contents, size-capped, project dir only | M0 |
 | `write_spec` | full `spec.yaml` content | Validation errors with the field path, 20 lines or fewer | M0 |
 | `write_rtl` | `path`, full `content` (no diffs or patches) | Writes the file. A `.py` file gets a host-side syntax check (`ast.parse`; never executed) and is saved even if the check fails. | M0 |
 | `write_test` | `path`, `content` | Saves a cocotb 2.x test under `test/` | M0 |
 | `emit_verilog` | none | Generated core path, top module, port list, lint findings. Its run is the `check` step of the validation sequence. | M0 |
-| `run_tests` | `simulator` (icarus\|verilator), `test_filter`, `waves` (bool); `gl` (gate-level) is added in M1 | Re-emits, lints and simulates in one container call. Pass/fail per test; the first failing assertion with file, line, expected and actual value; wave file path if requested. | M0 |
+| `run_tests` | `simulator` (icarus\|verilator), `test_filter`, `waves` (bool), `gl` (bool, default false; gate-level simulation, Icarus only, from M1-2: with `gl` the same tests run on the synthesized sky130 netlist) | Re-emits, lints and simulates in one container call. Pass/fail per test; the first failing assertion with file, line, expected and actual value; wave file path if requested. | M0 |
 | `inspect_waves` | wave file path, `signals[]`, `time_range`, `max_rows` (default 50) | Compact value table, read with pywellen (VCD or FST, detected from the file's first bytes) | M0 |
 | `status` | none | The validation sequence for the project (section 5.7); also writes `docs/verification.md` | M0 |
 | `explain` | `topic` (e.g. "setup violation", "latch inferred") | Short beginner explanation from the bundled skills and glossary | M0 |
-| `synthesize` | `target` (generic\|sky130), `flatten` | Cell count, area µm², latches found, multi-driven nets, combinational loops, utilization estimate vs the tile budget | M1 |
+| `synthesize` | none (sky130 only, flat top; `spec.yaml` `clock_hz` and `tiles` set the clock and the budget) | Cell count, flip-flops vs combinational cells, area µm², top cell types, latches found, multi-driven nets, combinational loops, and a utilization estimate vs the tile budget (an estimate; layout gives the real number) | M1 |
+| `check_equivalence` | none | Proof, using Yosys's built-in equivalence passes, that the synthesized netlist does the same thing as the RTL. It re-synthesizes in the same container call. Results are *equivalent*, *not equivalent* (names the signal) or *not proven* (never a pass). It does not catch reset or initial-value bugs; gate-level simulation does. | M1 |
 | `run_layout` | `stage` (full\|floorplan\|place\|cts\|route\|signoff), `config_overrides` | Run id, status, failing step, WNS/TNS per corner, DRC/LVS/antenna counts, utilization, GDS path. Long runs return a job handle (M2-5). | M2 |
 | `read_report` | `run_id`, `kind` (timing\|drc\|lvs\|antenna\|area\|power\|log), `top_n` | Parsed worst items (e.g. 5 worst timing paths with start/end points) | M2 |
 | `render_layout` | `run_id`, `format` (png\|svg) | KLayout-rendered image path (CLI only; KLayout is GPL) | M2 |
@@ -258,23 +259,29 @@ The validation sequence is the list of checks between an idea and a working chip
 
 ```
 title, summary, clock_hz, reset
+tiles:           optional, default "1x1"; a Tiny Tapeout tile size (M1)
 pins:            {ui: {<bit>: <meaning>}, uo: {...}, uio: {...}}
 requirements:    [{id: R<n>, text, limit: {min, typ, max, unit}}]    (limit is optional)
 open_questions:  [...]
 ```
 
-`write_spec` validates it and reports errors with the field path. `create_project` writes a valid stub. The optional `limit` is a datasheet-style min/typ/max, meant mainly for the analog and acoustic tracks.
+`write_spec` validates it and reports errors with the field path. `create_project` writes a valid stub. The optional `limit` is a datasheet-style min/typ/max, meant mainly for the analog and acoustic tracks. The optional `tiles` field (default `"1x1"`, only Tiny Tapeout's own tile names) is how the agent can act on "too big"; a bigger tile costs the owner money, so the loop skill says to ask the owner, or in a headless run to write the assumption to `open_questions`. `src/config.json` `CLOCK_PERIOD` and `info.yaml` `clock_hz` and `tiles` are written by the tools from the spec and are never agent-writable (M1-1).
 
 **Coverage tags.** Each cocotb test says in its docstring which requirements it checks, for example `Covers: R1, R2`. The tool reads these tags with Python's `ast` module; it never runs the test file to find them. An unknown requirement id is a warning. A skipped test does not count as coverage.
 
-**Ledger.** `.siliconsmith/ledger.json` in the project folder stores facts only: the spec approval (spec hash, who, when) and one record per `emit_verilog` or `run_tests` run (tool, simulator, the check, sim and spec digests, image name and tag, image id when known, whether a test filter was used, time, `ok`, and for each test its name, the requirement ids it covers and its outcome). Only the host writes it (the container never sees it), and only `emit_verilog`, `run_tests` and the `approve` command add to it.
+**Ledger.** `.siliconsmith/ledger.json` in the project folder stores facts only: the spec approval (spec hash, who, when) and one record per `emit_verilog`, `run_tests`, `synthesize` or `check_equivalence` run (tool, simulator, the check, sim and spec digests, image name and tag, image id when known, whether a test filter was used, time, `ok`, and for each test its name, the requirement ids it covers and its outcome). Only the host writes it (the container never sees it), and only `emit_verilog`, `run_tests`, `synthesize`, `check_equivalence` and the `approve` command add to it. A ledger written by M1 holds tool names an M0 install does not know, so an M0 install reads it as damaged; that is accepted before 1.0.
 
 **Derived status.** `status` works out each step's state when it is asked, from the ledger and the current files: `pass`, `fail`, `stale` (an input changed since the last run), `not_run`, or `not_available` (the step belongs to a later milestone). Each step has its own inputs:
 
 - approval ← `spec.yaml`;
-- check ← `hdl/**/*.py` (Amaranth, MyHDL) or `src/<name>.v` (Verilog), `info.yaml`, `test/tb.v` and `test/Makefile`, the toolchain image and the Siliconsmith version (the version fixes the files the tool owns: the generated wrapper and the TT template files). The image is identified by its name and tag, which is content-addressed (`ctx-<hash>`), so status never needs Docker; the ledger also records the image id when it is known;
+- check ← `hdl/**/*.py` (Amaranth, MyHDL) or `src/<name>.v` (Verilog), `test/tb.v` and `test/Makefile`, the toolchain image and the Siliconsmith version (the version fixes the files the tool owns: the generated wrapper and the TT template files). The image is identified by its name and tag, which is content-addressed (`ctx-<hash>`), so status never needs Docker; the ledger also records the image id when it is known;
 - simulation ← the check inputs plus `test/**/*.py`;
-- coverage ← the spec plus the latest unfiltered simulation runs.
+- coverage ← the spec plus the latest unfiltered simulation runs;
+- synthesis (M1) ← the check inputs plus `src/config.json` (the clock period and tile settings that synthesis reads), `info.yaml` (tile size and clock; it does not affect the RTL, which is why it left the check inputs) and the image (the sky130 files live in it);
+- gate-level simulation (M1) ← the simulation inputs plus the synthesis inputs;
+- equivalence (M1) ← the synthesis inputs.
+
+Each step goes stale only when its own inputs change.
 
 These file patterns match the write allow-list (section 5.3), so every design or test file an agent can write is an input to some step. The digest is a sha256 over the image name and tag, the Siliconsmith version and the files those patterns match (path and content hash of each), never whole folders, so build output, `__pycache__` and wave files do not affect it. The write allow-list rejects any path with a `build`, `sim_build` or `__pycache__` component, so nothing an agent can write is skipped. A run's digests are taken before the run starts, so a file edited during the run shows as stale, never as tested.
 
@@ -286,10 +293,14 @@ These file patterns match the write allow-list (section 5.3), so every design or
 4. RTL simulation on Icarus passes.
 5. RTL simulation on Verilator passes.
 6. Requirement coverage: every requirement id is covered by a test that passes on both simulators at the current digest.
-7. Synthesis and gate-level simulation (M1).
-8. Layout signoff (M2).
-9. TT precheck and TT's own CI (M3).
-10. Silicon bring-up on the TT demo board (shown as `not_available` with its milestone).
+7. Synthesis (M1): the design maps to sky130 cells with no latch, loop or wiring problem.
+8. Gate-level simulation (M1): the tests still pass on the synthesized netlist.
+9. Equivalence (M1): the netlist is proven to do the same thing as the RTL.
+10. Layout signoff (M2).
+11. TT precheck and TT's own CI (M3).
+12. Silicon bring-up on the TT demo board (shown as `not_available` with its milestone).
+
+Until each M1 tool lands, its row shows `not_available` with its milestone.
 
 A run with a test filter, or with zero tests, never sets a simulation or coverage step.
 
@@ -303,7 +314,7 @@ The check step (3) is set by the latest `emit_verilog` **or** `run_tests` run th
 
 ## 6. Docker toolchain
 
-- **Our image.** `ghcr.io/rfingadam/siliconsmith-toolchain`, built from `docker/Dockerfile`, `linux/amd64` only for now (arm64 is M5-3). Tags are `ctx-<h>`, where `<h>` is a 12-hex-digit hash of the files in `docker/`, plus a date tag `<YYYYMMDD>`. The server's default image is the `ctx-` tag that matches the `docker/` folder it was released with. M0 ships a simulation-only image.
+- **Our image.** `ghcr.io/rfingadam/siliconsmith-toolchain`, built from `docker/Dockerfile`, `linux/amd64` only for now (arm64 is M5-3). Tags are `ctx-<h>`, where `<h>` is a 12-hex-digit hash of the files in `docker/`, plus a date tag `<YYYYMMDD>`. The server's default image is the `ctx-` tag that matches the `docker/` folder it was released with. M0 shipped a simulation-only image; M1 adds the few sky130 files that synthesis and gate-level simulation read (below). The full PDK and the LibreLane image arrive with layout (M2-1).
 - **Pins for M0** (digests are re-resolved when the Dockerfile is written):
 
   | Item | Pin | Why |
@@ -311,7 +322,8 @@ The check step (3) is set by the latest `emit_verilog` **or** `run_tests` run th
   | Base | `ubuntu:24.04` by digest; apt from a dated Ubuntu snapshot | Reproducible builds |
   | Icarus Verilog | apt `iverilog=12.0-2build2` | cocotb 2.1 needs Icarus 11.0 or newer; TT's RTL test workflow also uses apt 12.0 |
   | Verilator | v5.046, copied from the official `verilator/verilator:v5.046` image (by digest) | cocotb 2.1 needs 5.036 or newer and its CI tests 5.046; Ubuntu 24.04's apt Verilator is 5.020 |
-  | Yosys (M0) | `yowasp-yosys==0.62.0.0.post1088` (Yosys 0.62 compiled to WebAssembly) behind a `/usr/local/bin/yosys` shim | Same Yosys version as LibreLane 3.0.14; TT's own tools also use yowasp-yosys; apt Yosys is 0.33. A native Yosys build is decided in M1-0. |
+  | Yosys | `yowasp-yosys==0.62.0.0.post1088` (Yosys 0.62 compiled to WebAssembly) behind a `/usr/local/bin/yosys` shim | Same Yosys version as LibreLane 3.0.14; TT's own tools also use yowasp-yosys; apt Yosys is 0.33. **Native Yosys decision (M1-0): keep YoWASP for M1.** It is the same 0.62, ISC-licensed, pip-pinned and hash-locked; a native build would add a compile step or a second download for no change in results. Measured in our image: the 8-bit counter synthesizes in 2.2 s, and a 23,520-cell design (a 64x64 multiplier, 210,000 µm², far larger than any Tiny Tapeout tile) takes 400 s. That is fast enough for tile-sized designs, and synthesis has its own timeout (M1-1). Native Yosys arrives with the LibreLane image in M2-1, which brings its own build. |
+  | sky130 files (M1) | 10 files from open_pdks `8afc8346a57fe1ab7934ba5a6056ea8b43078e71` (v1.0.530; the version LibreLane 3.0.14 and Tiny Tapeout harden with), downloaded at image build time from `fossi-foundation/ciel-releases` (tag `sky130-8afc8346…`: `sky130_fd_sc_hd.tar.zst` and `common.tar.zst`, each checked against a sha256 pinned in the Dockerfile) and kept under `/opt/pdk/sky130A` | See the sky130 bullet below. The same hash is in `tt.lock`; a unit test keeps the two equal. |
   | cocotb, pytest | `cocotb==2.1.0`, `pytest==8.4.2` | Same as TT's template `test/requirements.txt` |
   | Amaranth | `amaranth[builtin-yosys]==0.5.10`, with `AMARANTH_USE_YOSYS=builtin` | Amaranth rejects a system Yosys older than 0.40 (apt has 0.33). With `AMARANTH_USE_YOSYS=builtin` it always uses its bundled Yosys 0.50, so a Yosys on `PATH` cannot change its output. |
   | MyHDL | `myhdl==0.11.52` | Supports Python 3.12 to 3.14 |
@@ -321,10 +333,10 @@ The check step (3) is set by the latest `emit_verilog` **or** `run_tests` run th
 
   Python packages go into `/opt/venv` from a hash-locked `docker/requirements.lock`.
 - **Host package.** The MCP server is a small Python package, installed with pip from a checkout (`pip install -e .`; there is no PyPI release yet), with `mcp>=2.3,<3`, `pyyaml` and `pydantic>=2`. The extras `[amaranth]` and `[myhdl]` are only for writing designs with editor support; all execution happens in the image. A `--native` mode that uses tools already on `PATH` is deferred and has no milestone yet.
-- **LibreLane and the PDK (M1-0).** LibreLane runs from its official image, `ghcr.io/librelane/librelane:3.0.14`, referenced by digest and started directly with our container flags (section 5.1), never with `--dockerized`. We do not rebuild or re-publish that image. LibreLane is never a Python dependency of our package (it would pull in the GPL `klayout` Python module). The sky130 PDK lives in a Docker volume filled by `ciel` ([fossi-foundation/ciel](https://github.com/fossi-foundation/ciel), Apache-2.0) at the version LibreLane 3.0.14 uses. The PDK hashes TT uses are recorded in `tt.lock` (section 16).
+- **sky130 files for M1 (M1-0).** Synthesis and gate-level simulation need only a handful of PDK files, so the image bakes them in, read-only, under `/opt/pdk/sky130A`, with `/opt/pdk/manifest.json` (name, open_pdks hash, libraries, corner, sha256 of every file) written at build time; `toolchain_info` reports it as `pdk`. The files are the typical-corner liberty file `sky130_fd_sc_hd__tt_025C_1v80.lib` (LibreLane's synthesis default), the Verilog cell models `sky130_fd_sc_hd.v` and `primitives.v`, the do-not-use and DRC-exclude cell lists, and the latch, tri-state, full-adder, ripple-carry and carry-select adder technology maps that LibreLane 3.0.14's synthesis step reads for sky130. About 17 MB. The full PDK in a ciel-filled Docker volume, and the LibreLane image (`ghcr.io/librelane/librelane:3.0.14`, referenced by digest, started directly with our container flags (section 5.1), never with `--dockerized`, never a Python dependency of our package because it would pull in the GPL `klayout` module), arrive in M2-1 (#9). The PDK hashes TT uses, and the LibreLane pin, are recorded in `tt.lock` (section 16).
 - **Analog and acoustic tools** (Xschem, ngspice, Magic, netgen, openEMS, Elmer) are added to the image in A0 / S1, not in digital M0.
 - **Licensing.** We don't modify any GPL/LGPL tool, and the repo contains no tool binaries or sources. Our image does distribute binaries, so it ships `/usr/share/doc/siliconsmith-toolchain/` with `SOURCES.txt` (the source package and version of every Ubuntu package; the upstream URL at the exact tag or version for Verilator v5.046 and every pip package), `THIRD_PARTY_LICENSES.md`, a written offer for the corresponding source, and the license files of bundled components (wellen, Yosys, ABC, yosys-slang, slang). A hosted source bundle per image is M5-3 (section 10).
-- **Size.** The sim-only image size is recorded in the README (M0-2). The PDK stays out of the image: the default sky130 library set is about 338 MB to download and 2.1 GB unpacked, and `sky130_fd_sc_hd` alone is about 134 MB and 752 MB. The LibreLane amd64 image is about 1.5 GB compressed.
+- **Size.** The image size is recorded in the README. The M1 sky130 files add about 17 MB unpacked (the build downloads about 134 MB and keeps 10 files). The full PDK stays out of the image until M2-1: the default sky130 library set is about 338 MB to download and 2.1 GB unpacked, and `sky130_fd_sc_hd` alone is about 134 MB and 752 MB. The LibreLane amd64 image is about 1.5 GB compressed.
 
 ## 7. Repo layout (target)
 
@@ -414,7 +426,7 @@ Full issue text is in `ISSUES.md`.
 | M | Scope | Acceptance criteria |
 |---|---|---|
 | **M0** Hello-world sim | Repo skeleton and REUSE licensing; sim-only Docker image; MCP server (stdio) with `toolchain_info`, `create_project`, `list_files`, `read_file`, `write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests`, `inspect_waves`, `status`, `explain`; Amaranth + MyHDL + Verilog front-ends; spec capture (`spec.yaml`, M0-7) and the validation ledger (M0-8); 5 skills | **Deterministic CI end-to-end test:** for each front-end, a known counter goes through the MCP tools and passes its cocotb tests and the held-out reference test on Icarus **and** Verilator (6 cells). **Recorded demo:** Claude Code (headless), starting from an empty folder and given only "8-bit counter on uo_out, count enable on ui_in[0]", produces RTL in **each** front-end whose own tests **and** the held-out reference test pass on Icarus **and** Verilator, with no human edits; loop iterations are recorded. Failing tests return the first failing assertion in ≤20 lines. `status` shows every automated M0 step as pass. CI green (`ci.yml` and `image.yml`). Per-issue criteria and the test that proves each one are in `ISSUES.md`. |
-| **M1** Synthesis | M1-0: LibreLane 3.0.14 image by digest, sky130 PDK in a ciel volume, `tt.lock`, native Yosys decision, `run_tests(gl)` plumbing. `synthesize` (sky130_fd_sc_hd, mirroring LibreLane's synthesis script), latch/loop/multi-driver detection, tile-budget estimate; gate-level sim; M1-3 EQY equivalence check | The counter synthesizes to a sky130_fd_sc_hd netlist and reports cell count and area. A seeded latch bug is reported with its file and line for Verilog and MyHDL (Amaranth cannot infer latches, so it is not applicable there). Gate-level sim (`run_tests gl=true`) passes on Icarus against the Yosys netlist, with the cell models in `FUNCTIONAL` mode and `UNIT_DELAY=#1`. EQY proves the RTL equivalent to the netlist. The final criteria are set in the M1 plan-mode pass. |
+| **M1** Synthesis | M1-0 (#43): the pinned sky130 files in the image, `tt.lock`, the native-Yosys decision, `run_tests(gl)` plumbing, three status rows. M1-1 (#7): `synthesize` (sky130_fd_sc_hd, following LibreLane 3.0.14's synthesis script), latch/loop/multi-driver detection, utilization estimate, spec `tiles`. M1-2 (#8): gate-level simulation. M1-3 (#44): `check_equivalence` with Yosys's built-in equivalence passes | The counter synthesizes to a sky130_fd_sc_hd netlist and reports cell count, flip-flops vs combinational cells, area, top cell types and a utilization estimate, on all three front-ends. A seeded latch bug is reported with its file and line for Verilog and MyHDL (Amaranth cannot infer latches, so it is not applicable there). Gate-level sim (`run_tests gl=true`, Icarus only) passes for the counter on all three front-ends, with the cell models in `FUNCTIONAL` mode and `UNIT_DELAY=#1`, and a seeded `initial q = 0;` instead of a reset passes RTL and fails GL, with the first differing cycle named. `check_equivalence` proves the counter, a hidden-state shift register and an FSM equivalent to their netlists, reports a seeded difference as *not equivalent* and an unfinished proof as *not proven* (never a pass); if its spike cannot prove those designs, M1-3 moves to M2-1 and M1 closes without it, said plainly in this plan and the issue. `status` shows Synthesis, Gate-level simulation and Equivalence as pass for the counter, each going stale only on its own inputs. The per-issue criteria are in `ISSUES.md`. |
 | **M2** Layout/GDS | `run_layout`, `read_report`, `render_layout` via LibreLane on sky130A, at TT 1x1 dimensions; debug skills (M2-4); job handles and progress for long runs (M2-5) | The counter produces a GDS with 0 DRC, 0 LVS and 0 antenna errors (or antenna results reported clearly), and setup and hold slack ≥ 0 at 50 MHz in every STA corner LibreLane reports for the TT config. A seeded oversize design (two 64-bit shift registers loaded serially from `ui_in`, a registered 64×64 product, XOR-reduced to `uo_out`, in a 1x1 tile) reports a utilization failure with a suggested fix. The PNG renders. Runtime is measured on the GitHub `ubuntu-24.04` runner (laptop numbers are informational). |
 | **M3** Tiny Tapeout ready | `export_tt`, `tt_precheck`, docs generation from `spec.yaml`; automated `tt-compat` gate (M3-4); demo-board bring-up test and shuttle guide (M3-5); distribution: Claude Code plugin, `install-skills`, MCP prompts/resources (M3-6) | An automated CI gate (`tt-compat.yml`) runs the exported counter repo through TT's `gds`, `precheck` and `gl_test` actions (workflow verified in [ttsky-verilog-template](https://github.com/TinyTapeout/ttsky-verilog-template/blob/main/.github/workflows/gds.yaml)), with versions pinned in `tt.lock`. The owner also pushes the export to a test GitHub repo by hand once, to confirm. `info.yaml` pinout is filled in from `spec.yaml`, and `docs/info.md` explains how to test. No purchase is made automatically. |
 | **M4** Stretch examples | UART TX/RX, SPI peripheral, PWM/servo, NCO/DDS (an RF-flavoured digital block), tiny RISC-V (RV32E subset, multi-tile); mutation / weak-test check (M4-6) | Each example passes M0 through M3 checks in CI (layout nightly). The RISC-V example runs a small program in cocotb. A benchmark script reports the agent's success rate across about 10 prompts. |
@@ -508,7 +520,7 @@ All workflows run on `ubuntu-24.04` (not `ubuntu-latest`). Actions are pinned by
 | API drift: MCP Python SDK v2 (2026-07-28) renamed `FastMCP` to `MCPServer`; cocotb 2.x removed `BinaryValue`, moved the runner to `cocotb_tools.runner` and renamed `units=` to `unit=`. Most model training data shows the old APIs. | Our code, or tests the agent writes, fail on import or at run time | Pin `mcp>=2.3,<3` and `cocotb==2.1.0`; API rules in CLAUDE.md; CI stale-API guard; `cocotb2-tests` skill |
 | MyHDL has few maintainers and rare releases (0.11.52 in 2026-09, the one before in 2024-12); Verilog output quirks (an output that is never driven is emitted as an input, with only a warning) | Second front-end lags | 0.11.52 supports Python 3.12 to 3.14 and its CI passes on them; the front-end is isolated; `ToVerilogWarning` is treated as an error; MyHDL is marked "beta" if needed |
 | Agent-written HDL and tests are code that we execute | Damage to the user's machine | Runs only in the hardened container (section 5.1); the limits of that sandbox are documented |
-| LLMs write subtly wrong RTL that still passes weak tests | Bad silicon | Skill requires test-first; requirement coverage and a held-out reference test (M0); gate-level sim and EQY equivalence (M1); mutation check (M4-6); optional formal checks via SymbiYosys (later) |
+| LLMs write subtly wrong RTL that still passes weak tests | Bad silicon | Skill requires test-first; requirement coverage and a held-out reference test (M0); gate-level sim and an equivalence check (M1); mutation check (M4-6); optional formal checks via SymbiYosys (later) |
 | LibreLane runtime/RAM on laptops | Slow loop | Run layout only after sim and synth pass; cache PDK; small designs take minutes per TT FAQ |
 | Large images and runner disk: GitHub's standard runners guarantee only 14 GB of free disk; the default sky130 library set is about 2.1 GB unpacked and the LibreLane image about 1.5 GB compressed | Setup friction; CI runs out of disk | Sim-only image in M0; PDK in a Docker volume, not the image (only `sky130_fd_sc_hd`, about 752 MB, where that is enough); pin `ubuntu-24.04` runners (the newer runner image's Docker storage uses more disk); free disk space in CI if needed |
 | License mistakes (vendoring GPL code, or copying unlicensed code) | Repo relicensing pain | CI check: `reuse lint` / SPDX headers; rules in CLAUDE.md; never copy mcp4eda |
@@ -520,7 +532,7 @@ All workflows run on `ubuntu-24.04` (not `ubuntu-latest`). Actions are pinned by
 
 ## 18. Effort estimate (rough, unverified)
 
-Digital: M0: about 6–8 agent-days · M1: 2–3 days (including M1-0, the LibreLane runner and PDK volume, and the EQY check) · M2: 2–4 days · M3: 1–2 days · M4: about 1 day per example, RISC-V longer.
+Digital: M0: about 6–8 agent-days · M1: 2–3 days (including M1-0, the baked-in sky130 files, and the equivalence check) · M2: 2–4 days · M3: 1–2 days · M4: about 1 day per example, RISC-V longer.
 
 Analog: A0: 1–2 days · A1: 2–3 days · A2: several days per target · A3–A4: stretch.
 
