@@ -331,6 +331,10 @@ async def test_write_spec_invalid_is_not_written(tmp_path: Path, server_client: 
         }
         assert "clock_hz: required field is missing" in data["summary"]
         assert "NOT saved" in data["summary"]
+        with_pin = SPEC.replace("ui:\n", "ui:\n    8: x\n", 1)
+        pin = await call(client, "write_spec", project="adder", content=with_pin)
+        assert not pin["ok"] and "pins.ui.8" in pin["summary"]
+        assert [e["path"] for e in pin["details"]["errors"]] == ["pins.ui.8"]
         garbage = await call(client, "write_spec", project="adder", content="a: [")
         assert not garbage["ok"] and garbage["details"]["errors"][0]["path"] == "yaml"
     assert (tmp_path / "adder" / "spec.yaml").read_bytes() == before
@@ -391,3 +395,19 @@ def test_instructions_put_the_spec_first() -> None:
     assert INSTRUCTIONS.index("write_spec") < INSTRUCTIONS.index("write_test")
     assert INSTRUCTIONS.index("write_test") < INSTRUCTIONS.index("write_rtl")
     assert len(INSTRUCTIONS.encode()) <= 4096
+
+
+async def test_write_spec_bad_yaml_values_are_reported(
+    tmp_path: Path, server_client: Client
+) -> None:
+    async with server_client as client:
+        await call(client, "create_project", name="adder", **ARGS)
+        before = (tmp_path / "adder" / "spec.yaml").read_bytes()
+        for bad in ("title: 2026-13-45\n", "clock_hz: 0x" + "f" * 4000 + "\n"):
+            data = await call(client, "write_spec", project="adder", content=bad)
+            assert not data["ok"] and data["details"]["errors"]
+        assert (tmp_path / "adder" / "spec.yaml").read_bytes() == before
+        (tmp_path / "adder" / "spec.yaml").write_text("title: 2026-13-45\n")
+        code = "import cocotb\n@cocotb.test()\nasync def t(dut):\n    '''Covers: R1'''\n"
+        data = await call(client, "write_test", project="adder", path="test/t.py", content=code)
+    assert data["ok"] and "not checked" in data["summary"]

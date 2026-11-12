@@ -17,7 +17,7 @@ async def test_adds_inputs(dut):
     """
     # Requirement ids (R1, R2, ...) come from spec.yaml; list the ones this test checks above.
     dut._log.info("Start")
-    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    cocotb.start_soon(Clock(dut.clk, 100, unit="ns").start())
 
     # Reset: hold rst_n low (active low) for a few clock cycles, then release it.
     dut.ena.value = 1

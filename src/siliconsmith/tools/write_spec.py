@@ -73,8 +73,6 @@ def register(server: MCPServer, ctx: ServerContext) -> None:
                     f"Fix the listed fields and call write_spec again with the full {SPEC_NAME}."
                 ],
             )
-        with project_lock(found.dir):
-            atomic_write(found.dir, SPEC_NAME, data)
         questions = len(parsed.open_questions)
         lines = [
             f"Saved {SPEC_NAME}: {parsed.title!r}.",
@@ -82,7 +80,7 @@ def register(server: MCPServer, ctx: ServerContext) -> None:
             f"{'s' if len(parsed.requirements) != 1 else ''}, "
             f"{questions} open question{'s' if questions != 1 else ''}.",
         ]
-        return ToolResult.from_lines(
+        result = ToolResult.from_lines(
             True,
             lines,
             details={
@@ -97,5 +95,10 @@ def register(server: MCPServer, ctx: ServerContext) -> None:
             next_hints=[
                 "Write tests with write_test; give each test a docstring line such as "
                 "'Covers: R1, R2' naming the requirement ids above.",
+                "info.yaml keeps a copy of the clock and pinout from project creation; it is "
+                "regenerated from spec.yaml at export.",
             ],
         )
+        with project_lock(found.dir):
+            atomic_write(found.dir, SPEC_NAME, data)
+        return result

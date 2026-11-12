@@ -14,6 +14,7 @@ from siliconsmith.paths import Category
 from siliconsmith.result import ToolResult, make_summary
 from siliconsmith.tools._common import get_project, read_spec_ids, write_text_file
 
+MAX_DETAIL_ITEMS = 50
 ACCEPTS: frozenset[Category] = frozenset({"test"})
 
 DESCRIPTION = """\
@@ -48,10 +49,12 @@ def register(server: MCPServer, ctx: ServerContext) -> None:
         report = parse_covers(content, path, spec_ids)
         if report.error is not None:
             return result  # the syntax-error report from write_text_file already says it
-        covers = {t.name: list(t.covers) for t in report.tests}
+        covers = {t.name: list(t.covers) for t in report.tests[:MAX_DETAIL_ITEMS]}
         result.details["covers"] = covers
-        result.details["covers_warnings"] = report.warnings
-        result.details["tests"] = [t.as_dict() for t in report.tests]
+        result.details["covers_warnings"] = report.warnings[:MAX_DETAIL_ITEMS]
+        result.details["covers_warnings_total"] = len(report.warnings)
+        result.details["tests"] = [t.as_dict() for t in report.tests[:MAX_DETAIL_ITEMS]]
+        result.details["tests_total"] = len(report.tests)
         lines = result.summary.splitlines()
         if report.tests:
             lines.append(

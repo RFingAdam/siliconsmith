@@ -76,7 +76,11 @@ def _info_yaml(name: str, frontend: str, author: str, description: str, spec: Sp
     # The clock and the pin meanings come from spec.yaml, the single source.
     project["clock_hz"] = spec.clock_hz
     info["pinout"] = pinout(spec)
-    header = "# Tiny Tapeout project information (written by Siliconsmith).\n"
+    header = (
+        "# Tiny Tapeout project information (written by Siliconsmith).\n"
+        "# clock_hz and pinout are a copy of spec.yaml made when the project was created;\n"
+        "# they are regenerated from spec.yaml when the project is exported.\n"
+    )
     return header + yaml.safe_dump(info, sort_keys=False, allow_unicode=True)
 
 

@@ -27,6 +27,9 @@ class CocotbTest:
     covers: tuple[str, ...]
     skipped_static: bool
     line: int
+    # expect_fail=True or expect_error=...: cocotb reports a failing such test as PASSED, so it
+    # must never count as coverage, whatever its outcome says.
+    expects_failure: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -34,6 +37,7 @@ class CocotbTest:
             "covers": list(self.covers),
             "skipped_static": self.skipped_static,
             "line": self.line,
+            "expects_failure": self.expects_failure,
         }
 
 
@@ -48,7 +52,7 @@ class CoversReport:
         """Ids named by tests that are not statically skipped (a claim; `coverage` needs runs)."""
         seen: dict[str, None] = {}
         for test in self.tests:
-            if not test.skipped_static:
+            if not test.skipped_static and not test.expects_failure:
                 seen.update(dict.fromkeys(test.covers))
         return list(seen)
 
@@ -87,9 +91,22 @@ def _static_skip(call: ast.Call | bool) -> bool:
     if not isinstance(call, ast.Call):
         return False
     return any(
-        kw.arg == "skip" and isinstance(kw.value, ast.Constant) and kw.value.value is True
+        kw.arg == "skip" and isinstance(kw.value, ast.Constant) and bool(kw.value.value)
         for kw in call.keywords
     )
+
+
+def _expects_failure(call: ast.Call | bool) -> bool:
+    if not isinstance(call, ast.Call):
+        return False
+    for kw in call.keywords:
+        if kw.arg == "expect_error":
+            return True
+        if kw.arg == "expect_fail" and not (
+            isinstance(kw.value, ast.Constant) and not kw.value.value
+        ):
+            return True
+    return False
 
 
 def _parse_covers_lines(doc: str, where: str, warnings: list[str]) -> tuple[list[str], bool]:
@@ -158,11 +175,19 @@ def parse_covers(
             warnings.append(f"{where}: no 'Covers:' line in the docstring, so it covers nothing")
         if skipped:
             warnings.append(f"{where}: skip=True, so it does not count as coverage")
+        expects_failure = _expects_failure(decorator)
+        if expects_failure:
+            warnings.append(
+                f"{where}: expect_fail/expect_error makes a failing test count as PASSED, so it "
+                "does not count as coverage"
+            )
+        if any(t.name == node.name for t in tests):
+            warnings.append(f"{where}: duplicate test name; only the last definition runs")
         if known is not None:
             for rid in covers:
                 if rid not in known:
                     warnings.append(f"{where}: unknown requirement {rid} (not in spec.yaml)")
-        tests.append(CocotbTest(node.name, tuple(covers), skipped, node.lineno))
+        tests.append(CocotbTest(node.name, tuple(covers), skipped, node.lineno, expects_failure))
     return CoversReport(tests=tests, warnings=warnings)
 
 
@@ -182,8 +207,10 @@ def coverage(
     """Which requirements are covered by passing tests.
 
     `test_results` are `{name, covers, outcome}`. Only `outcome == "pass"` counts: skipped, failed
-    and errored tests do not cover anything. `unknown` lists ids that tests name but the spec
-    does not have (whatever the outcome), sorted by number.
+    and errored tests do not cover anything. A result with `expects_failure` true (from
+    `parse_covers`: expect_fail/expect_error tests report a failing check as a pass) does not
+    count either, so callers must pass that flag through. `unknown` lists ids that tests name
+    but the spec does not have (whatever the outcome), sorted by number.
     """
     required = list(dict.fromkeys(requirement_ids))
     passing: set[str] = set()
@@ -191,7 +218,7 @@ def coverage(
     for result in test_results:
         covers = [str(c) for c in result.get("covers", [])]
         named.update(covers)
-        if result.get("outcome") == "pass":
+        if result.get("outcome") == "pass" and not result.get("expects_failure"):
             passing.update(covers)
     unknown = sorted(named - set(required), key=_id_sort_key)
     return CoverageResult(

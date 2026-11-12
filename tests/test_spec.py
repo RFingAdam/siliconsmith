@@ -43,7 +43,9 @@ def errors_of(text: str) -> list[SpecError]:
     result = parse_spec(text)
     assert isinstance(result, list), "expected the spec to be rejected"
     # Whatever the errors, the tool summary stays within the limits.
-    assert summary_within_limits(make_summary(_summary_lines(result)))
+    summary = make_summary(_summary_lines(result))
+    assert summary_within_limits(summary)
+    assert result[0].path in summary
     return result
 
 
@@ -240,3 +242,39 @@ def test_pinout_lists_all_24_pins() -> None:
     out = pinout(spec)
     assert len(out) == 24 and list(out)[:2] == ["ui[0]", "ui[1]"]
     assert out["ui[0]"] == "enable" and out["uo[7]"] == "top bit" and out["uio[3]"] == ""
+
+
+def test_bad_yaml_values_are_errors_not_exceptions() -> None:
+    base = VALID.replace("clock_hz: 10000000\n", "").replace("title: Counter\n", "")
+    for bad in (
+        'title: !!int "abc"\nclock_hz: 1\n',
+        'title: !!float "abc"\nclock_hz: 1\n',
+        'title: !!timestamp "x"\nclock_hz: 1\n',
+        "title: 2026-13-45\nclock_hz: 1\n",
+        "title: T\nclock_hz: " + "9" * 5000 + "\n",
+    ):
+        assert errors_of(base + bad), bad
+
+
+def test_huge_numbers_are_rejected_with_a_path() -> None:
+    huge = VALID.replace("max: 1.5", "max: 1" + "0" * 400)
+    assert paths(huge) == ["requirements[1].limit.max"]
+    assert paths(VALID.replace("10000000", "0x" + "f" * 4000)) == ["clock_hz"]
+    assert paths(VALID.replace("10000000", "1" + ":59" * 5000)) == ["clock_hz"]
+    assert paths(VALID.replace("10000000", "2000000000")) == ["clock_hz"]
+
+
+def test_non_string_keys_get_a_plain_path_and_allowed_keys() -> None:
+    for key in ("1", "null", "2026-01-01"):
+        errors = errors_of(VALID + f"{key}: x\n")
+        assert len(errors) == 1 and not errors[0].path.startswith(".")
+        assert "unknown key" in errors[0].message
+
+
+def test_exponent_floats_round_trip_and_hint() -> None:
+    spec = parse_spec(VALID.replace("{min: 0.5, typ: 1, max: 1.5", "{min: 1.0e-7, max: 2.0e+16"))
+    assert isinstance(spec, Spec)
+    again = parse_spec(render_spec(spec))
+    assert isinstance(again, Spec) and again.to_dict() == spec.to_dict()
+    errors = errors_of(VALID.replace("max: 1.5", "max: 1e-6"))
+    assert errors[0].path == "requirements[1].limit.max" and "1.0e-6" in errors[0].message

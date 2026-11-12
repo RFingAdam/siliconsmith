@@ -34,6 +34,8 @@ SPEC_NAME = "spec.yaml"
 SPEC_VERSION = 1
 MAX_SPEC_BYTES = 64 * 1024
 MAX_ERRORS = 50
+MAX_CLOCK_HZ = 1_000_000_000
+MAX_MAGNITUDE = 1e300
 REQ_ID_RE = re.compile(r"^R[1-9][0-9]*$")
 PIN_GROUPS = ("ui", "uo", "uio")
 
@@ -105,10 +107,26 @@ PinMap = dict[PinBit, Line200]
 
 
 def _check_number(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            float(value)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(
+                f"must be a number; {value!r} was read as text. YAML needs a dot and a signed "
+                "exponent, e.g. 1.0e-6 or 2.0e+9"
+            )
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError("must be a number")
-    if not math.isfinite(value):
+    try:
+        magnitude = abs(float(value))
+    except OverflowError:
+        raise ValueError(f"is too large; the limit is {MAX_MAGNITUDE:g}") from None
+    if not math.isfinite(magnitude):
         raise ValueError("must be a finite number")
+    if magnitude > MAX_MAGNITUDE:
+        raise ValueError(f"is too large; the limit is {MAX_MAGNITUDE:g}")
     return value
 
 
@@ -166,7 +184,7 @@ class Spec(_Strict):
     version: StrictInt = SPEC_VERSION
     title: Line100
     summary: Block1000
-    clock_hz: StrictInt = Field(gt=0)
+    clock_hz: StrictInt = Field(gt=0, le=MAX_CLOCK_HZ)
     reset: Line200
     pins: Pins = Field(default_factory=Pins)
     requirements: list[Requirement] = Field(min_length=1, max_length=100)
@@ -256,7 +274,12 @@ def _format_loc(loc: tuple[int | str, ...]) -> tuple[str, str]:
     shape = ""
     parent = ""
     for part in loc:
-        if isinstance(part, int):
+        if not isinstance(part, int | str):
+            part = str(part)
+        if isinstance(part, int) and not path:
+            path = str(part)
+            shape = ""
+        elif isinstance(part, int):
             if parent in ("requirements", "open_questions"):
                 path += f"[{part}]"
                 shape += "[]"
@@ -280,7 +303,9 @@ def _convert(err: Any) -> SpecError:
         message = "pin bit must be an integer from 0 to 7"
     elif kind == "missing":
         message = "required field is missing"
-    elif kind == "extra_forbidden":
+    elif kind in ("extra_forbidden", "invalid_key"):
+        if kind == "invalid_key":
+            shape = f"{shape}.x" if shape else "x"
         parent = shape.rsplit(".", 1)[0] if "." in shape else ""
         allowed = _ALLOWED_KEYS.get(parent)
         message = "unknown key" + (f"; allowed keys here: {', '.join(allowed)}" if allowed else "")
@@ -320,12 +345,16 @@ def parse_spec(text: str) -> Spec | list[SpecError]:
         return [_yaml_error(exc)]
     except RecursionError:
         return [SpecError("yaml", "nested too deeply")]
+    except Exception as exc:  # a tag with a bad value, a huge integer, a bad date
+        return [SpecError("yaml", " ".join(str(exc).split())[:200] or type(exc).__name__)]
     if not isinstance(data, dict):
         return [SpecError("(file)", "must be a YAML mapping with keys such as title, clock_hz")]
     try:
         spec = Spec.model_validate(data)
     except ValidationError as exc:
         return [_convert(e) for e in exc.errors(include_url=False)][:MAX_ERRORS]
+    except (ValueError, TypeError, OverflowError) as exc:
+        return [SpecError("(file)", " ".join(str(exc).split())[:200] or type(exc).__name__)]
     duplicates = _duplicate_ids(spec)
     return duplicates if duplicates else spec
 
@@ -387,6 +416,11 @@ def _q(text: str) -> str:
     return dumped.removesuffix("\n...\n").removesuffix("\n")
 
 
+def _num(value: int | float) -> str:
+    """A YAML number that reads back as a number (floats keep a dot: 1.0e-07)."""
+    return yaml.safe_dump(value, width=10**9).removesuffix("\n...\n").removesuffix("\n")
+
+
 def render_spec(spec: Spec) -> str:
     """Deterministic spec.yaml text with a plain-English comment header (used for the stub)."""
     lines = [_STUB_HEADER, f"version: {spec.version}", f"title: {_q(spec.title)}"]
@@ -411,7 +445,7 @@ def render_spec(spec: Spec) -> str:
         lines.append(f"    text: {_q(req.text)}")
         if req.limit is not None:
             parts = [
-                f"{k}: {v}"
+                f"{k}: {_num(v)}"
                 for k, v in req.limit.model_dump(exclude_none=True).items()
                 if k != "unit"
             ]

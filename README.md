@@ -21,8 +21,9 @@ and talks to, so the agent gets extra tools (here: tools that create and edit ch
 The server runs on your machine and talks to the agent over standard input and output, so
 nothing is exposed on the network.
 
-Today the server offers `create_project`, `list_files`, `read_file`, `write_rtl` and
-`write_test`. The tools that turn a design into Verilog and run its tests arrive in the next
+Today the server offers `create_project`, `list_files`, `read_file`, `write_spec`,
+`write_rtl` and `write_test`. Start with `write_spec`: `spec.yaml` says the clock, the pins and
+the numbered requirements, and everything else follows from it. The tools that turn a design into Verilog and run its tests arrive in the next
 milestone steps and need Docker and the toolchain image.
 
 ### Install

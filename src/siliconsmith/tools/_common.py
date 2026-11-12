@@ -37,7 +37,10 @@ def read_spec_ids(project: Project) -> list[str] | None:
             text = safe_read(project.dir, SPEC_NAME, MAX_SPEC_BYTES).decode("utf-8")
     except (ToolError, UnicodeDecodeError):
         return None
-    parsed = parse_spec(text)
+    try:
+        parsed = parse_spec(text)
+    except Exception:  # a spec that cannot be checked counts as no valid spec
+        return None
     return parsed.requirement_ids() if isinstance(parsed, Spec) else None
 
 

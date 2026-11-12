@@ -129,3 +129,30 @@ def test_coverage_a_pass_beside_a_skip_still_covers() -> None:
     ]
     assert coverage(["R1"], results).covered == ["R1"]
     assert coverage([], []).covered == []
+
+
+def test_expect_fail_and_error_never_count_as_coverage() -> None:
+    src = (
+        "import cocotb\n"
+        "@cocotb.test(expect_fail=True)\nasync def a(dut):\n    '''Covers: R1'''\n"
+        "@cocotb.test(expect_error=ValueError)\nasync def b(dut):\n    '''Covers: R2'''\n"
+        "@cocotb.test(expect_fail=False)\nasync def c(dut):\n    '''Covers: R3'''\n"
+    )
+    report = parse_covers(src, "t.py")
+    flags = {t.name: t.expects_failure for t in report.tests}
+    assert flags == {"a": True, "b": True, "c": False}
+    assert report.covered_ids() == ["R3"]
+    assert sum("does not count as coverage" in w for w in report.warnings) == 2
+    results = [dict(t.as_dict(), outcome="pass") for t in report.tests]
+    assert coverage(["R1", "R2", "R3"], results).covered == ["R3"]
+
+
+def test_duplicate_names_warn_and_truthy_skip_is_static() -> None:
+    src = (
+        "import cocotb\n"
+        "@cocotb.test()\nasync def a(dut):\n    '''Covers: R1'''\n"
+        "@cocotb.test(skip=1)\nasync def a(dut):\n    '''Covers: R2'''\n"
+    )
+    report = parse_covers(src, "t.py")
+    assert any("duplicate test name" in w for w in report.warnings)
+    assert [t.skipped_static for t in report.tests] == [False, True]
