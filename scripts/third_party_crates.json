@@ -1,0 +1,2144 @@
+{
+ "crates": [
+  {
+   "name": "addr2line",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.26.0"
+  },
+  {
+   "name": "adler2",
+   "spdx": "0BSD OR MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "2.0.1"
+  },
+  {
+   "name": "aho-corasick",
+   "spdx": "Unlicense OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.2"
+  },
+  {
+   "name": "allocator-api2",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.20"
+  },
+  {
+   "name": "ambient-authority",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.0.2"
+  },
+  {
+   "name": "anstream",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.6.21"
+  },
+  {
+   "name": "anstyle",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.13"
+  },
+  {
+   "name": "anstyle-parse",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.7"
+  },
+  {
+   "name": "anstyle-query",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.1.5"
+  },
+  {
+   "name": "anyhow",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.103"
+  },
+  {
+   "name": "arbitrary",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.4.2"
+  },
+  {
+   "name": "async-trait",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.89"
+  },
+  {
+   "name": "atomic-waker",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.1.2"
+  },
+  {
+   "name": "autocfg",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.5.1"
+  },
+  {
+   "name": "base64",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.22.1"
+  },
+  {
+   "name": "beef",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.5.2"
+  },
+  {
+   "name": "bitflags",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.11.1"
+  },
+  {
+   "name": "block-buffer",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.10.2"
+  },
+  {
+   "name": "bumpalo",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "3.20.2"
+  },
+  {
+   "name": "bytes",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.11.1"
+  },
+  {
+   "name": "cap-fs-ext",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "4.0.2"
+  },
+  {
+   "name": "cap-primitives",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "4.0.2"
+  },
+  {
+   "name": "cap-std",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "4.0.2"
+  },
+  {
+   "name": "capstone",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.14.0"
+  },
+  {
+   "name": "capstone-sys",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.18.0"
+  },
+  {
+   "name": "cfg-if",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.0"
+  },
+  {
+   "name": "chacha20",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.10.0"
+  },
+  {
+   "name": "cobs",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.0"
+  },
+  {
+   "name": "colorchoice",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.4"
+  },
+  {
+   "name": "cpp_demangle",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.5.1"
+  },
+  {
+   "name": "cpufeatures",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.7"
+  },
+  {
+   "name": "cpufeatures",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.0"
+  },
+  {
+   "name": "crc32fast",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.3.2"
+  },
+  {
+   "name": "crossbeam-deque",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.8.1"
+  },
+  {
+   "name": "crossbeam-deque",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.8.8"
+  },
+  {
+   "name": "crossbeam-epoch",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.9.18"
+  },
+  {
+   "name": "crossbeam-epoch",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.9.21"
+  },
+  {
+   "name": "crossbeam-utils",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.8.20"
+  },
+  {
+   "name": "crossbeam-utils",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.8.23"
+  },
+  {
+   "name": "crypto-common",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.6"
+  },
+  {
+   "name": "debugid",
+   "spdx": "Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.8.0"
+  },
+  {
+   "name": "derive_arbitrary",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.4.0"
+  },
+  {
+   "name": "digest",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.10.7"
+  },
+  {
+   "name": "directories-next",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.0.0"
+  },
+  {
+   "name": "dirs-sys-next",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.2"
+  },
+  {
+   "name": "displaydoc",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.5"
+  },
+  {
+   "name": "either",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.13.0"
+  },
+  {
+   "name": "either",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.19.0"
+  },
+  {
+   "name": "embedded-io",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.4.0"
+  },
+  {
+   "name": "embedded-io",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.6.1"
+  },
+  {
+   "name": "encoding_rs",
+   "spdx": "(Apache-2.0 OR MIT) AND BSD-3-Clause",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.8.31"
+  },
+  {
+   "name": "env_filter",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.2"
+  },
+  {
+   "name": "env_logger",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.11.5"
+  },
+  {
+   "name": "equivalent",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.1"
+  },
+  {
+   "name": "equivalent",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.0.2"
+  },
+  {
+   "name": "errno",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.14"
+  },
+  {
+   "name": "fallible-iterator",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.0"
+  },
+  {
+   "name": "fastrand",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.3.0"
+  },
+  {
+   "name": "fixedbitset",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.4.2"
+  },
+  {
+   "name": "fnv",
+   "spdx": "Apache-2.0 / MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.7"
+  },
+  {
+   "name": "foldhash",
+   "spdx": "Zlib",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.0"
+  },
+  {
+   "name": "form_urlencoded",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.2.2"
+  },
+  {
+   "name": "fs-set-times",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.20.3"
+  },
+  {
+   "name": "fst-reader",
+   "spdx": "BSD-3-Clause",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.17.1"
+  },
+  {
+   "name": "futures",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.31"
+  },
+  {
+   "name": "futures-channel",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.31"
+  },
+  {
+   "name": "futures-core",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.31"
+  },
+  {
+   "name": "futures-executor",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.31"
+  },
+  {
+   "name": "futures-io",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.31"
+  },
+  {
+   "name": "futures-macro",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.31"
+  },
+  {
+   "name": "futures-sink",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.31"
+  },
+  {
+   "name": "futures-task",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.31"
+  },
+  {
+   "name": "futures-util",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.31"
+  },
+  {
+   "name": "fxprof-processed-profile",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.8.1"
+  },
+  {
+   "name": "generic-array",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.14.5"
+  },
+  {
+   "name": "getrandom",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.15"
+  },
+  {
+   "name": "getrandom",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.4.2"
+  },
+  {
+   "name": "gimli",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.32.3"
+  },
+  {
+   "name": "gimli",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.33.0"
+  },
+  {
+   "name": "h2",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.4.13"
+  },
+  {
+   "name": "hashbrown",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.16.1"
+  },
+  {
+   "name": "hashbrown",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.17.0"
+  },
+  {
+   "name": "hashbrown",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.17.1"
+  },
+  {
+   "name": "heck",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen",
+    "wasmtime"
+   ],
+   "version": "0.5.0"
+  },
+  {
+   "name": "http",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.3.1"
+  },
+  {
+   "name": "http-body",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.1"
+  },
+  {
+   "name": "http-body-util",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.3"
+  },
+  {
+   "name": "httparse",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.10.1"
+  },
+  {
+   "name": "httpdate",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.2"
+  },
+  {
+   "name": "humantime",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.1.0"
+  },
+  {
+   "name": "hyper",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.9.0"
+  },
+  {
+   "name": "icu_collections",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.0"
+  },
+  {
+   "name": "icu_locid",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.0"
+  },
+  {
+   "name": "icu_locid_transform",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.0"
+  },
+  {
+   "name": "icu_locid_transform_data",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.0"
+  },
+  {
+   "name": "icu_normalizer",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.0"
+  },
+  {
+   "name": "icu_normalizer_data",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.0"
+  },
+  {
+   "name": "icu_properties",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.1"
+  },
+  {
+   "name": "icu_properties_data",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.0"
+  },
+  {
+   "name": "icu_provider",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.0"
+  },
+  {
+   "name": "icu_provider_macros",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.0"
+  },
+  {
+   "name": "id-arena",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.3.0"
+  },
+  {
+   "name": "idna",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.1.0"
+  },
+  {
+   "name": "idna_adapter",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.2.0"
+  },
+  {
+   "name": "indexmap",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.14.0"
+  },
+  {
+   "name": "indexmap",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "2.14.2"
+  },
+  {
+   "name": "io-extras",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.19.0"
+  },
+  {
+   "name": "io-lifetimes",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.0.3"
+  },
+  {
+   "name": "io-lifetimes",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "3.0.1"
+  },
+  {
+   "name": "ipnet",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.5.0"
+  },
+  {
+   "name": "is_terminal_polyfill",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.70.1"
+  },
+  {
+   "name": "itertools",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.14.0"
+  },
+  {
+   "name": "itoa",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.14"
+  },
+  {
+   "name": "ittapi",
+   "spdx": "GPL-2.0-only OR BSD-3-Clause",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.4.0"
+  },
+  {
+   "name": "ittapi-sys",
+   "spdx": "GPL-2.0-only OR BSD-3-Clause",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.4.0"
+  },
+  {
+   "name": "lazy_static",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.4.0"
+  },
+  {
+   "name": "leb128",
+   "spdx": "Apache-2.0/MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.5"
+  },
+  {
+   "name": "leb128",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.2.7"
+  },
+  {
+   "name": "leb128fmt",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.0"
+  },
+  {
+   "name": "libc",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.185"
+  },
+  {
+   "name": "libc",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.2.190"
+  },
+  {
+   "name": "libm",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.16"
+  },
+  {
+   "name": "linux-raw-sys",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.12.1"
+  },
+  {
+   "name": "litemap",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.7.4"
+  },
+  {
+   "name": "log",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.4.28"
+  },
+  {
+   "name": "logos",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.14.2"
+  },
+  {
+   "name": "logos-codegen",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.14.2"
+  },
+  {
+   "name": "logos-derive",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.14.2"
+  },
+  {
+   "name": "lz4_flex",
+   "spdx": "MIT",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.13.1"
+  },
+  {
+   "name": "maybe-owned",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.4"
+  },
+  {
+   "name": "memchr",
+   "spdx": "Unlicense OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.7.6"
+  },
+  {
+   "name": "memchr",
+   "spdx": "Unlicense OR MIT",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "2.8.3"
+  },
+  {
+   "name": "memfd",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.6.5"
+  },
+  {
+   "name": "memmap2",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.9.11"
+  },
+  {
+   "name": "miniz_oxide",
+   "spdx": "MIT OR Zlib OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.9.1"
+  },
+  {
+   "name": "mio",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.2.0"
+  },
+  {
+   "name": "num-bigint",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.4.8"
+  },
+  {
+   "name": "num-integer",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.1.47"
+  },
+  {
+   "name": "num-traits",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.2.19"
+  },
+  {
+   "name": "num_enum",
+   "spdx": "BSD-3-Clause OR MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.7.6"
+  },
+  {
+   "name": "num_enum_derive",
+   "spdx": "BSD-3-Clause OR MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.7.6"
+  },
+  {
+   "name": "object",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.39.0"
+  },
+  {
+   "name": "once_cell",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.19.0"
+  },
+  {
+   "name": "once_cell",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.21.4"
+  },
+  {
+   "name": "percent-encoding",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.3.2"
+  },
+  {
+   "name": "petgraph",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.6.5"
+  },
+  {
+   "name": "pin-project-lite",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.14"
+  },
+  {
+   "name": "pin-utils",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.0"
+  },
+  {
+   "name": "postcard",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.1.3"
+  },
+  {
+   "name": "proc-macro-crate",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "3.5.0"
+  },
+  {
+   "name": "proc-macro2",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.101"
+  },
+  {
+   "name": "proc-macro2",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.0.107"
+  },
+  {
+   "name": "pyo3",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.28.3"
+  },
+  {
+   "name": "pyo3-build-config",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.28.3"
+  },
+  {
+   "name": "pyo3-ffi",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.28.3"
+  },
+  {
+   "name": "pyo3-macros",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.28.3"
+  },
+  {
+   "name": "pyo3-macros-backend",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.28.3"
+  },
+  {
+   "name": "quote",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.41"
+  },
+  {
+   "name": "quote",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.0.47"
+  },
+  {
+   "name": "rand",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.10.1"
+  },
+  {
+   "name": "rand_core",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.10.0"
+  },
+  {
+   "name": "rayon",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.12.0"
+  },
+  {
+   "name": "rayon",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.5.3"
+  },
+  {
+   "name": "rayon-core",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.12.0"
+  },
+  {
+   "name": "rayon-core",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.13.0"
+  },
+  {
+   "name": "regalloc2",
+   "spdx": "Apache-2.0 WITH LLVM-exception",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.15.1"
+  },
+  {
+   "name": "regex",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.9.1"
+  },
+  {
+   "name": "regex-automata",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.3"
+  },
+  {
+   "name": "regex-syntax",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.7.4"
+  },
+  {
+   "name": "regex-syntax",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.8.5"
+  },
+  {
+   "name": "ring",
+   "spdx": "Apache-2.0 AND ISC",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.17.14"
+  },
+  {
+   "name": "rustc-demangle",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.24"
+  },
+  {
+   "name": "rustc-hash",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.1.1"
+  },
+  {
+   "name": "rustc-hash",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "2.1.3"
+  },
+  {
+   "name": "rustix",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.1.4"
+  },
+  {
+   "name": "rustix-linux-procfs",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.1"
+  },
+  {
+   "name": "rustls",
+   "spdx": "Apache-2.0 OR ISC OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.23.37"
+  },
+  {
+   "name": "rustls-pki-types",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.13.1"
+  },
+  {
+   "name": "rustls-webpki",
+   "spdx": "ISC",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.103.13"
+  },
+  {
+   "name": "rustversion",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.0.23"
+  },
+  {
+   "name": "ryu",
+   "spdx": "Apache-2.0 OR BSL-1.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.9"
+  },
+  {
+   "name": "semver",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.27"
+  },
+  {
+   "name": "serde",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.228"
+  },
+  {
+   "name": "serde",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.0.229"
+  },
+  {
+   "name": "serde_core",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.228"
+  },
+  {
+   "name": "serde_core",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.0.229"
+  },
+  {
+   "name": "serde_derive",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.228"
+  },
+  {
+   "name": "serde_derive",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.0.229"
+  },
+  {
+   "name": "serde_json",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.140"
+  },
+  {
+   "name": "serde_spanned",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.3"
+  },
+  {
+   "name": "sha2",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.10.2"
+  },
+  {
+   "name": "signal-hook-registry",
+   "spdx": "Apache-2.0/MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.4.1"
+  },
+  {
+   "name": "slab",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.4.11"
+  },
+  {
+   "name": "smallvec",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.15.1"
+  },
+  {
+   "name": "smallvec",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.16.3"
+  },
+  {
+   "name": "socket2",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.6.3"
+  },
+  {
+   "name": "souper-ir",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.1.0"
+  },
+  {
+   "name": "stable_deref_trait",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.2.0"
+  },
+  {
+   "name": "static_assertions",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.1.0"
+  },
+  {
+   "name": "subtle",
+   "spdx": "BSD-3-Clause",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.5.0"
+  },
+  {
+   "name": "syn",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.0.106"
+  },
+  {
+   "name": "syn",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "2.0.119"
+  },
+  {
+   "name": "syn",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "3.0.9"
+  },
+  {
+   "name": "synstructure",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.13.1"
+  },
+  {
+   "name": "target-lexicon",
+   "spdx": "Apache-2.0 WITH LLVM-exception",
+   "used_by": [
+    "pywellen",
+    "wasmtime"
+   ],
+   "version": "0.13.5"
+  },
+  {
+   "name": "tempfile",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "3.27.0"
+  },
+  {
+   "name": "termcolor",
+   "spdx": "Unlicense OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.4.1"
+  },
+  {
+   "name": "thiserror",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.65"
+  },
+  {
+   "name": "thiserror",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.0.17"
+  },
+  {
+   "name": "thiserror",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "2.0.21"
+  },
+  {
+   "name": "thiserror-impl",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.65"
+  },
+  {
+   "name": "thiserror-impl",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.0.17"
+  },
+  {
+   "name": "thiserror-impl",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "2.0.21"
+  },
+  {
+   "name": "tinystr",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.7.6"
+  },
+  {
+   "name": "tokio",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.51.1"
+  },
+  {
+   "name": "tokio-macros",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.7.0"
+  },
+  {
+   "name": "tokio-rustls",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.26.4"
+  },
+  {
+   "name": "tokio-util",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.7.16"
+  },
+  {
+   "name": "toml",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.9.8"
+  },
+  {
+   "name": "toml_datetime",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.7.3"
+  },
+  {
+   "name": "toml_datetime",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.1.2+spec-1.1.0"
+  },
+  {
+   "name": "toml_edit",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.25.17+spec-1.1.0"
+  },
+  {
+   "name": "toml_parser",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.4"
+  },
+  {
+   "name": "toml_parser",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.1.5+spec-1.1.0"
+  },
+  {
+   "name": "toml_writer",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.4"
+  },
+  {
+   "name": "tracing",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.41"
+  },
+  {
+   "name": "tracing-attributes",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.30"
+  },
+  {
+   "name": "tracing-core",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.34"
+  },
+  {
+   "name": "try-lock",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.4"
+  },
+  {
+   "name": "twox-hash",
+   "spdx": "MIT",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "2.1.5"
+  },
+  {
+   "name": "typenum",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.15.0"
+  },
+  {
+   "name": "unicode-ident",
+   "spdx": "(MIT OR Apache-2.0) AND Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.24"
+  },
+  {
+   "name": "unicode-ident",
+   "spdx": "(MIT OR Apache-2.0) AND Unicode-3.0",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.0.27"
+  },
+  {
+   "name": "unicode-width",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.0"
+  },
+  {
+   "name": "untrusted",
+   "spdx": "ISC",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.9.0"
+  },
+  {
+   "name": "url",
+   "spdx": "MIT OR Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.5.7"
+  },
+  {
+   "name": "utf16_iter",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.5"
+  },
+  {
+   "name": "utf8_iter",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.4"
+  },
+  {
+   "name": "utf8parse",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.2.2"
+  },
+  {
+   "name": "uuid",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.0"
+  },
+  {
+   "name": "want",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.3.0"
+  },
+  {
+   "name": "wasm-compose",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.252.0"
+  },
+  {
+   "name": "wasm-encoder",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.252.0"
+  },
+  {
+   "name": "wasm-wave",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.252.0"
+  },
+  {
+   "name": "wasmparser",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.252.0"
+  },
+  {
+   "name": "wasmprinter",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.252.0"
+  },
+  {
+   "name": "wast",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "252.0.0"
+  },
+  {
+   "name": "wast",
+   "spdx": "Apache-2.0 WITH LLVM-exception",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "35.0.2"
+  },
+  {
+   "name": "wat",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.252.0"
+  },
+  {
+   "name": "webpki-roots",
+   "spdx": "CDLA-Permissive-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.7"
+  },
+  {
+   "name": "wellen",
+   "spdx": "BSD-3-Clause",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "0.25.7"
+  },
+  {
+   "name": "winnow",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.7.13"
+  },
+  {
+   "name": "winnow",
+   "spdx": "MIT",
+   "used_by": [
+    "pywellen"
+   ],
+   "version": "1.0.4"
+  },
+  {
+   "name": "wit-parser",
+   "spdx": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.252.0"
+  },
+  {
+   "name": "witx",
+   "spdx": "Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.9.1"
+  },
+  {
+   "name": "write16",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.0.0"
+  },
+  {
+   "name": "writeable",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.5.5"
+  },
+  {
+   "name": "yoke",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.7.5"
+  },
+  {
+   "name": "yoke-derive",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.7.5"
+  },
+  {
+   "name": "zerofrom",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.5"
+  },
+  {
+   "name": "zerofrom-derive",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.1.5"
+  },
+  {
+   "name": "zeroize",
+   "spdx": "Apache-2.0 OR MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "1.8.2"
+  },
+  {
+   "name": "zerovec",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.10.4"
+  },
+  {
+   "name": "zerovec-derive",
+   "spdx": "Unicode-3.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.10.3"
+  },
+  {
+   "name": "zstd",
+   "spdx": "MIT",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "0.13.0"
+  },
+  {
+   "name": "zstd-safe",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "7.0.0"
+  },
+  {
+   "name": "zstd-sys",
+   "spdx": "MIT/Apache-2.0",
+   "used_by": [
+    "wasmtime"
+   ],
+   "version": "2.0.9+zstd.1.5.5"
+  }
+ ],
+ "pywellen": "0.25.7",
+ "wasmtime": "v47.0.1"
+}

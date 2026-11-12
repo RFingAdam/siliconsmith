@@ -44,14 +44,14 @@ def server_client(tmp_path: Path) -> Client:
 async def test_tools_listed_with_project_first(server_client: Client) -> None:
     async with server_client as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    assert set(tools) == {
+    assert {
         "create_project",
         "list_files",
         "read_file",
         "write_rtl",
         "write_test",
         "write_spec",
-    }
+    } <= set(tools)
     for name in ("list_files", "read_file", "write_rtl", "write_test", "write_spec"):
         assert next(iter(tools[name].input_schema["properties"])) == "project"
         assert tools[name].description

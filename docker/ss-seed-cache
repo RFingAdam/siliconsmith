@@ -1,0 +1,22 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copy the WebAssembly caches that were compiled when the image was built into the cache folder
+# for this run ($XDG_CACHE_HOME, which the container runner points at the project's build/.cache),
+# unless they are already there. Without them, the first Yosys call in a project spends about ten
+# seconds compiling Yosys to machine code.
+#
+# The copy is writable on purpose: if the host CPU differs from the one that built the image,
+# YoWASP and wasmtime notice, recompile, and overwrite their copy. A read-only cache would turn
+# that into an error. This script never fails the caller.
+seed=/opt/siliconsmith-cache
+dest="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}"
+for name in YoWASP wasmtime; do
+    if [ -d "$seed/$name" ] && [ ! -e "$dest/$name" ]; then
+        tmp=$(mktemp -d "$dest/.seed.XXXXXX" 2>/dev/null || { mkdir -p "$dest" && mktemp -d "$dest/.seed.XXXXXX"; }) || continue
+        cp -r "$seed/$name" "$tmp/$name" 2>/dev/null && mv -T "$tmp/$name" "$dest/$name" 2>/dev/null
+        rm -rf "$tmp"
+    fi
+done
+exit 0

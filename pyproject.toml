@@ -55,7 +55,24 @@ line-length = 100
 extend-exclude = ["src/siliconsmith/templates"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "TID"]
+
+# The in-container worker runs where only the standard library and the image's own packages
+# exist. This bans the host-only packages and the host-side parts of siliconsmith there, and the
+# negated pattern below switches the ban off everywhere else. A subprocess test backs it up.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"mcp".msg = "the worker runs in the container, which has no mcp package"
+"pydantic".msg = "the worker runs in the container, which has no pydantic package"
+"yaml".msg = "keep the worker free of host packages; read YAML on the host"
+"siliconsmith.context".msg = "the worker may import only siliconsmith.worker modules"
+"siliconsmith.server".msg = "the worker may import only siliconsmith.worker modules"
+"siliconsmith.result".msg = "the worker may import only siliconsmith.worker modules"
+"siliconsmith.tools".msg = "the worker may import only siliconsmith.worker modules"
+"siliconsmith.runners".msg = "the worker may import only siliconsmith.worker modules"
+"siliconsmith.cli".msg = "the worker may import only siliconsmith.worker modules"
+
+[tool.ruff.lint.per-file-ignores]
+"!src/siliconsmith/worker/**" = ["TID251"]
 
 [tool.mypy]
 strict = true
