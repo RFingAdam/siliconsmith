@@ -42,10 +42,13 @@ class GlRunner(EmitRunner):
         return got
 
 
+NETLIST_SHA = hashlib.sha256(NETLIST.encode()).hexdigest()
+
+
 def gl_part(synth: dict[str, Any] | None = None, **fields: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "defines": DEFINES,
-        "synth": synth if synth is not None else synth_part(),
+        "synth": synth if synth is not None else synth_part(netlist_sha256=NETLIST_SHA),
         "netlist_sha256": "0" * 64,
         "simulated": True,
     }
@@ -137,7 +140,8 @@ def test_a_failing_gate_level_run_says_gate_level_everywhere(tmp_path: Path) -> 
         "0 skipped (2 tests)."
     )
     assert lines[1].startswith("First failure: test_adds")
-    assert any("waves=True, gl=True" in h for h in result.next_hints)
+    assert any("tb pins" in h for h in result.next_hints)
+    assert not any("waves=True" in h for h in result.next_hints)
     assert not any("verilator" in h.lower() for h in result.next_hints)
     assert result.details["gl"]["netlist_sha256"] == NETLIST_SHA
 
@@ -233,7 +237,12 @@ def test_a_netlist_check_problem_ends_the_run(tmp_path: Path) -> None:
 def test_a_too_big_netlist_still_simulates_but_says_so(tmp_path: Path) -> None:
     big = dict(STAT, area_um2=90000.0)
     ctx, _, _ = setup(
-        tmp_path, outcome(gl_result(sim_part(three_pass()), gl_part(synth_part(stat=big))))
+        tmp_path,
+        outcome(
+            gl_result(
+                sim_part(three_pass()), gl_part(synth_part(stat=big, netlist_sha256=NETLIST_SHA))
+            )
+        ),
     )
     result = run_gl(ctx)
     assert result.ok
@@ -296,6 +305,11 @@ def test_a_missing_netlist_file_is_reported_not_trusted(tmp_path: Path) -> None:
     assert sync_spec_files(project).ok
     result = run_gl(ctx)
     assert not result.ok and "result file is missing" in result.summary
+    # Still a gate-level result: labelled, marked gl, and not the emit stage.
+    assert result.summary.startswith("Gate-level simulation (sky130 netlist, icarus) failed")
+    assert result.details["gl"] is not None and result.details["stage"] == "sim"
+    record = load_ledger(project.dir).ledger.runs[-1]
+    assert (record.gl, record.sim, record.stage) == (True, "icarus", "sim")
 
 
 # -- the ledger and status -----------------------------------------------------------------
@@ -406,6 +420,46 @@ def test_the_report_says_plainly_when_the_pins_never_differ(tmp_path: Path) -> N
     assert "not a pin" in result.summary
 
 
+def test_a_failure_before_the_first_edge_is_not_called_a_missing_clock(tmp_path: Path) -> None:
+    result = failing_gl(tmp_path, {"state": "no_edge", "cycles_compared": 0})
+    assert "the waves have no tb.clk" not in result.summary
+    assert "before reset was released" in result.summary
+
+
+def test_a_failing_gate_level_run_without_waves_still_explains_the_tb_pins(
+    tmp_path: Path,
+) -> None:
+    result = failing_gl(tmp_path, None, waves=None)
+    hint = " ".join(result.next_hints)
+    assert "tb pins" in hint and "core.count[0]" in hint
+    assert "waves=True" not in hint and "verilator" not in hint.lower()
+
+
+@pytest.mark.parametrize(
+    "diff",
+    [
+        {"state": "differs"},
+        {"state": "differs", "signals": [{"signal": "uo_out", "rtl": "0", "gl": "x"}]},
+        {"state": "differs", "cycle": 2, "time_ns": 20.0},
+    ],
+    ids=["nothing", "no-cycle", "no-signals"],
+)
+def test_a_difference_without_a_place_is_an_unreadable_result(
+    tmp_path: Path, diff: dict[str, Any]
+) -> None:
+    result = failing_gl(tmp_path, diff)
+    assert not result.ok and "unreadable result" in result.summary
+
+
+def test_oversized_defines_are_an_unreadable_result(tmp_path: Path) -> None:
+    sim = sim_part(three_pass())
+    ctx, _, _ = setup(
+        tmp_path, outcome(gl_result(sim, gl_part(defines={"UNIT_DELAY": "#" * 5000})))
+    )
+    result = run_gl(ctx)
+    assert not result.ok and "unreadable result" in result.summary
+
+
 @pytest.mark.parametrize("state", ["skipped", "unavailable", "no_clock"])
 def test_a_missing_comparison_is_one_plain_line(tmp_path: Path, state: str) -> None:
     result = failing_gl(tmp_path, {"state": state, "reason": "the RTL rerun failed"})
@@ -415,3 +469,10 @@ def test_a_missing_comparison_is_one_plain_line(tmp_path: Path, state: str) -> N
 def test_a_passing_gate_level_run_has_no_diff(tmp_path: Path) -> None:
     ctx, _, _ = setup(tmp_path, outcome(gl_result(sim_part(three_pass()))))
     assert run_gl(ctx).details["gl"]["diff"] is None
+
+
+def test_a_netlist_that_changed_during_the_run_is_not_trusted(tmp_path: Path) -> None:
+    other = synth_part(netlist_sha256="1" * 64)
+    ctx, _, _ = setup(tmp_path, outcome(gl_result(sim_part(three_pass()), gl_part(other))))
+    result = run_gl(ctx)
+    assert not result.ok and "the netlist changed while the tests ran" in result.summary

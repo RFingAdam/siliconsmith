@@ -54,7 +54,7 @@ from typing import Annotated, Any, Literal
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from siliconsmith.context import ServerContext
 from siliconsmith.covers import CocotbTest, coverage, parse_covers
@@ -69,7 +69,6 @@ from siliconsmith.spec import Spec
 from siliconsmith.tools._common import MAX_WRITE_BYTES, get_project, read_spec_ids_locked
 from siliconsmith.tools.emit_verilog import (
     EmitResult,
-    _unreadable,
     handle_outcome,
     precheck,
     read_author,
@@ -143,7 +142,9 @@ class _DiffPin(_Strict):
 class _Diff(_Strict):
     """The worker's RTL-versus-gate-level first difference (worker/gldiff.py)."""
 
-    state: Literal["differs", "same", "no_clock", "no_pins", "too_big", "skipped", "unavailable"]
+    state: Literal[
+        "differs", "same", "no_clock", "no_edge", "no_pins", "too_big", "skipped", "unavailable"
+    ]
     reason: str | None = Field(default=None, max_length=lim.TEST_TEXT_MAX)
     cycle: int | None = Field(default=None, ge=1)
     time_ns: float | None = Field(default=None, ge=0)
@@ -151,15 +152,25 @@ class _Diff(_Strict):
     signals: list[_DiffPin] = Field(default_factory=list, max_length=8)
     rtl_failed: bool = False
 
+    @model_validator(mode="after")
+    def _differs_has_a_place(self) -> _Diff:
+        if self.state == "differs" and not (
+            self.signals and self.cycle is not None and self.time_ns is not None
+        ):
+            raise ValueError("a difference needs signals, a cycle and a time")
+        return self
+
 
 class _Gl(_Strict):
     """The worker's `gl` entry: the netlist build's defines and the synthesis outcome."""
 
-    defines: dict[str, str] = Field(default_factory=dict, max_length=16)
+    defines: dict[Annotated[str, Field(max_length=64)], Annotated[str, Field(max_length=64)]] = (
+        Field(default_factory=dict, max_length=16)
+    )
     synth: _Synth
     netlist_sha256: str | None = Field(default=None, max_length=64)
     simulated: bool = False
-    seed: int | None = None
+    seed: int | None = Field(default=None, ge=0, le=2**64)
     diff: _Diff | None = None
 
 
@@ -299,6 +310,10 @@ def _diff_lines(diff: dict[str, Any]) -> list[str]:
         ]
     reason = diff.get("reason") or {
         "no_clock": "the waves have no tb.clk",
+        "no_edge": (
+            "the failure came before reset was released and the first clock edge after it, "
+            "so there is nothing to compare yet"
+        ),
         "no_pins": "the waves have none of the chip's output pins",
         "too_big": "a wave file is too large to compare",
     }.get(state, "it could not be done")
@@ -472,10 +487,16 @@ def _finish(
         diff = gl.get("diff") if gl is not None else None
         if diff is not None:
             lines += _diff_lines(diff)
-        if gl is not None and waves:
-            hints.append(
+        if gl is not None:
+            where = (
                 f"Look at the gate-level pins with inspect_waves(path={waves!r}, "
-                "signals=['uo_out', ...]). A gate-level test can only use the tb pins "
+                "signals=['uo_out', ...]). "
+                if waves
+                else "The gate-level waves are kept in build/waves/icarus-gl/tb.fst when a test "
+                "fails after the first clock edge. "
+            )
+            hints.append(
+                where + "A gate-level test can only use the tb pins "
                 "(dut.uo_out, dut.uio_out, dut.uio_oe, ...); inside the netlist the names "
                 "look like \\core.count[0] or are gone. A value of x means unknown: a "
                 "flip-flop that was never reset, or an input that was not driven yet."
@@ -489,9 +510,8 @@ def _finish(
             only = bad[0]["name"] + "$"  # identifiers, so nothing to escape
             if bad[0]["module"]:
                 only = f"{bad[0]['module']}.{only}"
-            again = "waves=True, gl=True" if gl is not None else "waves=True"
             hints.append(
-                f"Rerun with {again} and test_filter={only!r}, then use "
+                f"Rerun with waves=True and test_filter={only!r}, then use "
                 "inspect_waves to look at the signals."
             )
     elif _count(tests, "pass"):
@@ -726,8 +746,10 @@ def _gl_synthesis(
         # The netlist is still in the run folder: hash the bytes the simulator was given.
         files = _read_synth_files(project, outcome, synth, f"tt_um_{project.name}")
         if isinstance(files, str):
-            return _unreadable(frontend, project, outcome, files)
+            return _bad_sim_result(base, files)
         sha = hashlib.sha256(files[0]).hexdigest()
+        if synth.netlist_sha256 is not None and synth.netlist_sha256 != sha:
+            return _bad_sim_result(base, "the netlist changed while the tests ran")
     facts = _synth_facts(synth, spec, config, sha)
     gl = _gl_details(dict(result.gl.defines), sha, facts)
     gl["seed"] = result.gl.seed
@@ -835,7 +857,8 @@ takes about half a minute; later runs reuse the build.
 
 gl=True runs the tests at gate level (Icarus only; with Verilator it is an error). The tool \
 first does what synthesize does, with the same checks and the same time limits (a design that \
-fails or is too big stops there and the summary says gate-level simulation could not run), then \
+fails stops there, and so does one far over the size budget; the summary says gate-level \
+simulation could not run. A design only slightly too big is simulated, with a note), then \
 runs the SAME test files on the resulting sky130 netlist, with the cell models of the chip \
 library (a netlist has no RTL names: a test may only use the pins of tb, such as uo_out, and \
 not internal signals). This catches what RTL simulation cannot: logic that behaves differently \

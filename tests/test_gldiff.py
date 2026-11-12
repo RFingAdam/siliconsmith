@@ -70,6 +70,36 @@ def test_an_unknown_start_is_reported_at_the_first_edge() -> None:
     assert found["signals"] == [{"signal": "uo_out", "rtl": "00000000", "gl": "xxxxxxxx"}]
 
 
+def reset_trace(released_at: float) -> list[tuple[float, str]]:
+    return [(0.0, "0"), (released_at, "1")]
+
+
+def test_edges_while_reset_is_held_are_not_compared() -> None:
+    # The RTL is 0 from time zero, the gates are x until the first real edge: not a bug.
+    rtl = [(0.0, "00000000")]
+    gl = [(0.0, "xxxxxxxx"), (11.0, "00000000")]
+    a, b = traces(rtl, gl)
+    a["tb.rst_n"] = reset_trace(35.0)
+    assert gldiff.first_difference(a, b) == {"state": "same", "cycles_compared": 3}
+
+
+def test_a_difference_after_reset_is_reported_with_the_absolute_cycle() -> None:
+    rtl = [(0.0, "00000000")]
+    gl = [(0.0, "xxxxxxxx")]  # never settles: the reset is ignored
+    a, b = traces(rtl, gl)
+    a["tb.rst_n"] = reset_trace(35.0)
+    found = gldiff.first_difference(a, b)
+    assert (found["state"], found["cycle"], found["time_ns"]) == ("differs", 4, 40.0)
+
+
+def test_a_failure_before_reset_is_released_has_nothing_to_compare() -> None:
+    a, b = traces([(0.0, "00000000")], [(0.0, "xxxxxxxx")])
+    a["tb.rst_n"] = reset_trace(1000.0)
+    assert gldiff.first_difference(a, b) == {"state": "no_edge", "cycles_compared": 0}
+    only_start = {**a, gldiff.CLOCK: [(0.0, "1")]}
+    assert gldiff.first_difference(only_start, b)["state"] == "no_edge"
+
+
 def test_the_cycle_number_counts_rising_edges() -> None:
     rtl = [(0.0, "00000000"), (10.0, "00000001"), (20.0, "00000010"), (30.0, "00000011")]
     gl = [(0.0, "00000000"), (11.0, "00000001"), (21.0, "00000010"), (31.0, "00000111")]
@@ -153,3 +183,27 @@ def test_compare_files_refuses_a_huge_wave_file(
     big.write_bytes(b"x")
     monkeypatch.setattr(gldiff, "MAX_WAVE_BYTES", 0)
     assert gldiff.compare_files(small, big, None)["state"] == "too_big"
+
+
+def test_compare_files_allows_for_the_gap_between_tests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second test starts a picosecond late, so a failing test that checks right after its
+    last rising edge ends a little before that edge: the edge must still be compared."""
+    path = tmp_path / "w.fst"
+    path.write_bytes(b"x")
+    rtl_trace, gl_trace = traces([(0.0, "00000000")], [(0.0, "00000000"), (51.0, "00000001")])
+
+    def fake_load(file: Path, limit: float | None = None) -> Trace:
+        return rtl_trace if file.name == "r.fst" else gl_trace
+
+    (tmp_path / "r.fst").write_bytes(b"x")
+    monkeypatch.setattr(gldiff, "load_trace", fake_load)
+    # Two tests of 25 ns and 35 ns: the failing second one ends at 60 ns minus a picosecond
+    # of lost time; the edge at 60 ns shows the difference.
+    stop = gldiff.failing_end_ns(
+        [{"outcome": "pass", "sim_time_ns": 25.0}, {"outcome": "fail", "sim_time_ns": 34.999}]
+    )
+    assert stop == pytest.approx(59.999)
+    found = gldiff.compare_files(tmp_path / "r.fst", path, stop)
+    assert found["state"] == "differs" and found["time_ns"] == 60.0

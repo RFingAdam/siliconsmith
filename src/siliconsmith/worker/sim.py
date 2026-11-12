@@ -21,8 +21,8 @@ Same container call: emit, then the shared synthesis of `worker/synth.py` (same 
 do-not-use cell lists, same early stop and netlist checks as `synthesize`), then Icarus on
 `test/tb.v` + the netlist + the sky130 cell models. The netlist stays in the run folder
 (`out/synth/tt_um_<name>.v`); `build/synth` belongs to `synthesize` and is never touched. The
-gate-level run has its own folders, so it never disturbs an RTL result: `build/sim/icarus-gl`
-(and `icarus-gl-waves`) and `build/waves/icarus-gl/tb.fst`.
+gate-level run has its own folders, so it never disturbs an RTL result: `build/sim/icarus-gl-waves`
+(a gate-level run always dumps its waves) and `build/waves/icarus-gl/tb.fst`.
 
 Tiny Tapeout's own gate-level test (the `GATES=yes` branch of the template `test/Makefile`, run
 by tt-gds-action) compiles `tb.v` + the post-layout netlist + `primitives.v` +
@@ -46,8 +46,10 @@ import contextlib
 import os
 import re
 import shutil
+import signal
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -313,7 +315,9 @@ def simulate(
                 message="the sky130 cell models are missing from the toolchain image",
                 log=[f"missing: {', '.join(missing)}"],
             )
-        # Tiny Tapeout's order: testbench, cell models, netlist.
+        # Tiny Tapeout's template Makefile lists the cell models, the netlist and then tb.v.
+        # Ours is tb.v first: it works because the cell models reset `default_nettype
+        # themselves, and it keeps the testbench the first (top-level) source.
         sources = [test_dir / "tb.v", *models, netlist]
         defines = dict(GL_DEFINES)
     try:
@@ -450,9 +454,37 @@ def _run_gl(
     )
     if failed:
         gl["diff"] = _first_difference(
-            name, run_dir, test_filter, sim["tests"], gl_wave, time.monotonic() - began
+            name, run_dir, test_filter, sim["tests"], gl_wave, time.monotonic() - began, deadline
         )
     return result
+
+
+class _OutOfTime(BaseException):
+    """The wall-clock limit of `_time_limit` passed."""
+
+
+@contextlib.contextmanager
+def _time_limit(seconds: float | None) -> Iterator[None]:
+    """Raise `_OutOfTime` in the main thread after `seconds` of wall clock (no limit when None
+    or when signals are not available). The interrupted subprocess wait kills the simulator."""
+    if seconds is None or not hasattr(signal, "setitimer"):
+        yield
+        return
+
+    def fire(_signum: int, _frame: object) -> None:
+        raise _OutOfTime
+
+    try:
+        previous = signal.signal(signal.SIGALRM, fire)
+    except ValueError:  # not the main thread
+        yield
+        return
+    signal.setitimer(signal.ITIMER_REAL, max(seconds, 0.1))
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 # A gate-level simulation slower than this does not get a reference rerun (the RTL one is
@@ -467,6 +499,7 @@ def _first_difference(
     tests: list[dict[str, Any]],
     gl_wave: Path | None,
     gl_seconds: float,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Rerun the RTL with the same seed and filter in a scratch folder of the run folder, then
     compare the pins of the two wave files (see `worker/gldiff.py`)."""
@@ -476,7 +509,11 @@ def _first_difference(
         return {"state": "skipped", "reason": "the gate-level run was too slow to run twice"}
     scratch = run_dir / "rtl-reference"
     try:
-        rtl = simulate(name, "icarus", run_dir, test_filter, True, None, scratch=scratch)
+        with _time_limit(None if deadline is None else deadline - time.monotonic()):
+            rtl = simulate(name, "icarus", run_dir, test_filter, True, None, scratch=scratch)
+    except _OutOfTime:
+        emit._reap_processes()
+        return {"state": "unavailable", "reason": "the RTL rerun ran out of time"}
     except Exception as exc:  # the report is a help; its failure must not fail the run
         return {"state": "unavailable", "reason": f"the RTL rerun crashed ({type(exc).__name__})"}
     rtl_wave = rtl.pop("wave_file", None)

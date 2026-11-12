@@ -4,7 +4,10 @@
 """RTL-versus-gate-level first difference: the `diff` entry of a failing gate-level run.
 
 Both runs use the same testbench, tests and random seed, so the clock and the inputs are the
-same; only the design under test differs. The chip's outputs (`tb.uo_out`, `tb.uio_out`,
+same; only the design under test differs. Only the edges AFTER reset is released are compared: the
+RTL treats the clock's x-to-1 start at time zero as an edge, so a reset register is already 0
+there, while the gate models stay unknown (x) until the first real edge. That difference is not
+a bug in the design. The chip's outputs (`tb.uo_out`, `tb.uio_out`,
 `tb.uio_oe`) are sampled once per rising edge of `tb.clk` in each wave file and compared. The
 sample is the value in effect just BEFORE the edge (the last change strictly earlier than the
 edge): the sky130 cell models delay a flop's output by 1 ns (`UNIT_DELAY=#1`), so a sample taken
@@ -25,6 +28,10 @@ from typing import Any
 from siliconsmith.worker import waves as wavefile
 
 CLOCK = "tb.clk"
+RESET = "tb.rst_n"
+# cocotb starts every test after the first one a picosecond after the previous one ended, and a
+# test that checks right after a rising edge ends at that edge: allow for both.
+EDGE_SLACK_NS = 0.5
 PINS = ("tb.uo_out", "tb.uio_out", "tb.uio_oe")
 MAX_CYCLES = 20_000
 MAX_CHANGES = 200_000
@@ -66,7 +73,7 @@ def load_trace(path: Path, ticks_limit_ns: float | None = None) -> Trace:
     for var in wave.all_vars():
         names.setdefault(wavefile._normalize(str(var.full_name)), var)
     trace: Trace = {}
-    for wanted in (CLOCK, *PINS):
+    for wanted in (CLOCK, RESET, *PINS):
         full, problem = wavefile.resolve(wanted, names)
         if problem is not None or full is None:
             continue
@@ -102,19 +109,29 @@ def first_difference(
 
     Result keys: `state` (`differs`, `same`, `no_clock`, `no_pins`), `cycles_compared`, and for
     `differs` also `cycle` (1 for the first rising edge), `time_ns` (the edge), and `signals`: the
-    pins that differ at that first cycle, each `{signal, rtl, gl}`.
+    pins that differ at that first cycle, each `{signal, rtl, gl}`. Edges where `tb.rst_n` (if it
+    is in the trace) was not 1 just before the edge are not compared, but they are counted in the
+    cycle numbers. `no_edge`: no edge was compared (the failure came before the first rising edge
+    after reset).
     """
     clock = rtl.get(CLOCK)
     pins = [pin for pin in PINS if pin in rtl and pin in gl]
-    if not clock or not rising_edges(clock):
+    if not clock:
         return {"state": "no_clock", "cycles_compared": 0}
+    edges = rising_edges(clock)
+    if not edges:
+        return {"state": "no_edge", "cycles_compared": 0}
     if not pins:
         return {"state": "no_pins", "cycles_compared": 0}
     times = {pin: ([t for t, _ in rtl[pin]], [t for t, _ in gl[pin]]) for pin in pins}
+    reset = rtl.get(RESET)
+    reset_times = [t for t, _ in reset] if reset else []
     compared = 0
-    for edge in rising_edges(clock)[:max_cycles]:
+    for cycle, edge in enumerate(edges[:max_cycles], start=1):
         if stop_ns is not None and edge > stop_ns:
             break
+        if reset and _before(reset, reset_times, edge) != "1":
+            continue  # reset is still held: the gates may not have settled yet
         compared += 1
         differing = []
         for pin in pins:
@@ -127,11 +144,13 @@ def first_difference(
         if differing:
             return {
                 "state": "differs",
-                "cycle": compared,
+                "cycle": cycle,
                 "time_ns": round(edge, 3),
                 "cycles_compared": compared,
                 "signals": differing[:MAX_SIGNALS_SHOWN],
             }
+    if compared == 0:
+        return {"state": "no_edge", "cycles_compared": 0}
     return {"state": "same", "cycles_compared": compared}
 
 
@@ -162,7 +181,8 @@ def compare_files(rtl_path: Path, gl_path: Path, stop_ns: float | None) -> dict[
     for path in (rtl_path, gl_path):
         if path.stat().st_size > MAX_WAVE_BYTES:
             return {"state": "too_big", "cycles_compared": 0}
-    limit = None if stop_ns is None else stop_ns + 1.0
+    limit = None if stop_ns is None else stop_ns + 2 * EDGE_SLACK_NS
+    stop = None if stop_ns is None else stop_ns + EDGE_SLACK_NS
     return first_difference(
-        load_trace(rtl_path, limit), load_trace(gl_path, limit), stop_ns, MAX_CYCLES
+        load_trace(rtl_path, limit), load_trace(gl_path, limit), stop, MAX_CYCLES
     )

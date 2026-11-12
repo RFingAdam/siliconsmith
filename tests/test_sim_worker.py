@@ -541,3 +541,18 @@ def test_a_crashing_rtl_rerun_is_only_a_missing_report(
     monkeypatch.setattr(sim, "simulate", boom)
     got = sim._first_difference("chip", tmp_path, None, [], tmp_path / "gl.fst", 1.0)
     assert got["state"] == "unavailable" and "OSError" in got["reason"]
+
+
+def test_a_hanging_rtl_rerun_runs_out_of_time_and_keeps_the_gl_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import time
+
+    monkeypatch.setattr(sim.emit, "_reap_processes", lambda: None)
+    monkeypatch.setattr(sim, "simulate", lambda *a, **k: time.sleep(30))
+    started = time.monotonic()
+    got = sim._first_difference(
+        "chip", tmp_path, None, [], tmp_path / "gl.fst", 1.0, deadline=time.monotonic() + 0.3
+    )
+    assert got == {"state": "unavailable", "reason": "the RTL rerun ran out of time"}
+    assert time.monotonic() - started < 10

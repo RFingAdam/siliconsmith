@@ -128,7 +128,9 @@ async def test_gl_mismatch(server: Client, tmp_path: Path) -> None:
         diff = gl["details"]["gl"]["diff"]
         assert diff["state"] == "differs" and diff["rtl_failed"] is False
         assert diff["signals"][0] == {"signal": "uo_out", "rtl": "00000000", "gl": "xxxxxxxx"}
-        assert diff["cycle"] >= 1 and diff["time_ns"] > 0
+        # Reset is held for three rising edges (10, 20, 30 ns) and released at 35 ns, so the
+        # first edge that is compared is cycle 4 at 40 ns.
+        assert (diff["cycle"], diff["time_ns"]) == (4, 40.0)
 
         # The gate-level waves are kept for the failure and pointed at; the RTL ones are untouched.
         assert gl["details"]["waves"] == GL_WAVES and (project / GL_WAVES).is_file()
@@ -144,3 +146,29 @@ async def test_gl_mismatch(server: Client, tmp_path: Path) -> None:
         states = step_states(await call(client, "status", project="counter"))
         assert states["gate_sim"] == "fail"
         assert states["sim_icarus"] == "pass"
+
+
+async def test_gl_correct_design_failing_on_an_internal_name_is_not_a_reset_bug(
+    server: Client, tmp_path: Path
+) -> None:
+    """A correctly reset counter: the gates start unknown only while reset is held, so a test
+    that fails only because it reads a name the netlist lacks gets the "pins match" report."""
+    async with server as client:
+        project = await counter_project(client, tmp_path, "verilog")
+        wrote = await call(
+            client,
+            "write_test",
+            project="counter",
+            path="test/test.py",
+            content=(FIXTURES / "test_internal_signal.py").read_text(),
+        )
+        assert wrote["ok"] is True, wrote["summary"]
+        rtl = await call(client, "run_tests", project="counter", simulator="icarus")
+        assert rtl["ok"] is True, rtl["summary"]
+        gl = await call(client, "run_tests", project="counter", simulator="icarus", gl=True)
+        assert gl["ok"] is False, gl["summary"]
+        diff = gl["details"]["gl"]["diff"]
+        assert diff["state"] == "same", diff
+        assert "match the RTL at every clock edge" in gl["summary"]
+        assert "Use the reset" not in gl["summary"]
+        assert (project / GL_WAVES).is_file()
