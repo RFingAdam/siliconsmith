@@ -31,6 +31,10 @@ Siliconsmith's whole first milestone is built around. The prompt is exactly:
   the tools are good at every design.
 - The agent's spec is still unapproved. Only the owner approves a spec, on the command line, and
   no demo does that.
+- **The checks catch honest mistakes, not a hostile design.** The design's own code runs while it
+  is turned into Verilog (that is how Amaranth and MyHDL work), so a design written to cheat could
+  tamper with a test result. The checks above stop the obvious shortcuts (hand edits, swapped
+  tests, start-up hooks); they are not a security boundary.
 
 ## How the isolation is done
 
