@@ -9,6 +9,7 @@ path = [
   ".gitignore",
   "uv.lock",
   "docker/requirements.lock",
+  "docker/OFFER.txt",
   "**/py.typed",
   "NOTICE",
 ]
@@ -34,3 +35,11 @@ path = "src/siliconsmith/templates/tt/**"
 precedence = "closest"
 SPDX-FileCopyrightText = "Tiny Tapeout LTD"
 SPDX-License-Identifier = "Apache-2.0"
+
+# Verbatim license texts and notices of components that the toolchain image ships. Each file
+# keeps the terms stated inside it; they are not Apache-2.0.
+[[annotations]]
+path = "docker/licenses/**"
+precedence = "override"
+SPDX-FileCopyrightText = "The authors of the respective components, as stated in each file"
+SPDX-License-Identifier = "LicenseRef-Third-Party-Notices"
