@@ -36,6 +36,8 @@ Components compiled to WebAssembly inside the Python wheels (not separate progra
     https://github.com/YosysHQ/yosys ; packaging: https://github.com/amaranth-lang/amaranth-yosys
   pywellen wheel: wellen and fst-reader (Rust), plus the crates listed in
     licenses/python/pywellen/pywellen.cyclonedx.json ; https://github.com/ekiwi/wellen
+Notices (copyright lines and license texts) for the Rust crates in the pywellen and wasmtime
+wheels and for libraries bundled in the Yosys source trees: licenses/THIRD_PARTY_NOTICES-*.txt
 """
 
 

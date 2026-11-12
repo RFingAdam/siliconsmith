@@ -10,6 +10,7 @@ path = [
   "uv.lock",
   "docker/requirements.lock",
   "docker/OFFER.txt",
+  "scripts/third_party_crates.json",
   "**/py.typed",
   "NOTICE",
 ]
