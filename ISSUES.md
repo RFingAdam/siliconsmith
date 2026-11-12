@@ -153,10 +153,10 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - `run_tests(gl=true)` on Icarus (as TT does), against the Yosys netlist from M1-1 plus the PDK's `sky130_fd_sc_hd` `primitives.v` and `sky130_fd_sc_hd.v`, with the defines `FUNCTIONAL`, `SIM` and `UNIT_DELAY=#1`. Do **not** define `USE_POWER_PINS` or `GL_TEST`: those are for LibreLane's powered netlist (M2/M3), and with them the unpowered Yosys netlist simulates as all X or fails to elaborate.
 - Verilator gate-level simulation is not in scope.
 **Acceptance criteria**
-- [ ] `run_tests(simulator='icarus', gl=true)` reruns the cocotb tests on the sky130 netlist with `primitives.v` and `sky130_fd_sc_hd.v`, defines `FUNCTIONAL SIM UNIT_DELAY=#1` (never `USE_POWER_PINS` or `GL_TEST`), and passes for the counter on all three front-ends. *Proof:* integration `test_gl_counter[fe]`.
-- [ ] A seeded `initial q = 0;` instead of a reset passes RTL and fails GL; the report names the signal and the first differing cycle with RTL vs GL values (sampled just before each rising `clk`, because the cell models delay flop outputs by 1 ns). *Proof:* integration `test_gl_mismatch`.
-- [ ] `status` shows Gate-level simulation as pass for the counter. Inputs: simulation inputs + synthesis inputs. It goes stale only on those inputs. *Proof:* unit test (stale matrix) and an integration test.
-- [ ] GL runs never change the RTL simulation or coverage rows and never delete the agent's RTL waves (separate `icarus-gl` build, sim and wave folders). *Proof:* unit (ledger) and integration tests.
+- [x] `run_tests(simulator='icarus', gl=true)` reruns the cocotb tests on the sky130 netlist with `primitives.v` and `sky130_fd_sc_hd.v`, defines `FUNCTIONAL SIM UNIT_DELAY=#1` (never `USE_POWER_PINS` or `GL_TEST`), and passes for the counter on all three front-ends. *Proof:* integration `test_gl_counter[fe]`.
+- [x] A seeded `initial q = 0;` instead of a reset passes RTL and fails GL; the report names the signal and the first differing cycle with RTL vs GL values (sampled just before each rising `clk`, because the cell models delay flop outputs by 1 ns). *Proof:* integration `test_gl_mismatch`.
+- [x] `status` shows Gate-level simulation as pass for the counter. Inputs: simulation inputs + synthesis inputs. It goes stale only on those inputs. *Proof:* unit test (stale matrix) and an integration test.
+- [x] GL runs never change the RTL simulation or coverage rows and never delete the agent's RTL waves (separate `icarus-gl` build, sim and wave folders). *Proof:* unit (ledger) and integration tests.
 
 ## [M1-3] RTL-vs-netlist equivalence check
 **Labels:** `track:digital` `milestone:M1` `synth`

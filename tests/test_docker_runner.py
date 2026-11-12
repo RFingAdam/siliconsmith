@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -550,10 +551,16 @@ def test_run_timeout_fails_loudly_if_the_container_survives(
         runner.run("info", {}, project_dir=project, timeout_s=0.1)
 
 
-def _raise_timeout_once(self: object, timeout: float | None = None) -> int:
+_REAL_WAIT = subprocess.Popen.wait
+
+
+def _raise_timeout_once(self: subprocess.Popen[str], timeout: float | None = None) -> int:
+    # Only the run's own short wait times out. Every other wait (the `docker info`, `ps` and
+    # `rm` calls go through subprocess.run) must really wait, or the fake docker process is not
+    # reaped yet and its return code reads as None, which the runner reports as a dead daemon.
     if timeout is not None and timeout < 1:
-        raise dk.subprocess.TimeoutExpired("docker", timeout)
-    return 0
+        raise subprocess.TimeoutExpired("docker", timeout)
+    return _REAL_WAIT(self, timeout)
 
 
 def test_run_without_docker_installed(project: Path, tmp_path: Path) -> None:
