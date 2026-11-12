@@ -1,6 +1,6 @@
 # Siliconsmith: plan for an open-source AI chip-design agent
 
-**Status:** Implementation of digital milestone M0 is in progress. The tools described in this plan are not usable yet; `ISSUES.md` and the GitHub issues track what has landed.
+**Status:** Digital milestone M0 tools work (create, spec, write, emit, lint, simulate on Icarus and Verilator, waves, status and ledger, explain). Synthesis, layout and Tiny Tapeout export come in milestones M1 to M3; `ISSUES.md` and the GitHub issues track what has landed.
 **Owner:** Adam Engelbrecht (GitHub `RFingAdam`).
 **Repo:** [`RFingAdam/siliconsmith`](https://github.com/RFingAdam/siliconsmith)
 **License:** Apache-2.0

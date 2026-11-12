@@ -2,7 +2,7 @@
 
 An open-source AI chip-design agent. One MCP server, one pinned Docker toolchain, and a write-test-fix loop that an AI coding agent (Claude Code, Cursor, Codex) can run end to end.
 
-**Status:** digital milestone M0 is in progress. The project tools (create, list, read and write files) work today; emit and simulation arrive in later M0 steps; [ISSUES.md](ISSUES.md) and the GitHub issues track what has landed.
+**Status:** digital milestone M0 tools work: create a project, write the spec, RTL and tests, emit Verilog and lint it, simulate on Icarus and Verilator, look at waveforms, track what has passed with `status` and the validation ledger, and ask `explain` for the guides. Synthesis, layout and Tiny Tapeout export come in milestones M1 to M3. [ISSUES.md](ISSUES.md) and the GitHub issues track what has landed.
 
 Three tracks share the same server and toolchain:
 
