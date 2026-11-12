@@ -75,6 +75,15 @@ def _err(message: str) -> ToolError:
     return ToolError(message)
 
 
+class FileTooLargeError(ToolError):
+    """A file is over the size cap that the caller gave."""
+
+
+class MissingFileError(ToolError):
+    """A file or directory that the path names does not exist (a ToolError, so callers that do
+    not care keep working)."""
+
+
 def validate_project_name(name: str) -> str:
     """Return `name` if it is usable as a project and module name, else raise ToolError."""
     if not isinstance(name, str) or not NAME_RE.fullmatch(name):
@@ -94,8 +103,12 @@ def validate_project_name(name: str) -> str:
     return name
 
 
-def validate_relpath(rel: str) -> tuple[str, ...]:
-    """Check a project-relative path and return its components."""
+def validate_relpath(rel: str, *, allow_hidden: bool = False) -> tuple[str, ...]:
+    """Check a project-relative path and return its components.
+
+    `allow_hidden` lets components start with a dot. Only Siliconsmith's own code uses it, for
+    its folders under `build/` (`build/.ss/<run>/...`); paths that come from an agent never do.
+    """
     if not isinstance(rel, str) or not rel:
         raise _err("path is empty; give a project-relative path such as 'test/test.py'")
     if "\0" in rel:
@@ -110,7 +123,7 @@ def validate_relpath(rel: str) -> tuple[str, ...]:
             raise _err(f"path {rel!r} has an empty or '.' component")
         if part == "..":
             raise _err(f"path {rel!r} contains '..'")
-        if part.startswith("."):
+        if part.startswith(".") and not allow_hidden:
             raise _err(f"path {rel!r} has a component that starts with a dot ({part!r})")
         if not part.isprintable():
             raise _err(f"path {rel!r} has a control or non-text character in a component")
@@ -133,7 +146,7 @@ def _descend(fd: int, part: str, *, create: bool, shown: str) -> int:
         return os.open(part, _DIR_FLAGS, dir_fd=fd)
     except FileNotFoundError:
         if not create:
-            raise _err(f"{shown!r} does not exist") from None
+            raise MissingFileError(f"{shown!r} does not exist") from None
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.ENOTDIR):
             raise _err(f"{shown!r} passes through a symlink or a non-directory") from exc
@@ -166,16 +179,19 @@ def _check_regular(st: os.stat_result, rel: str) -> None:
         raise _err(f"{rel!r} has more than one hard link; refusing to touch it")
 
 
-def safe_read(project_dir: Path, rel: str, max_bytes: int) -> bytes:
-    """Read a regular, single-link file inside `project_dir`, refusing files over `max_bytes`."""
-    parts = validate_relpath(rel)
+def safe_read(project_dir: Path, rel: str, max_bytes: int, *, allow_hidden: bool = False) -> bytes:
+    """Read a regular, single-link file inside `project_dir`, refusing files over `max_bytes`.
+
+    Raises MissingFileError or FileTooLargeError (both ToolErrors) for those two cases.
+    """
+    parts = validate_relpath(rel, allow_hidden=allow_hidden)
     with _parent_dir(project_dir, parts, create=False) as dfd:
         try:
             fd = os.open(
                 parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dfd
             )
         except FileNotFoundError:
-            raise _err(f"{rel!r} does not exist") from None
+            raise MissingFileError(f"{rel!r} does not exist") from None
         except OSError as exc:
             if exc.errno == errno.ELOOP:
                 raise _err(f"{rel!r} is a symlink; refusing to follow it") from exc
@@ -184,7 +200,9 @@ def safe_read(project_dir: Path, rel: str, max_bytes: int) -> bytes:
             st = os.fstat(fd)
             _check_regular(st, rel)
             if st.st_size > max_bytes:
-                raise _err(f"{rel!r} is {st.st_size} bytes; the limit is {max_bytes} bytes")
+                raise FileTooLargeError(
+                    f"{rel!r} is {st.st_size} bytes; the limit is {max_bytes} bytes"
+                )
             data = b""
             while len(data) <= max_bytes:
                 chunk = os.read(fd, max_bytes + 1 - len(data))
@@ -194,7 +212,7 @@ def safe_read(project_dir: Path, rel: str, max_bytes: int) -> bytes:
         finally:
             os.close(fd)
     if len(data) > max_bytes:
-        raise _err(f"{rel!r} is larger than the limit of {max_bytes} bytes")
+        raise FileTooLargeError(f"{rel!r} is larger than the limit of {max_bytes} bytes")
     return data
 
 

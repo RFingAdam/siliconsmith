@@ -46,7 +46,7 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - Tools: `create_project`, `list_files`, `read_file`, `write_rtl` (full content, no patches), `write_test`, all returning the standard result `{ok, summary, details, artifacts, next_hints}`; usage errors raise `ToolError`.
 - README config snippets: Claude Code (`.mcp.json` and `claude mcp add`), Cursor (`${workspaceFolder}`), Codex (`tool_timeout_sec`).
 **Acceptance criteria**
-- [ ] `create_project(frontend=amaranth|myhdl|verilog)` creates a project with a TT-compatible `tt_um_<name>` wrapper (ports: `ui_in[7:0]`, `uo_out[7:0]`, `uio_in/uio_out/uio_oe[7:0]`, `ena`, `clk`, `rst_n`) and a cocotb test stub. *Proof:* `test_scaffold[fe]` (ports compared with the TT template snapshot) and an integration test that checks the ports with Yosys.
+- [x] `create_project(frontend=amaranth|myhdl|verilog)` creates a project with a TT-compatible `tt_um_<name>` wrapper (ports: `ui_in[7:0]`, `uo_out[7:0]`, `uio_in/uio_out/uio_oe[7:0]`, `ena`, `clk`, `rst_n`) and a cocotb test stub. *Proof:* `test_scaffold[fe]` (ports compared with the TT template snapshot) and an integration test that checks the ports with Yosys.
 - [x] Path traversal attempts are rejected. *Proof:* `test_paths_*` (`..`, absolute paths, symlinks, NUL bytes, writes outside the allow-list).
 - [x] README has working config snippets for Claude Code and Cursor. *Proof:* `test_readme_snippets` (launches the exact command over stdio and lists the tools; checks the Cursor JSON against its schema).
 
@@ -58,9 +58,9 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - Lint with `verilator --lint-only -Wall --timing` (latches and multiple drivers are errors) and parse the findings. Map Python errors to a file and line under `hdl/`.
 - `emit_verilog` MCP tool. Emitted output is byte-identical across runs.
 **Acceptance criteria**
-- [ ] The same 8-bit counter emits valid Verilog from all three front-ends with an identical top-level port list. *Proof:* `test_emit_counter[fe]` compared with `tests/golden/counter_ports.json`; the output compiles with `iverilog -g2012` and lints clean.
-- [ ] A Python syntax or elaboration error in Amaranth/MyHDL source comes back with file and line in ≤20 lines. *Proof:* unit test (host-side `ast.parse`) and `test_emit_errors[amaranth,myhdl]` (the reported path is `hdl/<name>.py`).
-- [ ] A Verilator lint warning (e.g. width mismatch) is returned in a structured form. *Proof:* `test_lint_width` (`WIDTHTRUNC`/`WIDTHEXPAND` as `{code, file, line, col, msg}`) and parser fixtures.
+- [x] The same 8-bit counter emits valid Verilog from all three front-ends with an identical top-level port list. *Proof:* `test_emit_counter[fe]` compared with `tests/golden/counter_ports.json`; the output compiles with `iverilog -g2012` and lints clean.
+- [x] A Python syntax or elaboration error in Amaranth/MyHDL source comes back with file and line in ≤20 lines. *Proof:* unit test (host-side `ast.parse`) and `test_emit_errors[amaranth,myhdl]` (the reported path is `hdl/<name>.py`).
+- [x] A Verilator lint warning (e.g. width mismatch) is returned in a structured form. *Proof:* `test_lint_width` (`WIDTHTRUNC`/`WIDTHEXPAND` as `{code, file, line, col, msg}`) and parser fixtures.
 
 ## [M0-5] `run_tests` with cocotb on Icarus and Verilator
 **Labels:** `track:digital` `milestone:M0` `sim`

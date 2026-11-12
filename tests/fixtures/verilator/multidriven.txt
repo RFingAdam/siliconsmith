@@ -1,0 +1,9 @@
+%Error-MULTIDRIVEN: t_multi.v:2:52: Signal has multiple driving blocks with different clocking: 'y'
+                    t_multi.v:3:25: ... Location of first driving block
+    3 |   always @(posedge clk) y <= a;
+      |                         ^
+                    t_multi.v:4:25: ... Location of other driving block
+    4 |   always @(negedge clk) y <= ~a;
+      |                         ^
+                    ... For error description see https://verilator.org/warn/MULTIDRIVEN?v=5.046
+%Error: Exiting due to 1 error(s)

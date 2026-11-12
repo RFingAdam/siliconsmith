@@ -20,6 +20,7 @@ TOOL_MODULES: tuple[str, ...] = (
     "write_rtl",
     "write_test",
     "write_spec",
+    "emit_verilog",
 )
 
 

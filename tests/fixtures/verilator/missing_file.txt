@@ -1,0 +1,11 @@
+%Error: Cannot find file containing module: 't_missing.v'
+        ... See the manual at https://verilator.org/verilator_doc.html?v=5.046 for more assistance.
+        ... This may be because there's no search path specified with -I<dir>.
+        ... Looked in:
+             t_missing.v
+             t_missing.v.v
+             t_missing.v.sv
+             obj_dir/t_missing.v
+             obj_dir/t_missing.v.v
+             obj_dir/t_missing.v.sv
+%Error: Exiting due to 1 error(s)

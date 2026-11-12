@@ -34,7 +34,14 @@ def _verb_selftest(request: dict[str, Any]) -> dict[str, Any]:
     return selftest.run(request)
 
 
+def _verb_emit(request: dict[str, Any]) -> dict[str, Any]:
+    from siliconsmith.worker import emit
+
+    return emit.emit(request)
+
+
 VERBS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "emit": _verb_emit,
     "info": _verb_info,
     "selftest": _verb_selftest,
 }

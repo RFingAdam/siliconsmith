@@ -1,0 +1,5 @@
+%Error: t_syn.v:2:3: syntax error, unexpected assign, expecting ';'
+    2 |   assign y = a;
+      |   ^~~~~~
+        ... See the manual at https://verilator.org/verilator_doc.html?v=5.046 for more assistance.
+%Error: Exiting due to 1 error(s)

@@ -1,0 +1,49 @@
+Warning: multiple conflicting drivers for a.$not$a.v:3$1_Y [7]:
+    port Y[7] of cell $not$a.v:3$1 ($not)
+    module input ui_in[7]
+Warning: multiple conflicting drivers for a.$not$a.v:3$1_Y [6]:
+    port Y[6] of cell $not$a.v:3$1 ($not)
+    module input ui_in[6]
+Warning: multiple conflicting drivers for a.$not$a.v:3$1_Y [5]:
+    port Y[5] of cell $not$a.v:3$1 ($not)
+    module input ui_in[5]
+Warning: multiple conflicting drivers for a.$not$a.v:3$1_Y [4]:
+    port Y[4] of cell $not$a.v:3$1 ($not)
+    module input ui_in[4]
+Warning: multiple conflicting drivers for a.$not$a.v:3$1_Y [3]:
+    port Y[3] of cell $not$a.v:3$1 ($not)
+    module input ui_in[3]
+Warning: multiple conflicting drivers for a.$not$a.v:3$1_Y [2]:
+    port Y[2] of cell $not$a.v:3$1 ($not)
+    module input ui_in[2]
+Warning: multiple conflicting drivers for a.$not$a.v:3$1_Y [1]:
+    port Y[1] of cell $not$a.v:3$1 ($not)
+    module input ui_in[1]
+Warning: multiple conflicting drivers for a.$not$a.v:3$1_Y [0]:
+    port Y[0] of cell $not$a.v:3$1 ($not)
+    module input ui_in[0]
+Warning: found logic loop in module a:
+    cell $not$a.v:3$1 ($not) source: a.v:3.17-3.23
+      A[0] --> Y[0]
+Warning: found logic loop in module a:
+    cell $not$a.v:3$1 ($not) source: a.v:3.17-3.23
+      A[1] --> Y[1]
+Warning: found logic loop in module a:
+    cell $not$a.v:3$1 ($not) source: a.v:3.17-3.23
+      A[2] --> Y[2]
+Warning: found logic loop in module a:
+    cell $not$a.v:3$1 ($not) source: a.v:3.17-3.23
+      A[3] --> Y[3]
+Warning: found logic loop in module a:
+    cell $not$a.v:3$1 ($not) source: a.v:3.17-3.23
+      A[4] --> Y[4]
+Warning: found logic loop in module a:
+    cell $not$a.v:3$1 ($not) source: a.v:3.17-3.23
+      A[5] --> Y[5]
+Warning: found logic loop in module a:
+    cell $not$a.v:3$1 ($not) source: a.v:3.17-3.23
+      A[6] --> Y[6]
+Warning: found logic loop in module a:
+    cell $not$a.v:3$1 ($not) source: a.v:3.17-3.23
+      A[7] --> Y[7]
+ERROR: Found 16 problems in 'check -assert'.

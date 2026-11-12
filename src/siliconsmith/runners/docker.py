@@ -13,9 +13,9 @@ short tails for error messages, never parsed.
 from __future__ import annotations
 
 import contextlib
-import errno
 import json
 import os
+import shutil
 import stat
 import subprocess
 import threading
@@ -26,6 +26,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
 
+from mcp.server.mcpserver.exceptions import ToolError
+
+from siliconsmith.paths import FileTooLargeError, MissingFileError, safe_read
 from siliconsmith.runners.base import WorkerOutcome
 from siliconsmith.runners.worker_cache import ensure_worker_cache
 
@@ -194,44 +197,47 @@ def make_run_dir(build: Path, run_id: str) -> None:
         os.close(fd)
 
 
+def remove_run_dirs(build: Path) -> None:
+    """Delete `build/.ss` (the worker's run folders) without following any symlink.
+
+    Container code can replace `build/.ss`, or anything inside it, with a symlink. Everything
+    here goes through file descriptors: `build` is opened with O_NOFOLLOW, a `.ss` that is not a
+    real directory is only unlinked, and `rmtree` on a descriptor never follows links.
+    """
+    try:
+        fd = os.open(build, _DIR_FLAGS)
+    except OSError:
+        return
+    try:
+        try:
+            mode = os.lstat(".ss", dir_fd=fd).st_mode
+        except OSError:
+            return
+        with contextlib.suppress(OSError):
+            if stat.S_ISDIR(mode):
+                shutil.rmtree(".ss", ignore_errors=True, dir_fd=fd)
+            else:
+                os.unlink(".ss", dir_fd=fd)
+    finally:
+        os.close(fd)
+
+
 def read_result(build: Path, run_id: str) -> dict[str, Any] | None:
     """Read `build/.ss/<run_id>/result.json`. None if there is no file; ResultError if it is bad.
 
-    Every folder on the way is opened with O_NOFOLLOW, and the file must be a regular file with a
-    single hard link and at most 1 MiB, so container code cannot point this read at a host file.
+    This is `paths.safe_read`: every folder on the way is opened with O_NOFOLLOW, and the file
+    must be a regular file with a single hard link and at most 1 MiB, so container code cannot
+    point this read at a host file.
     """
-    components = [".ss", run_id]
+    rel = f"{build.name}/.ss/{run_id}/result.json"
     try:
-        fd = os.open(build, _DIR_FLAGS)
-    except OSError as exc:
-        raise ResultError(f"cannot open {build}: {exc.strerror}") from exc
-    try:
-        try:
-            for name in components:
-                child = os.open(name, _DIR_FLAGS, dir_fd=fd)
-                os.close(fd)
-                fd = child
-            file_fd = os.open(
-                "result.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=fd
-            )
-        except FileNotFoundError:
-            return None
-        except OSError as exc:
-            reason = "a symlink" if exc.errno in (errno.ELOOP, errno.ENOTDIR) else exc.strerror
-            raise ResultError(f"the result path is unsafe ({reason})") from exc
-    finally:
-        os.close(fd)
-    with os.fdopen(file_fd, "rb") as handle:
-        info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode):
-            raise ResultError("result.json is not a regular file")
-        if info.st_nlink != 1:
-            raise ResultError("result.json has more than one hard link")
-        if info.st_size > MAX_RESULT_BYTES:
-            raise ResultError(f"result.json is larger than {MAX_RESULT_BYTES} bytes")
-        data = handle.read(MAX_RESULT_BYTES + 1)
-    if len(data) > MAX_RESULT_BYTES:
-        raise ResultError(f"result.json is larger than {MAX_RESULT_BYTES} bytes")
+        data = safe_read(build.parent, rel, MAX_RESULT_BYTES, allow_hidden=True)
+    except MissingFileError:
+        return None
+    except FileTooLargeError:
+        raise ResultError(f"result.json is larger than {MAX_RESULT_BYTES} bytes") from None
+    except ToolError as exc:
+        raise ResultError(f"the result path is unsafe ({exc})") from exc
     try:
         parsed = json.loads(data)
     except (ValueError, RecursionError) as exc:
@@ -470,6 +476,7 @@ class DockerRunner:
         except ResultError as exc:
             stderr_tail = f"[siliconsmith] result rejected: {exc}\n{stderr_tail}"
         return WorkerOutcome(
+            run_id=run_id,
             exit_code=proc.returncode,
             result=result,
             stdout_tail=stdout_tail,

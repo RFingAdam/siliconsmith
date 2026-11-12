@@ -1,0 +1,2 @@
+Warning: Wire c.$not$c.v:3$1_Y is used but has no driver.
+ERROR: Found 1 problems in 'check -assert'.
