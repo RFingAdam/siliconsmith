@@ -13,3 +13,17 @@ updates:
     directory: /docker
     schedule:
       interval: weekly
+    # The base image is pinned on purpose: Ubuntu stays on the LTS release, and Verilator stays on
+    # the version cocotb 2.1 is tested with. Digest updates (the same tag, rebuilt) still come in;
+    # version updates for these two are ignored.
+    ignore:
+      - dependency-name: ubuntu
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch
+      - dependency-name: verilator/verilator
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch

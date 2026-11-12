@@ -40,10 +40,24 @@ def _verb_emit(request: dict[str, Any]) -> dict[str, Any]:
     return emit.emit(request)
 
 
+def _verb_waves(request: dict[str, Any]) -> dict[str, Any]:
+    from siliconsmith.worker import waves
+
+    return waves.run(request)
+
+
+def _verb_test(request: dict[str, Any]) -> dict[str, Any]:
+    from siliconsmith.worker import sim
+
+    return sim.run(request)
+
+
 VERBS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "emit": _verb_emit,
     "info": _verb_info,
     "selftest": _verb_selftest,
+    "test": _verb_test,
+    "waves": _verb_waves,
 }
 
 

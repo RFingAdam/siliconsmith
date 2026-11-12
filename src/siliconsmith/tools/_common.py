@@ -32,9 +32,14 @@ def get_project(ctx: ServerContext, name: str) -> Project:
 
 def read_spec_ids(project: Project) -> list[str] | None:
     """Requirement ids of the project's valid spec.yaml, or None if it is missing or invalid."""
+    with project_lock(project.dir):
+        return read_spec_ids_locked(project)
+
+
+def read_spec_ids_locked(project: Project) -> list[str] | None:
+    """Like `read_spec_ids`, for a caller that already holds the project lock."""
     try:
-        with project_lock(project.dir):
-            text = safe_read(project.dir, SPEC_NAME, MAX_SPEC_BYTES).decode("utf-8")
+        text = safe_read(project.dir, SPEC_NAME, MAX_SPEC_BYTES).decode("utf-8")
     except (ToolError, UnicodeDecodeError):
         return None
     try:

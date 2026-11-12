@@ -22,11 +22,15 @@ The server runs on your machine and talks to the agent over standard input and o
 nothing is exposed on the network.
 
 Today the server offers `toolchain_info`, `create_project`, `list_files`, `read_file`,
-`write_spec`, `write_rtl`, `write_test` and `emit_verilog`. Start with `write_spec`: `spec.yaml`
-says the clock, the pins and the numbered requirements, and everything else follows from it.
-`emit_verilog` turns the design (Amaranth, MyHDL or Verilog) into a checked Verilog core plus the
-Tiny Tapeout wrapper and lints it with Verilator. The tool that runs the tests arrives in the next
-milestone step. Emitting needs Docker and the toolchain image.
+`write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests` and `inspect_waves`. Start
+with `write_spec`: `spec.yaml` says the clock, the pins and the numbered requirements, and
+everything else follows from it. `emit_verilog` turns the design (Amaranth, MyHDL or Verilog)
+into a checked Verilog core plus the Tiny Tapeout wrapper and lints it with Verilator.
+`run_tests` runs your cocotb tests against the design on Icarus Verilog or Verilator (it emits
+and lints first), and a failure comes back as the test name, the file and line, the assertion,
+and the expected and actual values. With `waves=True` it keeps a wave file, and `inspect_waves`
+shows how chosen signals changed as a short table. Emitting and testing need Docker and the
+toolchain image.
 
 ### Install
 

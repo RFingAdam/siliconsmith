@@ -63,5 +63,19 @@ def clamp_result(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+# `run_tests` and `inspect_waves` results (clipped in the worker, enforced again on the host).
+TEST_NAME_MAX = 200
+TEST_TEXT_MAX = 300
+TEST_VALUE_MAX = 120
+MAX_TESTS = 500
+MAX_LOG_LINES = 15
+LOG_LINE_MAX = 300
+WAVES_PATH_MAX = 200
+WAVE_SIGNAL_MAX = 300
+WAVE_VALUE_MAX = 80
+MAX_WAVE_ROWS = 1000
+MAX_WAVE_SIGNALS = 16
+MAX_SUGGESTIONS = 8
+
 # What the host reads back from a generated core before it decides it is too large.
 MAX_CORE_READ_BYTES = 1024 * 1024
