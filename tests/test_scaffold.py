@@ -13,8 +13,10 @@ import pytest
 import yaml
 from mcp.server.mcpserver.exceptions import ToolError
 
+from siliconsmith.covers import parse_covers
 from siliconsmith.project import FRONTENDS, load_project
 from siliconsmith.scaffold import STUB_PORTS, TT_DIR, create_project
+from siliconsmith.spec import Spec, parse_spec, pinout
 
 FRONTEND_PARAMS = pytest.mark.parametrize("fe", FRONTENDS)
 PORT_RE = re.compile(r"^\s*(input|output)\s+wire\s+(\[7:0\])?\s*(\w+)\s*,?\s*(?://.*)?$", re.M)
@@ -75,7 +77,7 @@ def test_scaffold(tmp_path: Path, fe: str) -> None:
     for rel in ("src/config.json", "test/tb.v", "test/Makefile", "test/requirements.txt"):
         assert (d / rel).is_file()
     assert (d / "docs" / "info.md").is_file()
-    assert not (d / "spec.yaml").exists()  # arrives with M0-7
+    assert isinstance(parse_spec((d / "spec.yaml").read_text()), Spec)
     # The project loads back.
     project = load_project(tmp_path, "chip")
     assert (project.name, project.frontend) == ("chip", fe)
@@ -120,8 +122,33 @@ def test_scaffold_info_yaml(tmp_path: Path, fe: str) -> None:
     assert project["source_files"] == ["project.v", "chip.v"]
     assert project["tiles"] == "1x1"
     assert info["yaml_version"] == 6
-    assert info["pinout"] == template["pinout"]
     assert list(info) == list(template)
+    # spec.yaml is the single source: info.yaml's clock and pinout are derived from it.
+    spec = parse_spec((d / "spec.yaml").read_text())
+    assert isinstance(spec, Spec)
+    assert project["clock_hz"] == spec.clock_hz == 10_000_000
+    assert info["pinout"] == pinout(spec)
+    assert list(info["pinout"]) == list(template["pinout"])
+    assert info["pinout"]["uo[0]"] == "sum, bit 0"
+
+
+@FRONTEND_PARAMS
+def test_scaffold_spec_stub(tmp_path: Path, fe: str) -> None:
+    d = make(tmp_path, fe)
+    text = (d / "spec.yaml").read_text()
+    spec = parse_spec(text)
+    assert isinstance(spec, Spec)
+    assert spec.title == "chip" and spec.summary == "Adds two numbers."
+    assert spec.reset == "rst_n, active-low, synchronous"
+    assert spec.requirement_ids() == ["R1"]
+    assert spec.requirements[0].text == "uo_out equals ui_in + uio_in, modulo 256"
+    assert len(spec.open_questions) == 2
+    assert text.startswith("# spec.yaml")
+    # The stub test says Covers: R1, and R1 exists in the spec.
+    report = parse_covers(
+        (d / "test" / "test.py").read_text(), "test/test.py", spec.requirement_ids()
+    )
+    assert [t.covers for t in report.tests] == [("R1",)] and report.warnings == []
 
 
 def test_scaffold_rejects_encoding_declaration_in_text(tmp_path: Path) -> None:
