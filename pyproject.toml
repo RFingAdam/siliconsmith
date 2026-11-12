@@ -26,6 +26,7 @@ myhdl = ["myhdl>=0.11.52,<0.12"]
 
 [project.scripts]
 siliconsmith = "siliconsmith.cli:main"
+siliconsmith-mcp = "siliconsmith.server:main"
 
 [dependency-groups]
 dev = [
@@ -50,6 +51,8 @@ markers = ["integration: needs Docker and the toolchain image"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+# The Tiny Tapeout snapshot is a verbatim copy of upstream files; do not lint or reformat it.
+extend-exclude = ["src/siliconsmith/templates"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "TID"]
@@ -75,6 +78,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "TID"]
 strict = true
 python_version = "3.11"
 files = ["src"]
+exclude = ["src/siliconsmith/templates/"]
 
 [[tool.mypy.overrides]]
 module = ["amaranth.*", "myhdl.*", "cocotb.*", "cocotb_tools.*", "pywellen.*"]

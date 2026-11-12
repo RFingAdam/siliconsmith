@@ -13,6 +13,7 @@ path = [
   "scripts/third_party_crates.json",
   "**/py.typed",
   "NOTICE",
+  "src/siliconsmith/templates/stubs/**",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Adam Engelbrecht"
@@ -34,7 +35,22 @@ SPDX-License-Identifier = "Apache-2.0"
 [[annotations]]
 path = "src/siliconsmith/templates/tt/**"
 precedence = "closest"
-SPDX-FileCopyrightText = "Tiny Tapeout LTD"
+SPDX-FileCopyrightText = "Tiny Tapeout"
+SPDX-License-Identifier = "Apache-2.0"
+
+# The copyright holder is "Tiny Tapeout", as in the upstream template's own test/test.py header
+# (SPDX-FileCopyrightText: 2024 Tiny Tapeout). The upstream LICENSE file is the unmodified
+# Apache-2.0 text and names no holder. Files with their own header keep it (closest wins).
+
+# These two stubs are adapted from Tiny Tapeout's Apache-2.0 src/project.v and test/test.py, so
+# they keep the upstream copyright line next to ours. This table comes last so it wins.
+[[annotations]]
+path = [
+  "src/siliconsmith/templates/stubs/test.py.tmpl",
+  "src/siliconsmith/templates/stubs/verilog.v.tmpl",
+]
+precedence = "override"
+SPDX-FileCopyrightText = ["2024 Tiny Tapeout", "2026 Adam Engelbrecht"]
 SPDX-License-Identifier = "Apache-2.0"
 
 # Verbatim license texts and notices of components that the toolchain image ships. Each file

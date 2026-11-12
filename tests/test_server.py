@@ -20,10 +20,10 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
-async def test_list_tools(tmp_path: Path, mode: str) -> None:
+async def test_list_tools_matches_registry(tmp_path: Path, mode: str) -> None:
     async with Client(build_server(tmp_path, None), mode=mode) as client:
         result = await client.list_tools()
-    assert "toolchain_info" in {tool.name for tool in result.tools}
+    assert {tool.name for tool in result.tools} == set(tools.TOOL_MODULES)
 
 
 async def test_instructions_are_short(tmp_path: Path) -> None:
@@ -45,7 +45,8 @@ async def test_stdio_entry_point(tmp_path: Path) -> None:
         command=sys.executable, args=["-m", "siliconsmith.server", "--root", str(tmp_path)]
     )
     async with Client(params) as client:
-        assert "toolchain_info" in {tool.name for tool in (await client.list_tools()).tools}
+        names = {tool.name for tool in (await client.list_tools()).tools}
+    assert names == set(tools.TOOL_MODULES)
 
 
 def test_register_all_calls_each_module(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
