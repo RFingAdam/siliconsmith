@@ -7,7 +7,7 @@
 # Both base images are pinned by digest, and Dependabot bumps them (.github/dependabot.yml).
 # Verilator v5.046 comes from the official image because Ubuntu 24.04's apt Verilator (5.020) is
 # older than the 5.036 that cocotb 2.1 needs. We copy its files; we never run that image.
-FROM verilator/verilator:v5.046@sha256:8003e282e9ff02eb446083eb5a3c512225a269f0a7b46a7e392c99468e890018 AS verilator
+FROM verilator/verilator:v5.054@sha256:da7845c38c2ab84133661a1b1e2d717d028fe0bc629cc06c77bb80571e610448 AS verilator
 
 FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
 
