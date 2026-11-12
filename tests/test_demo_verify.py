@@ -202,17 +202,25 @@ def test_status_summary_wording() -> None:
     ] + [{"key": "spec_approved", "state": "not_run"}]
     # The demo agents do not run synthesis or the gates; the line says so instead of hiding it.
     assert vd.summarize_status(steps) == (
-        "spec valid, check, sim x2, coverage pass (synthesis not_run, gate_sim not_run); "
-        "approval open"
+        "spec valid, check, sim x2, coverage pass "
+        "(synthesis not_run, gate_sim not_run, equivalence not_run); approval open"
     )
     steps += [{"key": "synthesis", "state": "pass"}, {"key": "gate_sim", "state": "pass"}]
     assert vd.summarize_status(steps) == (
-        "spec valid, check, sim x2, coverage pass, synthesis pass, gate-level pass; approval open"
+        "spec valid, check, sim x2, coverage pass, synthesis pass, gate-level pass "
+        "(equivalence not_run); approval open"
+    )
+    steps.append({"key": "equivalence", "state": "pass"})
+    assert vd.summarize_status(steps) == (
+        "spec valid, check, sim x2, coverage pass, synthesis pass, gate-level pass, "
+        "equivalence pass; approval open"
     )
     steps[3]["state"] = "stale"
     assert "sim_verilator stale" in vd.summarize_status(steps)
-    steps[-1]["state"] = "fail"
+    steps[-2]["state"] = "fail"
     assert "gate_sim fail" in vd.summarize_status(steps)
+    steps[-1]["state"] = "fail"
+    assert "equivalence fail" in vd.summarize_status(steps)
 
 
 # -- project discovery ---------------------------------------------------------------------

@@ -82,6 +82,22 @@ Simulating the netlist instead of the RTL, using the gate models of the chip lib
 
 A signal value that is neither 0 nor 1 in a simulation, written `x`. A flip-flop that has not been reset starts as `x`, and anything computed from an `x` is usually `x` too. RTL simulation can hide it (a register may start at 0); gate-level simulation shows it. `z` is a different value: nothing drives the wire.
 
+## Equivalence check
+
+A proof that the gates (the netlist) do the same as your RTL, for every input rather than the ones a test tries (`check_equivalence`). Every output value the RTL defines must match, for every power-up state of the flip-flops. It compares the two only with each other: a bug in the RTL itself, such as a wrong reset, is on both sides and not found. "Not proven" is never a pass.
+
+## Formal proof
+
+An argument a program checks for all inputs, not just the ones a test tries. It shows the design is right for every case, or gives a counterexample. It can run out of time, and then you get "not proven" rather than a wrong answer.
+
+## Counterexample
+
+One concrete case that breaks a proof: a clock cycle and inputs where the gates and the RTL give different outputs. `check_equivalence` names the output bit, the cycle and the two values. It is the formal version of a failing test.
+
+## Induction
+
+How a proof covers unlimited clock cycles: show the two agree at the start (the base case), and that if they agree at one cycle they agree at the next (the step). Like a row of dominoes. If the step cannot be shown the tool says "not proven"; it never guesses.
+
 ## Unit delay
 
 The fixed 1 ns delay that the gate models (`UNIT_DELAY=#1`) put on every flip-flop output in gate-level simulation. It keeps the simulation in a sensible order, but it is not real timing: the real delays of the cells and the wires come from layout and static timing analysis, in a later milestone.

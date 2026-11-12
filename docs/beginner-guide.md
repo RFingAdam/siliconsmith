@@ -6,7 +6,7 @@ This guide is for someone who knows RF and analog hardware well and is new to di
 
 Siliconsmith is a small program (an MCP server) that your AI coding agent starts and talks to. It gives the agent tools to create a chip project, write a spec, write tests, write the design, and run checks on it. All the open-source chip tools run inside one pinned Docker image, so you only need Docker and Python on your machine.
 
-The target is [Tiny Tapeout](https://tinytapeout.com/): a program that puts many small digital designs on one shared chip. Today Siliconsmith takes a design as far as passing simulation and turning into real gates (synthesis). Gate-level simulation, layout and the export to a submission repo come in later milestones.
+The target is [Tiny Tapeout](https://tinytapeout.com/): a program that puts many small digital designs on one shared chip. Today Siliconsmith takes a design as far as passing simulation, turning into real gates (synthesis), simulating those gates and proving they match the RTL (equivalence). Layout and the export to a submission repo come in later milestones.
 
 ## The loop in plain English
 
@@ -16,7 +16,8 @@ The target is [Tiny Tapeout](https://tinytapeout.com/): a program that puts many
 4. **Emit and lint.** The tool turns the design into Verilog and **lints** it: it checks pin names, widths, **latches** and **multiple drivers**.
 5. **Simulate twice.** The tests run on two **simulators**, Icarus and Verilator. They catch different mistakes, so both must pass.
 6. **Synthesize.** The tool turns the design into real **standard cells** and reports how big it is. See "From RTL to gates" below.
-7. **Status.** The `status` tool shows which checks pass for the current files and writes `docs/verification.md`.
+7. **Simulate the gates, then check equivalence.** The agent runs your tests on the real gates, then asks a proof program whether the gates do the same as the RTL.
+8. **Status.** The `status` tool shows which checks pass for the current files and writes `docs/verification.md`.
 
 If a test fails, the agent gets the failing assertion with the expected and actual values, and can look at a **waveform** (the simulation's oscilloscope trace).
 
@@ -58,6 +59,18 @@ The classic thing it catches is a register without a reset. In RTL simulation a 
 Two limits to remember. The tests can only look at the chip's pins, because inside a netlist the names are changed (`\core.count[0]`) or gone. And the delay is a fixed 1 ns on every flip-flop (the **unit delay**), not the real timing of the cells and wires: timing comes with layout.
 
 Clocks above about 66 MHz get a warning, because Tiny Tapeout's pins cannot move data that fast. Synthesis does not check timing; that comes with layout.
+
+### Proving the gates match
+
+`check_equivalence` is a different kind of check: not a test, but a **formal proof**. It synthesizes the design again and a proof program (Yosys) compares the gates with your RTL. Where a test tries some inputs, the proof covers all of them. Think of it as checking a layout against its schematic rather than measuring the board. It takes about ten seconds for a counter, and a minute or more for memories or wide multipliers.
+
+There are three answers:
+
+- **Equivalent**: every output value the RTL defines matches the gates, for every power-up state of the flip-flops. Where the RTL says x (unknown, do not care) the gates may do anything. It does catch a register in the gates that reset never sets, and RTL that only works because of an `initial` value (the tool says `rtl_initial_value` and tells you to reset those registers).
+- **Not equivalent**: a **counterexample**: the output bit, the clock cycle and the two values (RTL against gates). x means the value depends on how the flip-flop powered up. Fix the cause and run it again.
+- **Not proven**: the proof could not be finished. Latches, a falling-edge or derived clock, tri-state outputs, flip-flops with both an asynchronous set and reset, and proofs that run out of time all end here. It is **not** a pass, and the agent must say so.
+
+Two things it does not do. It cannot find a bug that is in the RTL itself, such as a wrong reset value: both sides have the same bug, so they agree. (Your tests must catch those.) And it takes the reset to be one clock cycle, comparing from cycle 2. Gate-level simulation stays the check for reset and power-up behaviour, and neither one says anything about timing.
 
 ## Add the server to Claude Code
 

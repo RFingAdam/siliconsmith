@@ -5,7 +5,7 @@ description: Use this first, whenever you are asked to design a small digital ch
 
 # The chip design loop
 
-The loop is: spec, then tests, then the design, then check and simulate on two simulators, then synthesize into real gates, then simulate those gates, then report. It uses only this server's tools. A passing run means the design does what the tests say in simulation. It does not mean working silicon.
+The loop is: spec, then tests, then the design, then check and simulate on two simulators, then synthesize into real gates, then simulate those gates, then prove the gates match the RTL, then report. It uses only this server's tools. A passing run means the design does what the tests say in simulation. It does not mean working silicon.
 
 Rules that always apply:
 
@@ -19,14 +19,15 @@ Rules that always apply:
 ## The steps
 
 1. `create_project` once (name first, then every other tool takes that name). Pick the front-end the user asked for: amaranth, myhdl or verilog.
-2. `write_spec`: write `spec.yaml` first. It holds `clock_hz`, the optional `tiles` (leave it at `"1x1"`; a bigger tile costs the owner money, so ask first), the pin meanings and numbered requirements R1, R2, ... taken from the user's own words. Replace the placeholder spec.
+2. `write_spec`: write `spec.yaml` first. It holds `clock_hz`, the optional `tiles` (leave it at `"1x1"`; a bigger tile costs the owner money, so ask first), the pin meanings and numbered requirements R1, R2, ... from the user's own words. Replace the placeholder spec.
 3. `write_test`: write the cocotb tests before the design. Every test docstring says `Covers: R1` (or `Covers: R1, R2`). Every requirement needs at least one test that covers it.
 4. `write_rtl`: write the design (the core module named after the project). Whole files only, never diffs.
 5. `emit_verilog`: turns the design into Verilog and lints it. Fix every lint finding before simulating. A latch or a multiply driven signal is an error.
 6. `run_tests` with `simulator="icarus"`, then again with `simulator="verilator"`. Both must pass; they disagree sometimes, and that is a real finding.
-7. `synthesize`, once both simulators pass: it turns the design into real sky130 gates and reports cells, area and how full the tile would be. See "What synthesis proves" below.
+7. `synthesize`, once both simulators pass: it builds real sky130 gates and reports cells, area and tile fill (see "What synthesis proves").
 8. `run_tests(simulator="icarus", gl=true)`: your same tests on the real gates (see below). It synthesizes by itself.
-9. `status`: shows which checks pass for the current files and writes `docs/verification.md` for the owner to read.
+9. `check_equivalence`: proves the gates do the same as your RTL (see "What equivalence proves").
+10. `status`: shows which checks pass for the current files and writes `docs/verification.md` for the owner to read.
 
 ## What synthesis proves
 
@@ -34,7 +35,7 @@ Rules that always apply:
 
 A pass means: the design turns into gates with no combinational loop, no signal driven twice, no undriven output, and no cell that Tiny Tapeout's flow forbids. It also tells you how many cells (flip-flops and logic) and how many um2 the design needs, and the utilization: how much of the tile's usable area those cells would fill.
 
-Utilization is an estimate. Layout (a later milestone) gives the real number. Above 90% placement may struggle; above 100% the design will not fit. It does not prove the gates behave like your RTL (gate-level simulation and the equivalence check come later) and it says nothing about timing yet.
+Utilization is an estimate. Layout (a later milestone) gives the real number. Above 90% placement may struggle; above 100% the design will not fit. It does not prove the gates behave like your RTL (gate-level simulation and the equivalence check do that) and it says nothing about timing yet.
 
 A latch you wrote on purpose (`always_latch`) passes with a warning. An accidental latch (an incomplete `if` in combinational logic) is a lint error with file and line; for MyHDL the message also names your `hdl/` function and line. Call `synthesize` again after every design change; `status` shows Synthesis as stale when the design, the clock or the tile changed.
 
@@ -49,6 +50,18 @@ It does not prove timing: the cell models use a fixed 1 ns unit delay, with no r
 When a gate-level test fails, the summary says "First difference on the pins": the signal, the clock cycle, and the RTL value against the gate-level value (x means unknown). Look at `build/waves/icarus-gl/tb.fst` with `inspect_waves`. In a gate-level run the tests can only touch the `tb` pins (`explain('cocotb2-tests')`).
 
 An x at the first compared cycle means a register without a reset: use the reset, not an `initial` value, which a real chip ignores. An x that shows up later usually means an input the test never drove (`ui_in`, `uio_in`, `ena`): the RTL treats an unknown `if` as false, the gates do not.
+
+## What equivalence proves
+
+`check_equivalence` synthesizes again by itself, then a proof program (Yosys) compares the gates with your RTL. A small design takes about 10 seconds, memories and wide multipliers a minute or more. Read the first line of the summary, then run `status`.
+
+"Equivalent" means: every output value the RTL defines matches the gates, for every power-up state of the flip-flops. Where the RTL says x (do not care) the gates may do anything. Registers without a reset are only compared for a consistent power-up. It catches a register in the gates that reset never sets, and RTL that relies on initial values (`not_equivalent`, reason `rtl_initial_value`): reset those registers with `rst_n`.
+
+It does not catch bugs in the RTL itself, including a wrong reset in the RTL: both sides share them, so only your tests can. Reset is 1 cycle, compared from cycle 2. Gate-level simulation is still the check for reset and power-up behaviour.
+
+`not_equivalent` names the output bit and the first differing clock cycle (x means it depends on power-up). Fix and rerun.
+
+`not_proven` is never a pass. Latches, derived or falling-edge clocks, z (tri-state) and flops with async set and reset are unsupported and come back not proven, as does a proof that runs out of time. Tell the user the design is not checked. An `error` (a loop, an unknown cell) is no pass either.
 
 ## Too big for the tile
 
@@ -87,4 +100,4 @@ The owner approves the spec, from a terminal, with `siliconsmith approve`. It is
 
 ## What done looks like
 
-`status` shows the check, both simulations, requirement coverage, Synthesis and Gate-level simulation as pass. The spec approval shows as the owner's step, still open. Later checks (equivalence, layout, Tiny Tapeout export) are not available yet; say so rather than implying the chip is ready to submit. Submitting to a shuttle is always done by the owner by hand.
+`status` shows the check, both simulations, requirement coverage, Synthesis, Gate-level simulation and Equivalence as pass. The spec approval shows as the owner's step, still open. Later checks (layout, Tiny Tapeout export) are not available yet; say so rather than implying the chip is ready to submit. Submitting to a shuttle is always done by the owner by hand.

@@ -403,10 +403,12 @@ def summarize_status(steps: list[dict[str, Any]]) -> str:
         done.append("synthesis pass")
     if state.get("gate_sim") == "pass":
         done.append("gate-level pass")
+    if state.get("equivalence") == "pass":
+        done.append("equivalence pass")
     checked = ("spec_valid", "check", "sim_icarus", "sim_verilator", "coverage")
     missing = [
         f"{k} {state.get(k, 'not_run')}"
-        for k in (*checked, "synthesis", "gate_sim")
+        for k in (*checked, "synthesis", "gate_sim", "equivalence")
         if state.get(k, "not_run") != "pass"
     ]
     text = ", ".join(done) or "nothing passes"
