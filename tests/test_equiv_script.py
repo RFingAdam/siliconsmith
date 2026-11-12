@@ -98,11 +98,34 @@ def test_gate_reads_the_netlist_file_and_has_every_guard_in_order() -> None:
         es.M_CLOCKING,
         es.M_OK,
     ]
-    assert "setundef -undriven -anyseq" in gate
+    assert "setundef -undriven -anyseq" in gate  # x and z constants become free values
     assert gate.index("setundef -undriven -anyseq") < gate.index("check -assert")
+    # the netlist as Yosys read it is written before anything changes it (x/z are looked for there)
+    assert f"write_rtlil {es.GATE_RTLIL}" in gate
+    assert gate.index("hierarchy -check -top tt_um_chip") < gate.index(
+        f"write_rtlil {es.GATE_RTLIL}"
+    )
+    assert gate.index(f"write_rtlil {es.GATE_RTLIL}") < gate.index("flatten")
+    # init attributes of the netlist are dropped before anything is proven
+    assert "attrmap -remove init" in gate
+    assert gate.index("flatten") < gate.index("attrmap -remove init")
+    assert gate.index("attrmap -remove init") < gate.index("setundef -undriven -anyseq")
     assert "select -assert-none t:* t:$* %d" in gate  # no cell without a function
     assert "select -assert-none t:$tribuf t:$_TBUF_" in gate
     assert any(ln.startswith("select -assert-none t:$dffsr t:$dffsre") for ln in gate)
+
+
+def test_the_state_check_compares_every_register_at_cycle_2_without_a_cycle_limit() -> None:
+    script = es.state_check("chip")
+    rows = lines(script)
+    assert rows.count("expose -dff") == 2  # the registers of both copies are outputs
+    sat = next(ln for ln in rows if ln.startswith("sat "))
+    assert "-seq 2" in sat and "-prove-skip 1" in sat  # the state after the one reset cycle
+    assert "-set-init-undef" in sat and "-set-at 1 in_rst_n 0" in sat
+    assert "-maxsteps" not in sat and "-tempinduct" not in sat  # no bound to run out of
+    assert "-ignore_gold_x" in script and "-enable_undef" in sat
+    # the first copy keeps the initial values, the second has none
+    assert script.index("attrmap -remove init") > script.index("design -stash gold")
 
 
 def test_the_clock_guard_pins() -> None:

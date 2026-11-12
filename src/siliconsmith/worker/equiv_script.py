@@ -17,8 +17,12 @@ orchestration is in `equiv.py`. Stdlib only: this runs in the container.
    netlist side ("gate") is read from the netlist FILE the synthesis wrote. Both sides refuse
    what the proof cannot model (see the `GUARD_*` blocks). `equiv_make` pairs signals by name,
    `equiv_simple -seq 5` and `equiv_induct -seq 5` prove the induction step.
-2. If the RTL has initial values: the RTL with them against the RTL without them. A difference
-   means the RTL relies on values a chip does not have.
+2. If the RTL has initial values: the state check. The RTL with them against the RTL without
+   them, compared on every register after the one reset cycle (cycle 2). Equal state at cycle 2
+   means the initial values change nothing afterwards, with no cycle limit. If some register
+   differs (it keeps an initial value that reset does not set), a bounded search from reset
+   (`depth` cycles) looks for the output it changes: found is `not_equivalent`, not found is
+   `not_proven` (never a pass).
 3. The base case of the stage-1 induction, on the stage-1 model itself (`equiv.il`), for cycles
    1..seq+2, in two runs: every flip-flop powers up `x` (X), and every flip-flop powers up defined,
    a netlist flip-flop equal to the RTL register it is paired with (DEF). Stages 1 and 3 together
@@ -60,6 +64,7 @@ M_ASYNC_SR = "GUARD-ASYNCSR"
 M_STRUCTURE = "GUARD-STRUCTURE"
 M_CELLS = "GUARD-CELLS"
 M_OK = "GUARD-OK"
+GATE_RTLIL = "gate_read.il"  # the netlist as Yosys read it (the host looks for x/z in it)
 INITS_BEGIN = "INITS-BEGIN"
 INITS_END = "INITS-END"
 BASE_PREFIX = "BASE-"
@@ -132,8 +137,17 @@ def gate(name: str, netlist: str) -> str:
                 f"read_liberty -ignore_miss_func {LIBERTY}",  # cell functions (dlclkp has none)
                 f"read_verilog {netlist}",
                 f"hierarchy -check -top tt_um_{name}",
+                # The netlist as Yosys understood it, before anything is changed. The host reads
+                # it for x/z constants whatever way they were spelled (`setundef` only replaces x,
+                # and Yosys's SAT reads a z as a plain 0).
+                f"write_rtlil {GATE_RTLIL}",
                 "flatten",
+                # An `init` attribute in the netlist would give a flip-flop a power-up value that
+                # a chip does not have: the netlist side never has initial values.
+                "attrmap -remove init",
                 "opt_clean",
+                # Any x or z constant the text guard missed becomes a free value, so it can only
+                # make the proof fail, never pass (Yosys's SAT would read z as a plain 0).
                 "setundef -undriven -anyseq",
                 GUARD_STRUCTURE.rstrip("\n"),
                 GUARD_CELLS.rstrip("\n"),
@@ -150,6 +164,34 @@ def gate(name: str, netlist: str) -> str:
 
 def stash(script: str, name: str, as_: str) -> str:
     return script + f"rename tt_um_{name} {as_}\ndesign -stash {as_}\n"
+
+
+def state_check(name: str) -> str:
+    """Stage 2: is the RTL's state after the reset cycle the same without its initial values?
+
+    The RTL as written (initial values kept) against the RTL without them, with the flip-flops of
+    both exposed as outputs and every flip-flop of the second powering up `x`, compared at cycle 2
+    (the state after the one reset cycle). If every register the RTL defines is equal there, the
+    initial values change nothing from cycle 2 on: both copies are the same logic in the same
+    state. No cycle limit. A difference means some register keeps an initial value that reset
+    does not set.
+    """
+    rtl = stash(gold(name, "rtl") + "expose -dff\n", name, "gold")
+    noinit = stash(gold(name, "rtl_noinit") + "expose -dff\n", name, "gate")
+    return (
+        rtl
+        + noinit
+        + both()
+        + "\n".join(
+            [
+                "miter -equiv -flatten -make_outputs -ignore_gold_x gold gate miter",
+                "hierarchy -top miter",
+                "sat -seq 2 -prove-skip 1 -enable_undef -set-def-inputs -set-init-undef "
+                "-set-at 1 in_rst_n 0 -prove trigger 0 -show-ports -dump_vcd cex_state.vcd miter",
+            ]
+        )
+        + "\n"
+    )
 
 
 def both(a: str = "gold", b: str = "gate") -> str:

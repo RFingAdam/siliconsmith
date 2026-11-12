@@ -22,10 +22,10 @@ and turns what they find into one verdict.
 
     verdict      equivalent | not_equivalent | not_proven | error. `ok` is true ONLY for equivalent.
     ok           bool
-    reason       None for equivalent; else a machine code: rtl_initial_value, power_up_dependent,
-                 base_case, unproven_points, unpaired_outputs, time_limit, guard_clocking,
-                 guard_tristate, guard_async_set_reset, structure, cells, xz_constant,
-                 yosys_failed, bad_input, internal_inconsistency, internal_error
+    reason       None for equivalent; else a machine code: rtl_initial_value,
+                 initial_values, power_up_dependent, unreadable_counterexample, base_case,
+                 unproven_points, unpaired_outputs, time_limit, guard_clocking, guard_tristate,
+                 guard_async_set_reset, structure, cells, xz_constant,
     method       "equiv_induct" | "k-induction length L" | None
     message      one or two plain-English sentences; not_proven ends with "This is NOT a pass."
     seconds      {stage1, initdep, base, stage4, total}: seconds per stage that ran
@@ -51,6 +51,7 @@ share files.
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 import subprocess
 import time
@@ -233,21 +234,58 @@ def _trace(trace: list[dict[str, Any]], mismatch: dict[str, Any] | None) -> list
     ]
 
 
+def _xz_failure(what: str) -> dict[str, Any]:
+    return {
+        "verdict": "error",
+        "reason": "xz_constant",
+        "message": what,
+        "detail": [],
+    }
+
+
+def _netlist_xz(r: _Run) -> dict[str, Any] | None:
+    """A failure if the netlist as Yosys read it holds an x or z constant, or cannot be looked at.
+
+    The text guard (stage 0) knows the usual spellings; this one reads what Yosys made of the file,
+    so a spelling nobody thought of still ends here. Never skipped: no file is a failure too."""
+    try:
+        text = (r.scratch / equiv_script.GATE_RTLIL).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return _xz_failure("the netlist could not be checked for unknown constants")
+    bad = equiv_parse.rtlil_xz_constant(text)
+    if bad is None:
+        return None
+    return _xz_failure(
+        f"the netlist contains an unknown constant ({bad}): an input that is floating or "
+        "undefined. A correct netlist has none"
+    )
+
+
 # -- stage 1 ----------------------------------------------------------------------------------
 
 
 def _stage1(r: _Run, name: str, seq: int) -> dict[str, Any]:
     """Guards and the induction step. `status`: proven | unproven | timeout | fail."""
-    for f in ("equiv.json", "equiv.il"):  # never read a model left over from an earlier run
+    for f in (
+        "equiv.json",
+        "equiv.il",
+        equiv_script.GATE_RTLIL,
+    ):  # never read a model left over from an earlier run
         (r.scratch / f).unlink(missing_ok=True)
     script = equiv_script.stage1(name, "netlist.v", seq)
     code, log = r.yosys(r.scratch, script, "equiv", r.clock.left())
     common = {"rtl_has_init": equiv_parse.has_inits(log)}
     if code is None and (r.scratch / "equiv.json").exists():  # the proof itself ran out of time
-        return {"status": "timeout", **common}
+        bad = _netlist_xz(r)
+        return (
+            {"status": "fail", "failure": bad, **common} if bad else {"status": "timeout", **common}
+        )
     failure = equiv_parse.guard_failure(code, log)
     if failure is not None:
         return {"status": "fail", "failure": failure, **common}
+    bad = _netlist_xz(r)
+    if bad is not None:
+        return {"status": "fail", "failure": bad, **common}
     parsed = equiv_parse.parse_stage1(log)
     if parsed is None:
         return {
@@ -286,8 +324,7 @@ def _base(r: _Run, points: list[equiv_script.Point], steps: int) -> dict[str, An
             "failure": {
                 "verdict": "error",
                 "reason": "yosys_failed",
-                "message": f"the base case {found['run']} run found a difference that could not "
-                "be read",
+                "message": f"the base case {found['run']} run printed no clear result",
                 "detail": [],
             },
         }
@@ -315,7 +352,19 @@ def _miter(
     if code is None:
         return {"status": "no_cex", "covered": covered, "stopped": "time limit"}
     if code == 0:
-        return {"status": "no_cex", "covered": depth if induct == "base" else covered}
+        if induct != "base":
+            return {"status": "no_cex", "covered": covered}
+        if equiv_parse.reached_depth(log, depth):  # the search says it covered every cycle
+            return {"status": "no_cex", "covered": depth}
+        return {  # exit code 0 but no proof line: a cut-off or reworded log is never a pass
+            "status": "fail",
+            "failure": {
+                "verdict": "error",
+                "reason": "yosys_failed",
+                "message": "the check from reset printed no result",
+                "detail": [],
+            },
+        }
     failure = equiv_parse.guard_failure(code, log) or {
         "verdict": "error",
         "reason": "yosys_failed",
@@ -323,6 +372,23 @@ def _miter(
         "detail": [],
     }
     return {"status": "fail", "failure": failure}
+
+
+def _mismatch(got: dict[str, Any]) -> dict[str, Any] | None:
+    """The first mismatch of a counterexample, or None when its differing bits cannot be read."""
+    fm = got.get("first_mismatch")
+    return fm if fm and fm.get("differs") else None
+
+
+def _unreadable_cex(r: _Run, got: dict[str, Any], where: str) -> dict[str, Any]:
+    """Yosys found a difference but its table gives no differing bit: not proven, never a pass."""
+    r.out["trace"] = _trace(got.get("trace", []), None)
+    return r.verdict(
+        "not_proven",
+        "unreadable_counterexample",
+        f"Could not prove equivalence: the solver found a difference {where} but the differing "
+        "bits could not be read from its output.",
+    )
 
 
 def check(
@@ -419,28 +485,68 @@ def _check(
 
     # stage 2: does the RTL rely on initial values?
     if s1["rtl_has_init"]:
-        t2 = time.monotonic()
-        noinit = equiv_script.stash(equiv_script.gold(name, "rtl_noinit"), name, "gate")
-        d = _miter(r, "initdep", rtl, noinit, "undef", "base", cycles)
-        r.timed("initdep", t2)
-        if d["status"] == "fail":
-            return r.failed(d["failure"], "Could not check the RTL's initial values")
-        if d["status"] == "cex":
-            fm = d["first_mismatch"] or {"cycle": "?", "differs": []}
-            r.out.update(first_mismatch=fm, trace=_trace(d["trace"], fm))
-            names = ", ".join(str(x["signal"]) for x in fm["differs"][:8])
-            return r.verdict(
-                "not_equivalent",
-                "rtl_initial_value",
-                "The RTL relies on initial values (`reg x = ...`, `initial`, Amaranth "
-                "reset_less or init, memory contents) that a chip does not have: at "
-                f"{_when(fm['cycle'])} {names} depend on them. Reset those registers with rst_n "
-                "instead.",
-            )
+        done = _initial_values(r, name, rtl, cycles)
+        if done is not None:
+            return done
 
     if proven1:
         return _proven_path(r, name, s1, points, flops, rtl, gate, seq, cycles)
     return _kinduction_path(r, s1, rtl, gate, cycles)
+
+
+def _initial_values(r: _Run, name: str, rtl: str, cycles: int) -> dict[str, Any] | None:
+    """Stage 2. None when the RTL's initial values change nothing after the reset cycle (the
+    check goes on), else the verdict. Never skipped: every way this stage can end without a
+    proof is `not_proven` or `error`, never a pass."""
+    t2 = time.monotonic()
+    code, log = r.yosys(r.scratch, equiv_script.state_check(name), "initstate", r.clock.left())
+    state = equiv_parse.state_result(log) if code == 0 else "unreadable"
+    r.timed("initdep", t2)
+    if state == "equal":
+        return None
+    stopped = code is None
+    names = ""
+    if state == "differ":
+        found = equiv_parse.parse_cex(log)["first_mismatch"]
+        if found is not None:
+            regs = dict.fromkeys(  # register names without their bit index, each once
+                re.sub(r"(\[\d+\])+$", "", str(x["signal"])) for x in found["differs"]
+            )
+            names = ", ".join(list(regs)[:6])
+    # Some register keeps an initial value that reset does not set (or the state check could not
+    # be read). Look for the output it changes in the first `cycles` cycles from reset.
+    noinit = equiv_script.stash(equiv_script.gold(name, "rtl_noinit"), name, "gate")
+    d = _miter(r, "initdep", rtl, noinit, "undef", "base", cycles)
+    r.timed("initdep", t2)
+    if d["status"] == "fail":
+        return r.failed(d["failure"], "Could not check the RTL's initial values")
+    if d["status"] == "cex":
+        fm = _mismatch(d)
+        if fm is None:
+            return _unreadable_cex(r, d, "between the RTL and the RTL without its initial values")
+        r.out.update(first_mismatch=fm, trace=_trace(d["trace"], fm))
+        out = ", ".join(str(x["signal"]) for x in fm["differs"][:8])
+        return r.verdict(
+            "not_equivalent",
+            "rtl_initial_value",
+            "The RTL relies on initial values (`reg x = ...`, `initial`, Amaranth "
+            "reset_less or init, memory contents) that a chip does not have: at "
+            f"{_when(fm['cycle'])} {out} depend on them. Reset those registers with rst_n "
+            "instead.",
+        )
+    if d.get("stopped") or stopped:
+        r.out["time_limit_hit"] = True
+    which = f" ({names})" if names else ""
+    limit = " The check ran out of time." if d.get("stopped") or stopped else ""
+    return r.verdict(
+        "not_proven",
+        "time_limit" if limit else "initial_values",
+        "Could not prove equivalence: the RTL gives initial values to registers that reset does "
+        f"not set{which}. A chip has no initial values, and no output differed in the first "
+        f"{d['covered']} cycles from reset, so the check cannot say whether the gates match. "
+        f"Reset those registers with rst_n.{limit}",
+        cycles_covered=d["covered"],
+    )
 
 
 def _proven_path(
@@ -486,7 +592,9 @@ def _proven_path(
     if ref["status"] == "fail":
         return r.failed(ref["failure"], "Could not run the check from reset")
     if ref["status"] == "cex":
-        fm = ref["first_mismatch"]
+        fm = _mismatch(ref)
+        if fm is None:
+            return _unreadable_cex(r, ref, "from reset")
         r.out.update(first_mismatch=fm, trace=_trace(ref["trace"], fm))
         r.out["internal_inconsistency"] = base["status"] == "ok"
         hint = _x_hint(fm)
@@ -512,11 +620,15 @@ def _proven_path(
             f"Could not prove equivalence: {what}; no output the RTL defines differed in the "
             f"first {ref['covered']} cycles from reset.",
         )
-    if ref.get("stopped"):
+    if ref.get("stopped"):  # the independent check did not finish: that is not a pass
         r.out["time_limit_hit"] = True
-    cov = f"{ref['covered']} cycles" + (
-        " (stopped by the time limit)" if ref.get("stopped") else ""
-    )
+        return r.verdict(
+            "not_proven",
+            "time_limit",
+            "Could not prove equivalence: the induction proof closed, but the independent check "
+            f"from reset ran out of time after {ref['covered']} of {cycles} cycles.",
+        )
+    cov = f"{ref['covered']} cycles"
     return r.verdict(
         "equivalent",
         None,
@@ -559,7 +671,9 @@ def _kinduction_path(
             return r.failed(got["failure"], "Could not run the check from reset")
         if got["status"] == "cex":
             r.timed("stage4", t4)
-            fm = got["first_mismatch"] or {"cycle": "?", "differs": []}
+            fm = _mismatch(got)
+            if fm is None:
+                return _unreadable_cex(r, got, "from reset")
             r.out.update(first_mismatch=fm, trace=_trace(got["trace"], fm))
             if tag == "kind_x":
                 return r.verdict(

@@ -17,5 +17,9 @@ unit tests of the log readers (`tests/test_equiv_parse.py`) and of the verdict m
   `counter_m0115` a one-cycle reset difference, `counter_m0043` a bug that shows 130 cycles after
   reset, `shiftnr_m0165` an inverted flop output, `shiftnr_m0365` a harmless one, `clkinv` a flop
   clocked from the inverted clock, `loop` a combinational loop, `clockgate` a clock-gate cell.
+- `initstate_deep` (a register with an initial value that reaches a pin only at cycle 42),
+  `initstate_initz` (a counter with an initial value and no reset) and `initstate_equal` (initial
+  values that reset overwrites) are the logs of the initial-value state check (stage 2): the RTL
+  with its initial values against the RTL without, on every register after the reset cycle.
 - `tests/fixtures/equiv/check_netlist.py` is the test-only script that gives the worker's check a
   hand-edited netlist inside the container (the production verb cannot take one).

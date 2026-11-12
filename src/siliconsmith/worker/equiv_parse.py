@@ -16,7 +16,13 @@ from typing import Any
 
 from siliconsmith.worker import equiv_script as es
 
-XZ_LITERAL = re.compile(r"\d+'[sS]?[bBhHdDoO][0-9a-fA-F_]*[xXzZ?]")
+# Every Verilog spelling of a constant with an x, z or ? digit: optional size, optional blanks
+# around the sign and base letter (`1 'b z`, `'hz`, `1'sbz`, `8'o7z`), and the unsized fill
+# constants `'x` and `'z`. A guard in front of Yosys; the netlist script also turns any x/z that
+# gets through into a free value, so this is not the only protection.
+XZ_LITERAL = re.compile(
+    r"(?:\d[\d_]*\s*)?'\s*(?:[sS]\s*)?[bBoOdDhH]\s*[0-9a-fA-F_]*[xXzZ?]|'\s*[xXzZ]"
+)
 
 # What each guard refusal means: (verdict, reason code, plain English).
 GUARD_VERDICTS: dict[str, tuple[str, str, str]] = {
@@ -53,6 +59,17 @@ GUARD_VERDICTS: dict[str, tuple[str, str, str]] = {
 }
 
 _ERROR_MARKS = ("ERROR", "logic loop", "conflicting drivers")
+
+
+# An x, z, m or - bit in an RTLIL constant (`1'z`, `8'0000000z`): what a netlist spelled any way
+# at all comes out as once Yosys has read it.
+RTLIL_XZ = re.compile(r"(?<![\w$\\])\d+'[01]*[xzm\-][01xzm\-]*")
+
+
+def rtlil_xz_constant(rtlil_text: str) -> str | None:
+    """The first x/z constant in the netlist as Yosys read it (RTLIL text), or None."""
+    found = RTLIL_XZ.search(rtlil_text)
+    return found.group(0) if found else None
 
 
 def xz_constant(netlist_text: str) -> str | None:
@@ -229,33 +246,51 @@ def base_model(equiv_il: str, points: list[es.Point]) -> str:
 # -- stage 3: the base case ------------------------------------------------------------------
 
 
+BASE_RUNS = ("X", "DEF")
+SAT_PROVED = "no model found: SUCCESS"
+SAT_FAILED = "model found: FAIL"
+
+
 def parse_base(log: str, points: list[es.Point]) -> dict[str, Any]:
-    """Read the two base-case runs. `{"status": "ok"}`, `{"status": "cex", ...}` (the first
-    difference: run, cycle, the differing points, the inputs) or `{"status": "unreadable"}`."""
-    for part in re.split(rf"^{es.BASE_PREFIX}", log, flags=re.M)[1:]:
-        if "model found: FAIL" not in part:
-            continue
-        run = part.split()[0]
-        vals = table(part)
-        for t in sorted(vals):
-            if run == "DEF" and t == 1:
-                continue  # the DEF run starts from defined values: cycle 1 proves nothing
-            row = vals[t]
-            diffs = [
-                {"signal": p.label, "rtl": row.get(f"eqa_{i}"), "netlist": row.get(f"eqb_{i}")}
-                for i, p in enumerate(points)
-                if row.get(f"eqa_{i}") in ("0", "1") and row.get(f"eqb_{i}") != row.get(f"eqa_{i}")
-            ]
-            if diffs:
-                return {
-                    "status": "cex",
-                    "run": run,
-                    "cycle": t,
-                    "differs": diffs,
-                    "inputs": {k: row.get(k) for k in ("rst_n", "ui_in", "uio_in")},
-                    "outputs_differ": any(str(d["signal"]).startswith(es.OUTPUTS) for d in diffs),
-                }
-        return {"status": "unreadable", "run": run}
+    """Read the two base-case runs. `{"status": "ok"}` only when BOTH runs print a clean proof
+    (`no model found: SUCCESS`, once each); `{"status": "cex", ...}` for the first difference
+    (run, cycle, the differing points, the inputs); `{"status": "unreadable", "run"}` for a run
+    that is missing, cut off or says neither: a log that cannot be read is never a pass."""
+    parts = {
+        part.split()[0]: part
+        for part in re.split(rf"^{es.BASE_PREFIX}", log, flags=re.M)[1:]
+        if part.split()
+    }
+    for run in BASE_RUNS:  # the X run first: it is the stricter one
+        part = parts.get(run)
+        if part is None:
+            return {"status": "unreadable", "run": run}
+        if SAT_FAILED in part:
+            vals = table(part)
+            for t in sorted(vals):
+                if run == "DEF" and t == 1:
+                    continue  # the DEF run starts from defined values: cycle 1 proves nothing
+                row = vals[t]
+                diffs = [
+                    {"signal": p.label, "rtl": row.get(f"eqa_{i}"), "netlist": row.get(f"eqb_{i}")}
+                    for i, p in enumerate(points)
+                    if row.get(f"eqa_{i}") in ("0", "1")
+                    and row.get(f"eqb_{i}") != row.get(f"eqa_{i}")
+                ]
+                if diffs:
+                    return {
+                        "status": "cex",
+                        "run": run,
+                        "cycle": t,
+                        "differs": diffs,
+                        "inputs": {k: row.get(k) for k in ("rst_n", "ui_in", "uio_in")},
+                        "outputs_differ": any(
+                            str(d["signal"]).startswith(es.OUTPUTS) for d in diffs
+                        ),
+                    }
+            return {"status": "unreadable", "run": run}
+        if part.count(SAT_PROVED) != 1:
+            return {"status": "unreadable", "run": run}
     return {"status": "ok"}
 
 
@@ -311,3 +346,17 @@ def covered_cycles(log: str) -> int:
 def induction_length(log: str) -> int | None:
     k = re.findall(r"Trying induction with length (\d+)", log)
     return int(k[-1]) if k else None
+
+
+def state_result(log: str) -> str:
+    """The state check (stage 2): `equal`, `differ` or `unreadable` (never read as equal)."""
+    if SAT_FAILED in log:
+        return "differ"
+    if log.count(SAT_PROVED) == 1:
+        return "equal"
+    return "unreadable"
+
+
+def reached_depth(log: str, depth: int) -> bool:
+    """True if a bounded search printed its positive end line for `depth` steps."""
+    return f"proved base case for {depth} steps: SUCCESS" in log

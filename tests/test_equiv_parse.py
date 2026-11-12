@@ -23,12 +23,32 @@ def log(scenario: str, name: str) -> str:
 # -- text guards -------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("text", ["1'bx", ".A(1'bz)", "4'b01z0", "8'bxxxxxxxx", "2'b1?"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1'bx", ".A(1'bz)", "4'b01z0", "8'bxxxxxxxx", "2'b1?",
+        # every other spelling of z (blanks, no size, signed, other bases, upper case)
+        "'bz", "1'b z", "1 'bz", "'hz", "'z", "'x", "1'sb z", "1'B Z", "1'o z", "1'sbz",
+        "4'd1x", "8'hzz", "1'b_z", "{1'b0,1'bz}",
+    ],
+)  # fmt: skip
 def test_xz_constants_are_found(text: str) -> None:
     assert ep.xz_constant(f"cell u (\n  {text}\n);") is not None
 
 
-@pytest.mark.parametrize("text", ["1'b0", ".A(1'b1)", "8'b10100101", "wire x;", "xor2 x1 (.A(a))"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1'b0",
+        ".A(1'b1)",
+        "8'b10100101",
+        "wire x;",
+        "xor2 x1 (.A(a))",
+        "8'hFF",
+        "'d5 , z1",
+        "8'sd12",
+    ],
+)
 def test_ordinary_constants_are_not_x(text: str) -> None:
     assert ep.xz_constant(text) is None
 
@@ -190,8 +210,41 @@ def test_the_def_run_skips_cycle_1() -> None:
     points, _, _ = ep.equiv_points(log("counter_m0442", "equiv.json"))
     text = log("counter_m0442", "base.log").replace("BASE-X", "BASE-DEF", 1)
     text = text.split("BASE-DEF\n", 1)[1].split("BASE-DEF\n")[0]
-    got = ep.parse_base("BASE-DEF\n" + text, points)
+    clean_x = "BASE-X\nSAT proof finished - no model found: SUCCESS!\n"
+    got = ep.parse_base(clean_x + "BASE-DEF\n" + text, points)
     assert got["status"] == "unreadable" and got["run"] == "DEF"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "BASE-X\nSAT proof finished - no model found: SUCCESS!\n",  # no DEF run
+        "BASE-DEF\nSAT proof finished - no model found: SUCCESS!\n",  # no X run
+        "BASE-X\nSAT proof finished - no model found: SUCCESS!\nBASE-DEF\nrunning\n",
+        "BASE-X\nSAT proof finished - no model found: SUCCESS!\nBASE-DEF\n"
+        "SAT proof finished - no model found: SUCCESS!\nSAT proof finished - no model found: "
+        "SUCCESS!\n",  # printed twice: not the output of one run
+    ],
+)
+def test_a_base_case_log_without_a_clean_proof_in_both_runs_is_not_ok(text: str) -> None:
+    points, _, _ = ep.equiv_points(log("counter_good", "equiv.json"))
+    assert ep.parse_base(text, points)["status"] == "unreadable"
+
+
+def test_the_state_check_result() -> None:
+    assert ep.state_result(log("initstate_equal", "initstate.log")) == "equal"
+    assert ep.state_result(log("initstate_deep", "initstate.log")) == "differ"
+    assert ep.state_result("") == "unreadable"
+    got = ep.parse_cex(log("initstate_deep", "initstate.log"))["first_mismatch"]
+    assert got is not None and got["cycle"] == 2
+    assert got["differs"] == [{"signal": "core.flag[0]", "rtl": "1", "netlist": "x"}]
+
+
+def test_a_bounded_search_needs_its_positive_end_line() -> None:
+    assert ep.reached_depth(log("counter_good", "bmc.log"), 32)
+    assert not ep.reached_depth(log("counter_good", "bmc.log"), 31)
+    assert not ep.reached_depth("", 32)
 
 
 def test_counterexample_trace_and_first_mismatch() -> None:
