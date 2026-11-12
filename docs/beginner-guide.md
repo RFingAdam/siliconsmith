@@ -29,12 +29,13 @@ You can ask the agent for an explanation at any time: the `explain` tool answers
 | Spec | The requirements are written down in one place. | That they are what you meant, until you read them. |
 | Emit and lint | The design converts to Verilog, uses exactly the Tiny Tapeout pins, and has no latches, multiple drivers or logic loops. | That the design does the right thing. |
 | Simulation on Icarus and Verilator | Under the tests, the design behaves as the tests say, on two independent simulators. | Anything the tests do not check. Simulation has no real delays, noise or temperature. |
-| Synthesis | The design turns into real sky130 gates with no combinational loop, no signal driven twice, no undriven output and no forbidden cell, and you learn its size (cells, area, estimated **utilization**). | That the gates behave like the RTL (gate-level simulation shows that for your tests; the equivalence check comes later), that the design meets timing, or the real size: utilization is an estimate until layout. |
+| Synthesis | The design turns into real sky130 gates with no combinational loop, no signal driven twice, no undriven output and no forbidden cell, and you learn its size (cells, area, estimated **utilization**). | That the gates behave like the RTL (gate-level simulation and the equivalence check show that), that the design meets timing, or the real size: utilization is an estimate until layout. |
 | Gate-level simulation | Your same tests, run on the real sky130 gates from synthesis, pass. This catches a register with no reset (it starts unknown on real gates) and other simulation-versus-gates differences. | Real timing: the gates use a fixed 1 ns unit delay. Anything the tests do not check. |
+| Equivalence | A proof program (Yosys) compares the real gates with your RTL: every output value the RTL defines matches for every power-up state of the flip-flops. A difference is named by output bit and clock cycle. "Not proven" (for example latches, a falling-edge clock, or the proof running out of time) is not a pass. | Bugs in the RTL itself: a wrong or missing reset in the RTL is the same on both sides. Reset and power-up behaviour (gate-level simulation checks that) and timing. |
 | Requirement coverage | Every requirement has at least one passing test that says it covers it. | That the tests are strong enough. A weak test still counts. |
 | Spec approval | You read the spec and accepted it. This is your step. | Nothing technical. |
 
-Not available yet: the **equivalence** check, **place and route**, **DRC**, **LVS**, **timing closure** (**slack**, **setup and hold**), and the Tiny Tapeout export. A design that passes today's checks is a good simulated design, not working silicon.
+Not available yet: **place and route**, **DRC**, **LVS**, **timing closure** (**slack**, **setup and hold**), and the Tiny Tapeout export. A design that passes today's checks is a good simulated design, not working silicon.
 
 ## From RTL to gates
 
