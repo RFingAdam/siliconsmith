@@ -110,9 +110,12 @@ def first_difference(
     Result keys: `state` (`differs`, `same`, `no_clock`, `no_pins`), `cycles_compared`, and for
     `differs` also `cycle` (1 for the first rising edge), `time_ns` (the edge), and `signals`: the
     pins that differ at that first cycle, each `{signal, rtl, gl}`. Edges where `tb.rst_n` (if it
-    is in the trace) was not 1 just before the edge are not compared, but they are counted in the
-    cycle numbers. `no_edge`: no edge was compared (the failure came before the first rising edge
-    after reset).
+    is in the trace and was driven) was not 1 just before the edge are not compared (counted in
+    `edges_skipped`), but they are counted in the cycle numbers. `no_edge`: no edge was compared
+    (the failure came before the first rising edge after reset; `reset_low` if rst_n never rose).
+    `same` with `truncated`: the edges up to `cycle_limit` match, later ones were not compared.
+    `gl_known_before` (differs): the first differing pin had a fully known gate-level value at
+    an earlier compared edge.
     """
     clock = rtl.get(CLOCK)
     pins = [pin for pin in PINS if pin in rtl and pin in gl]
@@ -126,11 +129,30 @@ def first_difference(
     times = {pin: ([t for t, _ in rtl[pin]], [t for t, _ in gl[pin]]) for pin in pins}
     reset = rtl.get(RESET)
     reset_times = [t for t, _ in reset] if reset else []
+    # A test that never drives rst_n has no reset to wait for (and no time-zero artefact: that
+    # needs rst_n to be 0 at time zero), so then every edge is compared.
+    held = [
+        bits
+        for t, bits in (reset or [])
+        if bits in ("0", "1") and (stop_ns is None or t <= stop_ns)
+    ]
+    wait_for_reset = bool(held)
     compared = 0
-    for cycle, edge in enumerate(edges[:max_cycles], start=1):
+    skipped = 0
+    gl_known: set[str] = set()  # pins whose gate-level value was fully known at an earlier edge
+    for cycle, edge in enumerate(edges, start=1):
         if stop_ns is not None and edge > stop_ns:
             break
-        if reset and _before(reset, reset_times, edge) != "1":
+        if cycle > max_cycles:
+            return {
+                "state": "same",
+                "cycles_compared": compared,
+                "edges_skipped": skipped,
+                "truncated": True,
+                "cycle_limit": max_cycles,
+            }
+        if wait_for_reset and _before(reset or [], reset_times, edge) != "1":
+            skipped += 1
             continue  # reset is still held: the gates may not have settled yet
         compared += 1
         differing = []
@@ -141,17 +163,27 @@ def first_difference(
                 differing.append(
                     {"signal": pin.removeprefix("tb."), "rtl": a or "-", "gl": b or "-"}
                 )
+            elif b is not None and not set(b) & set("xz"):
+                gl_known.add(pin)
         if differing:
+            first_pin = "tb." + differing[0]["signal"]
             return {
                 "state": "differs",
                 "cycle": cycle,
                 "time_ns": round(edge, 3),
                 "cycles_compared": compared,
+                "edges_skipped": skipped,
+                "gl_known_before": first_pin in gl_known,
                 "signals": differing[:MAX_SIGNALS_SHOWN],
             }
     if compared == 0:
-        return {"state": "no_edge", "cycles_compared": 0}
-    return {"state": "same", "cycles_compared": compared}
+        # `reset_low`: rst_n was driven but never reached 1 before the failure.
+        return {
+            "state": "no_edge",
+            "cycles_compared": 0,
+            "reset_low": wait_for_reset and "1" not in held,
+        }
+    return {"state": "same", "cycles_compared": compared, "edges_skipped": skipped}
 
 
 def _before(series: list[tuple[float, str]], times: list[float], edge: float) -> str | None:

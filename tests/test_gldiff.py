@@ -57,7 +57,11 @@ def test_the_first_difference_is_sampled_just_before_the_edge() -> None:
         (31.0, "00000011"),
     ]
     a, b = traces(rtl, gl)
-    assert gldiff.first_difference(a, b) == {"state": "same", "cycles_compared": 6}
+    assert gldiff.first_difference(a, b) == {
+        "state": "same",
+        "cycles_compared": 6,
+        "edges_skipped": 0,
+    }
 
 
 def test_an_unknown_start_is_reported_at_the_first_edge() -> None:
@@ -80,7 +84,11 @@ def test_edges_while_reset_is_held_are_not_compared() -> None:
     gl = [(0.0, "xxxxxxxx"), (11.0, "00000000")]
     a, b = traces(rtl, gl)
     a["tb.rst_n"] = reset_trace(35.0)
-    assert gldiff.first_difference(a, b) == {"state": "same", "cycles_compared": 3}
+    assert gldiff.first_difference(a, b) == {
+        "state": "same",
+        "cycles_compared": 3,
+        "edges_skipped": 3,
+    }
 
 
 def test_a_difference_after_reset_is_reported_with_the_absolute_cycle() -> None:
@@ -95,9 +103,59 @@ def test_a_difference_after_reset_is_reported_with_the_absolute_cycle() -> None:
 def test_a_failure_before_reset_is_released_has_nothing_to_compare() -> None:
     a, b = traces([(0.0, "00000000")], [(0.0, "xxxxxxxx")])
     a["tb.rst_n"] = reset_trace(1000.0)
-    assert gldiff.first_difference(a, b) == {"state": "no_edge", "cycles_compared": 0}
+    # Reset does rise, only later than the failure: not "stayed low".
+    assert gldiff.first_difference(a, b, stop_ns=60.0) == {
+        "state": "no_edge",
+        "cycles_compared": 0,
+        "reset_low": True,
+    }
     only_start = {**a, gldiff.CLOCK: [(0.0, "1")]}
     assert gldiff.first_difference(only_start, b)["state"] == "no_edge"
+
+
+def test_a_failure_before_the_first_edge_after_reset_is_not_reset_low() -> None:
+    a, b = traces([(0.0, "00000000")], [(0.0, "xxxxxxxx")])
+    a["tb.rst_n"] = reset_trace(35.0)
+    found = gldiff.first_difference(a, b, stop_ns=38.0)
+    assert found == {"state": "no_edge", "cycles_compared": 0, "reset_low": False}
+
+
+def test_a_test_that_never_drives_reset_is_compared_at_every_edge() -> None:
+    rtl = [(0.0, "00000000")]
+    gl = [(0.0, "xxxxxxxx")]
+    a, b = traces(rtl, gl)
+    a["tb.rst_n"] = [(0.0, "x")]  # declared in the testbench but never driven
+    found = gldiff.first_difference(a, b)
+    assert (found["state"], found["cycle"], found["time_ns"]) == ("differs", 1, 10.0)
+    assert gldiff.first_difference(a, b, stop_ns=5.0)["state"] == "no_edge"
+    # rst_n driven low after some time: only from then on does the reset matter.
+    a["tb.rst_n"] = [(0.0, "x"), (20.0, "0")]
+    assert gldiff.first_difference(a, b, stop_ns=25.0)["state"] == "no_edge"
+
+
+def test_an_x_that_was_known_before_is_marked() -> None:
+    rtl = [(0.0, "00000000"), (30.0, "00000001")]
+    a, b = traces(rtl, [(0.0, "00000000"), (35.0, "xxxxxxxx")])
+    found = gldiff.first_difference(a, b)
+    assert found["state"] == "differs" and found["cycle"] == 4
+    assert found["gl_known_before"] is True
+    a, b = traces([(0.0, "00000000")], [(0.0, "xxxxxxxx")])
+    assert gldiff.first_difference(a, b)["gl_known_before"] is False
+
+
+def test_edges_past_the_cycle_cap_are_not_called_matching() -> None:
+    a, b = traces([(0.0, "00000000")], [(0.0, "00000000")])
+    found = gldiff.first_difference(a, b, stop_ns=55.0, max_cycles=3)
+    assert found == {
+        "state": "same",
+        "cycles_compared": 3,
+        "edges_skipped": 0,
+        "truncated": True,
+        "cycle_limit": 3,
+    }
+    # A failure inside the cap is a plain match; so is one exactly at the cap.
+    assert "truncated" not in gldiff.first_difference(a, b, stop_ns=35.0, max_cycles=3)
+    assert "truncated" not in gldiff.first_difference(a, b, stop_ns=30.0, max_cycles=3)
 
 
 def test_the_cycle_number_counts_rising_edges() -> None:
@@ -114,7 +172,11 @@ def test_nothing_after_the_failure_is_compared() -> None:
     rtl = [(0.0, "00000000")]
     gl = [(0.0, "00000000"), (41.0, "00000001")]
     a, b = traces(rtl, gl)
-    assert gldiff.first_difference(a, b, stop_ns=25.0) == {"state": "same", "cycles_compared": 2}
+    assert gldiff.first_difference(a, b, stop_ns=25.0) == {
+        "state": "same",
+        "cycles_compared": 2,
+        "edges_skipped": 0,
+    }
     assert gldiff.first_difference(a, b)["state"] == "differs"
 
 

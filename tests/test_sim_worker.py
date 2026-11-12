@@ -556,3 +556,27 @@ def test_a_hanging_rtl_rerun_runs_out_of_time_and_keeps_the_gl_result(
     )
     assert got == {"state": "unavailable", "reason": "the RTL rerun ran out of time"}
     assert time.monotonic() - started < 10
+
+
+def test_rtl_failed_is_about_the_first_failing_gate_level_test_by_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gl_tests = [
+        {"name": "test_a", "module": "test", "outcome": "pass"},
+        {"name": "test_b", "module": "test", "outcome": "fail"},
+    ]
+
+    def rtl_run(failing: str) -> dict[str, Any]:
+        tests = [
+            {"name": n, "module": "test", "outcome": "fail" if n == failing else "pass"}
+            for n in ("test_a", "test_b")
+        ]
+        return {"state": "ran", "tests": tests, "wave_file": tmp_path / "rtl.fst"}
+
+    monkeypatch.setattr(
+        sim.gldiff, "compare_files", lambda *a: {"state": "same", "cycles_compared": 1}
+    )
+    for failing, expected in (("test_a", False), ("test_b", True)):
+        monkeypatch.setattr(sim, "simulate", lambda *a, _f=failing, **k: rtl_run(_f))
+        got = sim._first_difference("chip", tmp_path, None, gl_tests, tmp_path / "gl.fst", 1.0)
+        assert got["rtl_failed"] is expected, failing

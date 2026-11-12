@@ -391,7 +391,8 @@ def test_a_failing_gate_level_run_reports_the_first_difference_on_the_pins(tmp_p
     result = failing_gl(tmp_path, DIFFERS)
     lines = result.summary.splitlines()
     assert (
-        "First difference on the pins: uo_out at clock cycle 3 (t=30 ns): "
+        "First difference on the pins: uo_out at clock cycle 3 "
+        "(counted from the start of the first test; t=30 ns): "
         "RTL 00000001, gate level xxxxxxxx (uio_oe differ at the same cycle)."
     ) in lines
     assert any("have no reset or rely on an initial value" in ln for ln in lines)
@@ -406,7 +407,7 @@ def test_a_failing_gate_level_run_reports_the_first_difference_on_the_pins(tmp_p
 
 def test_the_report_says_when_the_rtl_fails_too(tmp_path: Path) -> None:
     result = failing_gl(tmp_path, {**DIFFERS, "rtl_failed": True})
-    assert "The same tests also fail on the RTL, so look at the design or the test first." in (
+    assert "The same test also fails on the RTL, so look at the design or the test first." in (
         result.summary
     )
 
@@ -426,6 +427,64 @@ def test_a_failure_before_the_first_edge_is_not_called_a_missing_clock(tmp_path:
     assert "before reset was released" in result.summary
 
 
+def test_a_reset_held_low_until_the_failure_says_how_to_release_it(tmp_path: Path) -> None:
+    result = failing_gl(tmp_path, {"state": "no_edge", "cycles_compared": 0, "reset_low": True})
+    assert (
+        "rst_n stayed low until the failure: hold it low for a few clock cycles, then set it "
+        "to 1." in result.summary
+    )
+    assert "before reset was released" not in result.summary
+
+
+def test_x_after_a_known_start_is_not_blamed_on_a_missing_reset(tmp_path: Path) -> None:
+    result = failing_gl(tmp_path, {**DIFFERS, "gl_known_before": True})
+    assert "The gates turned unknown (x) at that cycle while the RTL has a value." in (
+        result.summary
+    )
+    assert "never drove (ui_in, uio_in, ena)" in result.summary
+    assert "no reset" not in result.summary and "Use the reset" not in result.summary
+    assert summary_within_limits(result.summary)
+
+
+def test_matching_pins_with_the_same_test_failing_on_the_rtl_blames_the_design(
+    tmp_path: Path,
+) -> None:
+    same = {"state": "same", "cycles_compared": 12, "rtl_failed": True}
+    result = failing_gl(tmp_path, same)
+    assert (
+        "The pins match the RTL, and the same test fails on the RTL too: the problem is in the "
+        "design or the test, not in the gates."
+    ) in result.summary
+    assert "internal signal" not in result.summary
+
+
+def test_matching_pins_say_edges_in_reset_were_skipped(tmp_path: Path) -> None:
+    same = {"state": "same", "cycles_compared": 12, "edges_skipped": 2}
+    assert "every clock edge after reset until the failure" in failing_gl(tmp_path, same).summary
+
+
+def test_a_comparison_cut_off_at_the_cap_does_not_claim_a_match(tmp_path: Path) -> None:
+    cut = {
+        "state": "same",
+        "cycles_compared": 20000,
+        "truncated": True,
+        "cycle_limit": 20000,
+    }
+    result = failing_gl(tmp_path, cut)
+    assert (
+        "The pins match the RTL for the first 20,000 clock cycles; the failure came later and "
+        "was not compared."
+    ) in result.summary
+    assert "until the failure" not in result.summary
+    assert result.details["gl"]["diff"]["truncated"] is True
+
+
+@pytest.mark.parametrize("field", ["truncated", "gl_known_before", "reset_low"])
+def test_the_new_diff_fields_are_validated(tmp_path: Path, field: str) -> None:
+    result = failing_gl(tmp_path, {**DIFFERS, field: "maybe"})
+    assert not result.ok and "unreadable result" in result.summary
+
+
 def test_a_failing_gate_level_run_without_waves_still_explains_the_tb_pins(
     tmp_path: Path,
 ) -> None:
@@ -433,6 +492,8 @@ def test_a_failing_gate_level_run_without_waves_still_explains_the_tb_pins(
     hint = " ".join(result.next_hints)
     assert "tb pins" in hint and "core.count[0]" in hint
     assert "waves=True" not in hint and "verilator" not in hint.lower()
+    assert "No gate-level wave file was kept for this run" in hint
+    assert "after the first clock edge" not in hint
 
 
 @pytest.mark.parametrize(

@@ -40,13 +40,15 @@ A latch you wrote on purpose (`always_latch`) passes with a warning. An accident
 
 ## What gate-level simulation proves
 
-`run_tests(simulator="icarus", gl=true)` runs your same tests, unchanged, on the real sky130 gates that synthesis made (plus the cell models of the chip library). Its summary starts with "Gate-level simulation" so you never mix it up with an RTL run, and it never changes the RTL results or the RTL waves (its own waves are in `build/waves/icarus-gl/`).
+`run_tests(simulator="icarus", gl=true)` runs your same tests, unchanged, on the real sky130 gates that synthesis made (plus the cell models of the chip library). Its summary starts with "Gate-level simulation", and it never changes the RTL results or waves (its own waves are in `build/waves/icarus-gl/`).
 
 A pass means the gates behave as the tests say. This is what catches reset and initial-value bugs (a register that only works because the simulator started it at 0, while a real flip-flop powers up unknown), X (unknown) values that reach the outputs, and any other place where the gates and the RTL simulation disagree.
 
-It does not prove timing: the cell models use a fixed 1 ns unit delay, with no real gate delays, wire delays or clock-to-output times. Timing comes with layout in a later milestone. It also does not prove the design is right where the tests say nothing.
+It does not prove timing: the cell models use a fixed 1 ns unit delay, with no real gate delays, wire delays or clock-to-output times. Timing comes with layout in a later milestone. Nor does it prove the design is right where the tests say nothing.
 
-When a gate-level test fails, the summary says "First difference on the pins": the signal, the clock cycle, and the RTL value against the gate-level value (x means unknown). An unknown value almost always means a register without a reset. Fix it with the reset, not with an `initial` value or a default value: a real chip ignores those. Look at `build/waves/icarus-gl/tb.fst` with `inspect_waves`. In a gate-level run the tests can only touch the `tb` pins (`explain('cocotb2-tests')`).
+When a gate-level test fails, the summary says "First difference on the pins": the signal, the clock cycle, and the RTL value against the gate-level value (x means unknown). Look at `build/waves/icarus-gl/tb.fst` with `inspect_waves`. In a gate-level run the tests can only touch the `tb` pins (`explain('cocotb2-tests')`).
+
+An x at the first compared cycle means a register without a reset: use the reset, not an `initial` value, which a real chip ignores. An x that shows up later usually means an input the test never drove (`ui_in`, `uio_in`, `ena`): the RTL treats an unknown `if` as false, the gates do not.
 
 ## Too big for the tile
 

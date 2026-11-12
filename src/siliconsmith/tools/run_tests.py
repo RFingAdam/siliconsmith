@@ -151,6 +151,11 @@ class _Diff(_Strict):
     cycles_compared: int = Field(default=0, ge=0)
     signals: list[_DiffPin] = Field(default_factory=list, max_length=8)
     rtl_failed: bool = False
+    edges_skipped: int = Field(default=0, ge=0)
+    gl_known_before: bool = False
+    reset_low: bool = False
+    truncated: bool = False
+    cycle_limit: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _differs_has_a_place(self) -> _Diff:
@@ -277,8 +282,50 @@ def _failure_lines(first: dict[str, Any]) -> list[str]:
 
 def _pin_values(diff: dict[str, Any]) -> str:
     shown = diff["signals"][0]
-    text = f"{shown['signal']} at clock cycle {diff['cycle']} (t={diff['time_ns']:g} ns)"
+    text = (
+        f"{shown['signal']} at clock cycle {diff['cycle']} "
+        f"(counted from the start of the first test; t={diff['time_ns']:g} ns)"
+    )
     return f"{text}: RTL {shown['rtl']}, gate level {shown['gl']}"
+
+
+def _same_lines(diff: dict[str, Any]) -> list[str]:
+    if diff.get("truncated"):
+        limit = diff.get("cycle_limit") or diff["cycles_compared"]
+        lines = [
+            f"The pins match the RTL for the first {limit:,} clock cycles; the failure came "
+            "later and was not compared."
+        ]
+    elif diff.get("rtl_failed"):
+        return [
+            "The pins match the RTL, and the same test fails on the RTL too: the problem is in "
+            "the design or the test, not in the gates."
+        ]
+    else:
+        edges = "every clock edge after reset" if diff.get("edges_skipped") else "every clock edge"
+        return [
+            f"The pins uo_out, uio_out and uio_oe match the RTL at {edges} until the failure "
+            f"({diff['cycles_compared']} cycles compared), so the failing check most likely "
+            "reads something that is not a pin (an internal signal is not in the netlist) or "
+            "depends on timing."
+        ]
+    if diff.get("rtl_failed"):
+        lines.append(
+            "The same test also fails on the RTL, so look at the design or the test first."
+        )
+    return lines
+
+
+def _no_edge_reason(diff: dict[str, Any]) -> str:
+    if diff.get("reset_low"):
+        return (
+            "rst_n stayed low until the failure: hold it low for a few clock cycles, then set "
+            "it to 1"
+        )
+    return (
+        "the failure came before reset was released and the first clock edge after it, so "
+        "there is nothing to compare yet"
+    )
 
 
 def _diff_lines(diff: dict[str, Any]) -> list[str]:
@@ -291,29 +338,28 @@ def _diff_lines(diff: dict[str, Any]) -> list[str]:
             lines[0] = lines[0][:-1] + f" ({', '.join(others)} differ at the same cycle)."
         shown = diff["signals"][0]
         if "x" in shown["gl"] and "x" not in shown["rtl"]:
-            lines.append(
-                "The gates start unknown (x) where the RTL starts at a value: some flip-flops "
-                "have no reset or rely on an initial value, which a real chip ignores. Use the "
-                "reset."
-            )
+            if diff.get("gl_known_before"):
+                lines.append(
+                    "The gates turned unknown (x) at that cycle while the RTL has a value. Often "
+                    "an input the test never drove (ui_in, uio_in, ena): the RTL treats an "
+                    "unknown `if` as false, the gates do not."
+                )
+            else:
+                lines.append(
+                    "The gates start unknown (x) where the RTL starts at a value: some "
+                    "flip-flops have no reset or rely on an initial value, which a real chip "
+                    "ignores. Use the reset."
+                )
         if diff.get("rtl_failed"):
             lines.append(
-                "The same tests also fail on the RTL, so look at the design or the test first."
+                "The same test also fails on the RTL, so look at the design or the test first."
             )
         return lines
     if state == "same":
-        return [
-            "The pins uo_out, uio_out and uio_oe match the RTL at every clock edge until the "
-            f"failure ({diff['cycles_compared']} cycles compared), so the failing check most "
-            "likely reads something that is not a pin (an internal signal is not in the "
-            "netlist) or depends on timing."
-        ]
+        return _same_lines(diff)
     reason = diff.get("reason") or {
         "no_clock": "the waves have no tb.clk",
-        "no_edge": (
-            "the failure came before reset was released and the first clock edge after it, "
-            "so there is nothing to compare yet"
-        ),
+        "no_edge": _no_edge_reason(diff),
         "no_pins": "the waves have none of the chip's output pins",
         "too_big": "a wave file is too large to compare",
     }.get(state, "it could not be done")
@@ -492,8 +538,7 @@ def _finish(
                 f"Look at the gate-level pins with inspect_waves(path={waves!r}, "
                 "signals=['uo_out', ...]). "
                 if waves
-                else "The gate-level waves are kept in build/waves/icarus-gl/tb.fst when a test "
-                "fails after the first clock edge. "
+                else "No gate-level wave file was kept for this run (see the note above). "
             )
             hints.append(
                 where + "A gate-level test can only use the tb pins "

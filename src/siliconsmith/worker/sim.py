@@ -519,13 +519,28 @@ def _first_difference(
     rtl_wave = rtl.pop("wave_file", None)
     if rtl["state"] != "ran" or rtl_wave is None:
         return {"state": "unavailable", "reason": "the RTL rerun did not produce a wave file"}
-    rtl_failed = any(t["outcome"] in ("fail", "error") for t in rtl["tests"])
+    rtl_failed = _same_test_failed(tests, rtl["tests"])
     try:
         found = gldiff.compare_files(rtl_wave, gl_wave, gldiff.failing_end_ns(tests))
     except Exception as exc:  # pywellen problems: report, do not fail
         return {"state": "unavailable", "reason": f"cannot read the waves ({type(exc).__name__})"}
     found["rtl_failed"] = rtl_failed
     return found
+
+
+def _same_test_failed(gl_tests: list[dict[str, Any]], rtl_tests: list[dict[str, Any]]) -> bool:
+    """Whether the first test that failed on the gates (by module and name) also failed on the
+    RTL. Another test failing on the RTL says nothing about this one."""
+    bad = ("fail", "error")
+    first = next((t for t in gl_tests if t.get("outcome") in bad), None)
+    if first is None:
+        return False
+    return any(
+        t.get("outcome") in bad
+        and t.get("name") == first.get("name")
+        and t.get("module") == first.get("module")
+        for t in rtl_tests
+    )
 
 
 def run(request: dict[str, Any]) -> dict[str, Any]:
