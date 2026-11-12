@@ -32,7 +32,7 @@ from siliconsmith.paths import FileTooLargeError, MissingFileError, safe_read
 from siliconsmith.runners.base import WorkerOutcome
 from siliconsmith.runners.worker_cache import ensure_worker_cache
 
-DEFAULT_IMAGE = "ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3a85666cceb4"
+DEFAULT_IMAGE = "ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3694aba408b5"
 IMAGE_ENV = "SILICONSMITH_IMAGE"
 
 MAX_RESULT_BYTES = 1024 * 1024
