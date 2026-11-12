@@ -82,8 +82,8 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - The demo runner sets `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0`. Claude Code moves an MCP call that runs longer than 2 minutes to the background, and in `claude -p` the result of such a call is lost.
 - Update the status lines in the README and PLAN.md once M0 works.
 **Acceptance criteria**
-- [ ] A recorded session (transcript in `docs/demos/`): starting from an empty dir and the prompt "8-bit counter on uo_out, count enable on ui_in[0]", the agent reaches passing tests in each front-end without any human code edits. *Proof:* `docs/demos/verify_demo.py` and the committed transcripts: the agent's tests **and** the held-out reference test pass on Icarus **and** Verilator for each front-end.
-- [ ] Number of loop iterations recorded per front-end. *Proof:* the metrics table, which lists every attempt.
+- [x] A recorded session (transcript in `docs/demos/`): starting from an empty dir and the prompt "8-bit counter on uo_out, count enable on ui_in[0]", the agent reaches passing tests in each front-end without any human code edits. *Proof:* `docs/demos/verify_demo.py` and the committed transcripts: the agent's tests **and** the held-out reference test pass on Icarus **and** Verilator for each front-end.
+- [x] Number of loop iterations recorded per front-end. *Proof:* the metrics table, which lists every attempt.
 
 ## [M0-7] Spec capture (`spec.yaml`)
 **Labels:** `track:digital` `milestone:M0` `mcp`

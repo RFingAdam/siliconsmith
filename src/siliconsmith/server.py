@@ -26,18 +26,18 @@ FRONTENDS = ("amaranth", "myhdl", "verilog")
 
 INSTRUCTIONS = (
     "Siliconsmith designs small digital chips for Tiny Tapeout with open-source tools. "
-    "Loop: create_project once, then write_spec first (spec.yaml: clock, pins, "
-    "requirements R1, R2, ...), then tests with write_test (each test docstring says "
-    "'Covers: R1'), then the design with write_rtl, then emit_verilog to generate and lint "
-    "the Verilog, then run_tests on icarus and verilator. If a test fails, rerun it with "
-    "waves=True and read signals with inspect_waves. Call status to see what has passed. "
-    "Only the owner can approve the spec, on the command line: never try. "
-    "Use only the tools this server lists. "
-    "Every project tool takes the project name first. Write whole files, never diffs. "
+    "Start with explain('chip-design-loop'). The loop: create_project, write_spec (spec.yaml: "
+    "clock, pins, requirements R1, R2, ...), write_test (docstring 'Covers: R1'), write_rtl, "
+    "emit_verilog, then run_tests on icarus and verilator; use waves=True and inspect_waves "
+    "when a failure is unclear. Call status to see what has passed. "
+    "Never edit a test to make a design pass; stop after 8 tries. "
+    "Only the owner approves the spec, on the command line: never try. "
+    "Use only the tools this server lists. Every project tool takes the project name first. "
+    "Write whole files, never diffs. "
     "Your design is the core module named after the project, using the Tiny Tapeout pins: "
-    "clk, rst_n (active low), ena, ui_in, uio_in as inputs; uo_out, uio_out, uio_oe as outputs. "
+    "clk, rst_n (active low), ena, ui_in, uio_in in; uo_out, uio_out, uio_oe out. "
     "The tt_um_<name> wrapper is generated; do not edit it. "
-    "Rejected paths and bad arguments come back as tool errors that say what to do instead."
+    "Bad arguments come back as tool errors that say what to do."
 )
 
 

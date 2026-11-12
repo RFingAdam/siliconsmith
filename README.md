@@ -2,7 +2,7 @@
 
 An open-source AI chip-design agent. One MCP server, one pinned Docker toolchain, and a write-test-fix loop that an AI coding agent (Claude Code, Cursor, Codex) can run end to end.
 
-**Status:** digital milestone M0 is in progress. The project tools (create, list, read and write files) work today; emit and simulation arrive in later M0 steps; [ISSUES.md](ISSUES.md) and the GitHub issues track what has landed.
+**Status:** digital milestone M0 tools work: create a project, write the spec, RTL and tests, emit Verilog and lint it, simulate on Icarus and Verilator, look at waveforms, track what has passed with `status` and the validation ledger, and ask `explain` for the guides. Synthesis, layout and Tiny Tapeout export come in milestones M1 to M3. [ISSUES.md](ISSUES.md) and the GitHub issues track what has landed.
 
 Three tracks share the same server and toolchain:
 
@@ -22,8 +22,10 @@ The server runs on your machine and talks to the agent over standard input and o
 nothing is exposed on the network.
 
 Today the server offers `toolchain_info`, `create_project`, `list_files`, `read_file`,
-`write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests`, `inspect_waves` and
-`status`. Start
+`write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests`, `inspect_waves`,
+`status` and `explain`. `explain` answers from the packaged skills and a plain-English glossary: ask it for
+`explain('chip-design-loop')` first. New to digital design? Read the
+[beginner guide](docs/beginner-guide.md). Start
 with `write_spec`: `spec.yaml` says the clock, the pins and the numbered requirements, and
 everything else follows from it. `emit_verilog` turns the design (Amaranth, MyHDL or Verilog)
 into a checked Verilog core plus the Tiny Tapeout wrapper and lints it with Verilator.

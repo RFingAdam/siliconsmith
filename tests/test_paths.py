@@ -305,6 +305,8 @@ def test_paths_allow_list_accepts(frontend: str, rel: str, category: str) -> Non
         ("verilog", "test/rules.mk", "Makefile"),
         ("verilog", "Makefile", "Makefile"),
         ("verilog", "test/conftest.py", "conftest"),
+        ("verilog", "test/sitecustomize.py", "sitecustomize"),
+        ("amaranth", "hdl/usercustomize.py", "usercustomize"),
         ("verilog", "docs/verification.md", "generated"),
         ("verilog", "siliconsmith.toml", "written once"),
         ("verilog", "info.yaml", "create_project"),

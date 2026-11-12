@@ -24,6 +24,7 @@ TOOL_MODULES: tuple[str, ...] = (
     "run_tests",
     "inspect_waves",
     "status",
+    "explain",
 )
 
 

@@ -12,6 +12,18 @@ import zipfile
 from pathlib import Path
 
 PACKAGE_DIR = "src/siliconsmith/"
+# Package data the server cannot work without: the skills and the glossary that `explain` reads.
+REQUIRED_SKILLS = (
+    "chip-design-loop",
+    "tt-rules",
+    "amaranth-style",
+    "myhdl-style",
+    "cocotb2-tests",
+)
+REQUIRED_FILES = (
+    *(f"siliconsmith/skills/{name}/SKILL.md" for name in REQUIRED_SKILLS),
+    "siliconsmith/skills/glossary.md",
+)
 
 
 def tracked_package_files(root: Path) -> list[str]:
@@ -20,6 +32,14 @@ def tracked_package_files(root: Path) -> list[str]:
     ).stdout
     names = [name.decode() for name in out.split(b"\0") if name]
     return [n.removeprefix("src/") for n in names if not n.endswith(".pyc")]
+
+
+def expected_files(root: Path) -> list[str]:
+    """Every tracked package file, plus the skills and glossary even if not yet tracked."""
+    names = tracked_package_files(root)
+    on_disk = (root / PACKAGE_DIR).glob("skills/*/SKILL.md")
+    extra = [str(p.relative_to(root / "src")) for p in on_disk]
+    return sorted({*names, *REQUIRED_FILES, *extra})
 
 
 def missing_from_wheel(expected: list[str], wheel: Path) -> list[str]:
@@ -36,7 +56,7 @@ def main() -> int:
         if len(wheels) != 1:
             print(f"expected one wheel, found {len(wheels)}", file=sys.stderr)
             return 1
-        missing = missing_from_wheel(tracked_package_files(root), wheels[0])
+        missing = missing_from_wheel(expected_files(root), wheels[0])
     for name in missing:
         print(f"missing from wheel: {name}")
     if missing:
