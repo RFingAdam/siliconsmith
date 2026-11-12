@@ -57,6 +57,7 @@ def outcome(result: dict[str, Any] | None, **fields: Any) -> WorkerOutcome:
         "stdout_tail": "",
         "stderr_tail": "",
         "timed_out": False,
+        "run_id": RUN_ID,
     }
     values.update(fields)
     return WorkerOutcome(**values)
@@ -240,7 +241,6 @@ def test_core_syntax_error_reported_as_lint(tmp_path: Path) -> None:
         None,
         {"ok": "yes"},
         {"ok": True, "stage": "done"},  # no ports
-        worker_result(run_id="../../etc"),
         worker_result(lint=[{"severity": "info"}]),
         worker_result(ok=True, stage="lint", lint=[finding(1)], lint_total=1),  # ok contradicts
         worker_result(ok=False, stage="done"),
@@ -366,3 +366,98 @@ async def test_tool_through_mcp(tmp_path: Path) -> None:
     assert result.structured_content is not None
     assert set(result.structured_content) == {"ok", "summary", "details", "artifacts", "next_hints"}
     assert result.structured_content["ok"] is True
+
+
+# -- review fixes ------------------------------------------------------------------------------
+
+
+def test_over_long_worker_text_is_clipped_not_unreadable() -> None:
+    """The worker clips to the host's limits, so a design failure is never 'unreadable'."""
+    from siliconsmith.worker.limits import clamp_result
+
+    raw = {
+        "ok": False,
+        "stage": "ports",
+        "ports": None,
+        "message": "x" * 5000,
+        "lint": [
+            {
+                "severity": "error",
+                "code": "C" * 99,
+                "file": "f" * 999,
+                "line": 1,
+                "col": 1,
+                "msg": "m" * 5000,
+                "detail": "d" * 5000,
+            }
+        ],
+        "python_error": {
+            "kind": "K" * 999,
+            "file": "f" * 999,
+            "line": 1,
+            "col": 0,
+            "msg": "m" * 5000,
+            "source": "s" * 5000,
+        },
+    }
+    from siliconsmith.tools.emit_verilog import _EmitResult
+
+    _EmitResult.model_validate(clamp_result(raw))
+
+
+def test_many_bad_ports_give_the_ports_failure(tmp_path: Path) -> None:
+    from siliconsmith.worker.limits import MESSAGE_MAX
+    from siliconsmith.worker.wrapper_gen import check_core_ports, describe_port_problems
+
+    ports = {f"data_in_{i}": ("input", 1) for i in range(40)}
+    text = describe_port_problems(check_core_ports(ports))
+    assert len(text) < MESSAGE_MAX and "and 32 more" in text
+    assert text.count("allowed ports") == 1
+    result = worker_result(ok=False, stage="ports", message=text, ports=None, wrapper_ports=None)
+    ctx, _ = make(tmp_path, "verilog", EmitRunner(outcome(result)))
+    out = emit(ctx, "chip")
+    assert out.details["stage"] == "ports"
+    assert "unreadable" not in out.summary
+
+
+def test_missing_run_id_is_unreadable_not_an_assert(tmp_path: Path) -> None:
+    runner = EmitRunner(outcome(worker_result(), run_id=None))
+    ctx, _ = make(tmp_path, "amaranth", runner)
+    assert "unreadable" in emit(ctx, "chip").summary
+
+
+def test_oversized_generated_core_is_a_design_failure(tmp_path: Path) -> None:
+    runner = EmitRunner(outcome(worker_result()), core=CORE + "// pad\n" * 40000)
+    ctx, project = make(tmp_path, "amaranth", runner)
+    result = emit(ctx, "chip")
+    assert not result.ok and "larger than" in result.summary
+    assert not (project / "src" / "chip.v").exists()
+
+
+def test_symlinked_run_root_does_not_delete_outside_files(tmp_path: Path) -> None:
+    victim = tmp_path / "victim"
+    (victim / "sub").mkdir(parents=True)
+    (victim / "notes.txt").write_text("keep")
+    (victim / "sub" / "deep.txt").write_text("keep")
+
+    class Evil(EmitRunner):
+        def run(
+            self, verb: str, request: Any, *, project_dir: Path, timeout_s: float
+        ) -> WorkerOutcome:
+            result = super().run(verb, request, project_dir=project_dir, timeout_s=timeout_s)
+            ss = project_dir / "build" / ".ss"
+            for child in ss.iterdir():
+                for sub in (child / "out").iterdir():
+                    sub.unlink()
+                (child / "out").rmdir()
+                child.rmdir()
+            ss.rmdir()
+            ss.symlink_to("../../../victim")
+            return result
+
+    ctx, project = make(tmp_path, "amaranth", Evil(outcome(worker_result())))
+    with pytest.raises(ToolError, match="symlink"):
+        emit(ctx, "chip")
+    assert sorted(p.name for p in victim.iterdir()) == ["notes.txt", "sub"]
+    assert (victim / "sub" / "deep.txt").read_text() == "keep"
+    assert not (project / "build" / ".ss").exists()

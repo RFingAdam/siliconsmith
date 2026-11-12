@@ -18,6 +18,8 @@ class WorkerOutcome:
     stdout_tail: str
     stderr_tail: str
     timed_out: bool
+    # The run folder the runner made, `build/.ss/<run_id>`. The container's own claim is not used.
+    run_id: str | None = None
 
 
 class Runner(Protocol):

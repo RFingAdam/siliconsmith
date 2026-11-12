@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import threading
@@ -192,6 +193,31 @@ def make_run_dir(build: Path, run_id: str) -> None:
             fd = child
     except OSError as exc:
         raise UnsafeProjectError(f"cannot create the run folder under {build}: {exc}") from exc
+    finally:
+        os.close(fd)
+
+
+def remove_run_dirs(build: Path) -> None:
+    """Delete `build/.ss` (the worker's run folders) without following any symlink.
+
+    Container code can replace `build/.ss`, or anything inside it, with a symlink. Everything
+    here goes through file descriptors: `build` is opened with O_NOFOLLOW, a `.ss` that is not a
+    real directory is only unlinked, and `rmtree` on a descriptor never follows links.
+    """
+    try:
+        fd = os.open(build, _DIR_FLAGS)
+    except OSError:
+        return
+    try:
+        try:
+            mode = os.lstat(".ss", dir_fd=fd).st_mode
+        except OSError:
+            return
+        with contextlib.suppress(OSError):
+            if stat.S_ISDIR(mode):
+                shutil.rmtree(".ss", ignore_errors=True, dir_fd=fd)
+            else:
+                os.unlink(".ss", dir_fd=fd)
     finally:
         os.close(fd)
 
@@ -450,6 +476,7 @@ class DockerRunner:
         except ResultError as exc:
             stderr_tail = f"[siliconsmith] result rejected: {exc}\n{stderr_tail}"
         return WorkerOutcome(
+            run_id=run_id,
             exit_code=proc.returncode,
             result=result,
             stdout_tail=stdout_tail,

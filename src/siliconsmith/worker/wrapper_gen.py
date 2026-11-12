@@ -50,9 +50,7 @@ def check_core_ports(ports: Mapping[str, tuple[str, int]]) -> list[str]:
     problems = []
     for port, (direction, width) in ports.items():
         if port not in TT_PORTS:
-            problems.append(
-                f"port {port!r} is not a Tiny Tapeout pin; allowed: {', '.join(TT_PORTS)}"
-            )
+            problems.append(f"port {port!r} is not a Tiny Tapeout pin")
             continue
         want_direction, want_width = TT_PORTS[port]
         if direction != want_direction:
@@ -60,6 +58,16 @@ def check_core_ports(ports: Mapping[str, tuple[str, int]]) -> list[str]:
         elif width != want_width:
             problems.append(f"port {port!r} must be {want_width} bit(s) wide, not {width}")
     return problems
+
+
+def describe_port_problems(problems: list[str], limit: int = 8) -> str:
+    """The problems as text: the first `limit`, a count of the rest, and the allowed pins once."""
+    lines = problems[:limit]
+    if len(problems) > limit:
+        lines.append(f"... and {len(problems) - limit} more")
+    if any("is not a Tiny Tapeout pin" in p for p in problems):
+        lines.append(f"The allowed ports are: {', '.join(TT_PORTS)}.")
+    return "\n".join(lines)
 
 
 def generate_wrapper(name: str, core_ports: Mapping[str, str], author: str) -> str:

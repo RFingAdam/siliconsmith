@@ -14,10 +14,6 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import contextlib
-import os
-import shutil
-from pathlib import Path
 from typing import Any, Literal
 
 import yaml
@@ -29,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from siliconsmith.context import ServerContext
 from siliconsmith.frontends import Frontend, get_frontend
 from siliconsmith.paths import (
+    FileTooLargeError,
     MissingFileError,
     atomic_write,
     project_lock,
@@ -37,10 +34,11 @@ from siliconsmith.paths import (
 from siliconsmith.project import Project, validate_text
 from siliconsmith.result import Artifact, ToolResult
 from siliconsmith.runners.base import WorkerOutcome
-from siliconsmith.runners.docker import ToolchainError
+from siliconsmith.runners.docker import ToolchainError, remove_run_dirs
 from siliconsmith.tools._common import MAX_WRITE_BYTES, get_project
+from siliconsmith.worker import limits as lim
 from siliconsmith.worker import pyerror
-from siliconsmith.worker.wrapper_gen import TT_PORTS, check_core_ports
+from siliconsmith.worker.wrapper_gen import TT_PORTS, check_core_ports, describe_port_problems
 
 EMIT_TIMEOUT_S = 300.0
 MAX_INFO_BYTES = 64 * 1024
@@ -60,21 +58,21 @@ class _Port(_Strict):
 
 class _Finding(_Strict):
     severity: Literal["warning", "error"]
-    code: str = Field(max_length=40)
-    file: str = Field(max_length=200)
+    code: str = Field(max_length=lim.FINDING_CODE_MAX)
+    file: str = Field(max_length=lim.FILE_MAX)
     line: int = Field(ge=0)
     col: int = Field(ge=0)
-    msg: str = Field(max_length=600)
-    detail: str = Field(default="", max_length=800)
+    msg: str = Field(max_length=lim.FINDING_MSG_MAX)
+    detail: str = Field(default="", max_length=lim.FINDING_DETAIL_MAX)
 
 
 class _PythonError(_Strict):
-    kind: str = Field(max_length=100)
-    file: str = Field(max_length=200)
+    kind: str = Field(max_length=lim.PYERR_KIND_MAX)
+    file: str = Field(max_length=lim.FILE_MAX)
     line: int | None = Field(default=None, ge=1)
     col: int | None = Field(default=None, ge=0)
-    msg: str = Field(max_length=800)
-    source: str | None = Field(default=None, max_length=300)
+    msg: str = Field(max_length=lim.PYERR_MSG_MAX)
+    source: str | None = Field(default=None, max_length=lim.PYERR_SOURCE_MAX)
 
 
 class _WorkerError(_Strict):
@@ -87,30 +85,14 @@ class _EmitResult(_Strict):
 
     ok: bool
     stage: Stage | None = None
-    run_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     ports: dict[str, _Port] | None = None
     wrapper_ports: dict[str, _Port] | None = None
-    lint: list[_Finding] = Field(default_factory=list, max_length=200)
+    lint: list[_Finding] = Field(default_factory=list, max_length=lim.MAX_FINDINGS)
     lint_total: int = Field(default=0, ge=0)
     python_error: _PythonError | None = None
-    message: str | None = Field(default=None, max_length=2000)
+    message: str | None = Field(default=None, max_length=lim.MESSAGE_MAX)
     core_generated: bool = False
     error: _WorkerError | None = None
-
-
-def _clean_out_folders(project_dir: Path) -> None:
-    """Remove `build/.ss/*` (the worker's run folders). Never follows a symlink."""
-    base = project_dir / "build" / ".ss"
-    try:
-        entries = list(os.scandir(base))
-    except OSError:
-        return
-    for entry in entries:
-        if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
-            with contextlib.suppress(OSError):
-                os.unlink(entry.path)
-        else:
-            shutil.rmtree(entry.path, ignore_errors=True)
 
 
 def _read_author(project: Project) -> str:
@@ -265,6 +247,7 @@ def _success_or_lint(
     frontend: Frontend,
     author: str,
     result: _EmitResult,
+    outcome: WorkerOutcome,
 ) -> ToolResult:
     """The pipeline reached the lint step: write the files and report the lint outcome."""
     from siliconsmith.wrapper import generate_wrapper
@@ -280,18 +263,31 @@ def _success_or_lint(
         return _failure(
             frontend,
             project,
-            ["The ports do not fit Tiny Tapeout:", *problems],
+            ["The ports do not fit Tiny Tapeout:", *describe_port_problems(problems).splitlines()],
             stage="ports",
             hints=[f"Fix the ports of the core in {frontend.entry(name)}, then call emit_verilog."],
             ports={n: p.model_dump() for n, p in result.ports.items()},
         )
     if frontend.generated:
-        assert result.run_id is not None
-        rel = f"build/.ss/{result.run_id}/out/{name}.v"
-        text = safe_read(project.dir, rel, MAX_WRITE_BYTES, allow_hidden=True).decode(
-            "utf-8", errors="replace"
+        if outcome.run_id is None:
+            return _unreadable(frontend, project, outcome, "the runner reported no run folder")
+        rel = f"build/.ss/{outcome.run_id}/out/{name}.v"
+        try:
+            text = safe_read(project.dir, rel, lim.MAX_CORE_READ_BYTES, allow_hidden=True).decode(
+                "utf-8", errors="replace"
+            )
+        except MissingFileError:
+            return _unreadable(frontend, project, outcome, "the generated Verilog is missing")
+        except FileTooLargeError:
+            text = ""
+            oversized = True
+        else:
+            oversized = False
+        reason = (
+            f"the generated Verilog is larger than {MAX_WRITE_BYTES} bytes"
+            if oversized
+            else _check_generated_core(name, text)
         )
-        reason = _check_generated_core(name, text)
         if reason:
             return _failure(
                 frontend,
@@ -391,7 +387,7 @@ def _handle_outcome(
             return _core_syntax_failure(project, frontend, result)
         if result.ports is None or result.wrapper_ports is None:
             return _unreadable(frontend, project, outcome, "the result has no ports")
-        return _success_or_lint(ctx, project, frontend, author, result)
+        return _success_or_lint(ctx, project, frontend, author, result, outcome)
     if result.python_error is not None:
         error = result.python_error.model_dump()
         return _python_failure(frontend, project, error)
@@ -442,7 +438,7 @@ def emit(ctx: ServerContext, project_name: str) -> ToolResult:
                 raise ToolError(str(exc)) from exc
             return _handle_outcome(ctx, project, frontend, author, outcome)
         finally:
-            _clean_out_folders(project.dir)
+            remove_run_dirs(project.dir / "build")
 
 
 DESCRIPTION = """\
@@ -450,7 +446,8 @@ Turn the project's design into Verilog and check it. For Amaranth and MyHDL this
 hdl/<name>.py in a container and writes the generated core to src/<name>.v; a Verilog project's \
 src/<name>.v is used as it is. The tool then checks the core's ports against the Tiny Tapeout \
 pins (names, directions, widths), regenerates the tt_um_<name> wrapper in src/project.v, and \
-lints everything with Verilator (-Wall; latches and multiple drivers are errors). ok is false \
+lints everything with Verilator (-Wall; latches are errors) and Yosys \
+`check -assert` (multiple drivers and logic loops are errors). ok is false \
 for a Python error (with file and line), bad ports, or any lint finding; details.lint lists \
 {severity, code, file, line, col, msg}. Takes a few seconds to a minute; the first call is the \
 slowest.

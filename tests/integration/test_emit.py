@@ -273,8 +273,16 @@ def yosys_ports(image: str, project: Path, mount: Path, command: str, top: str) 
 async def test_scaffold_ports_yosys(server: Client, tmp_path: Path, image: str, fe: str) -> None:
     async with server as client:
         project = await make_project(client, tmp_path, fe, name="chip")
+        scaffold_wrapper = (project / "src" / "project.v").read_bytes()
+        if fe == "verilog":  # the scaffold's own wrapper, read back before emit touches it
+            before = yosys_ports(
+                image, project, TT_DIR, "/work/src/project.v /work/src/chip.v", "tt_um_chip"
+            )
+            assert before == dict(TT_PORTS)
         # The untouched starter emits and lints clean (this covers the MyHDL starter too).
         out = await emit(client, "chip")
+        # emit regenerates the wrapper; it must be byte-identical to what create_project wrote.
+        assert (project / "src" / "project.v").read_bytes() == scaffold_wrapper
     assert out["ok"] is True, out["summary"]
     ours = yosys_ports(image, project, TT_DIR, "/work/src/project.v /work/src/chip.v", "tt_um_chip")
     reference = yosys_ports(image, project, TT_DIR, "/smoke/src/project.v", "tt_um_example")
@@ -295,3 +303,111 @@ def test_container_and_host_wrappers_are_identical(runner: DockerRunner, tmp_pat
     out_dir = project / "build" / ".ss" / outcome.result["run_id"] / "out"
     ports = {p: d["direction"] for p, d in outcome.result["ports"].items()}
     assert (out_dir / "project.v").read_text() == generate_wrapper("counter", ports, "Ada Lovelace")
+
+
+# -- review fixes: multiple drivers, long messages, hostile design code --------------------------
+
+TWO_ASSIGNS = """\
+`default_nettype none
+
+module counter (
+    input  wire [7:0] ui_in,
+    output wire [7:0] uo_out
+);
+  assign uo_out = ui_in;
+  assign uo_out = ~ui_in;
+endmodule
+"""
+TWO_ALWAYS = """\
+`default_nettype none
+
+module counter (
+    input  wire       clk,
+    input  wire [7:0] ui_in,
+    output reg  [7:0] uo_out
+);
+  always @(posedge clk) uo_out <= ui_in;
+  always @(posedge clk) uo_out <= ~ui_in;
+endmodule
+"""
+
+
+@pytest.mark.parametrize("source", [TWO_ASSIGNS, TWO_ALWAYS], ids=["assigns", "always"])
+async def test_multiple_drivers_are_errors(server: Client, tmp_path: Path, source: str) -> None:
+    async with server as client:
+        project = await make_project(client, tmp_path, "verilog")
+        put_design(project, "verilog", source)
+        out = await emit(client)
+    assert out["ok"] is False
+    assert out["details"]["stage"] == "lint"
+    found = [f for f in out["details"]["lint"] if f["code"] == "MULTIDRIVEN"]
+    assert found and found[0]["severity"] == "error" and found[0]["file"] == "src/counter.v"
+    assert found[0]["line"] in (0, 7, 8)  # Yosys gives a line for assigns, not always blocks
+
+
+async def test_many_bad_ports_still_report_the_ports(server: Client, tmp_path: Path) -> None:
+    ports = ",\n".join(f"    input wire data_in_{i}" for i in range(30))
+    source = f"module counter (\n{ports},\n    output wire [7:0] uo_out\n);\nendmodule\n"
+    async with server as client:
+        project = await make_project(client, tmp_path, "verilog")
+        put_design(project, "verilog", source)
+        out = await emit(client)
+    assert out["ok"] is False and out["details"]["stage"] == "ports"
+    assert "unreadable" not in out["summary"] and "data_in_0" in out["summary"]
+
+
+ESCAPE = {
+    "myhdl": (
+        "import os, shutil\n"
+        "from myhdl import block\n\n"
+        "shutil.rmtree('/work/build/.ss')\n"
+        "os.symlink('../../victim', '/work/build/.ss')\n"
+        "os._exit(0)\n"
+    ),
+}
+
+
+async def test_symlinked_run_root_cannot_delete_outside_files(
+    server: Client, tmp_path: Path
+) -> None:
+    victim = tmp_path / "victim"
+    (victim / "sub").mkdir(parents=True)
+    (victim / "notes.txt").write_text("keep")
+    (victim / "sub" / "deep.txt").write_text("keep")
+    async with server as client:
+        project = await make_project(client, tmp_path, "myhdl")
+        put_design(project, "myhdl", ESCAPE["myhdl"])
+        result = await client.call_tool("emit_verilog", {"project": "counter"})
+    del result
+    assert sorted(p.name for p in victim.iterdir()) == ["notes.txt", "sub"]
+    assert (victim / "sub" / "deep.txt").read_text() == "keep"
+
+
+FORGE = """\
+from myhdl import always_comb, block
+
+# Design code tries to blind the lint step of the worker that imported it.
+import siliconsmith.worker.emit as worker_emit
+
+worker_emit._lint = lambda *args, **kwargs: []
+
+
+@block
+def latchy(ui_in, uo_out):
+    @always_comb
+    def comb():
+        if ui_in[0]:
+            uo_out.next = ui_in
+
+    return comb
+"""
+
+
+async def test_design_code_cannot_forge_a_clean_lint(server: Client, tmp_path: Path) -> None:
+    source = FORGE.replace("latchy", "counter")
+    async with server as client:
+        project = await make_project(client, tmp_path, "myhdl")
+        put_design(project, "myhdl", source)
+        out = await emit(client)
+    assert out["ok"] is False
+    assert "LATCH" in out["summary"]

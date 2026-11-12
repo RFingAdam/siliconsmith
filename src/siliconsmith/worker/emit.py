@@ -18,132 +18,111 @@ level; amaranth and myhdl are imported inside the functions that need them.
 
 from __future__ import annotations
 
-import importlib.util
-import inspect
+import contextlib
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
-import warnings
 from pathlib import Path
 from typing import Any
 
 from siliconsmith.worker import lint, pyerror
-from siliconsmith.worker.wrapper_gen import TT_PORTS, check_core_ports, generate_wrapper
+from siliconsmith.worker.elaborate import DesignError, hdl_file
+from siliconsmith.worker.limits import MAX_FINDINGS, MAX_GENERATED_BYTES, clamp_result
+from siliconsmith.worker.wrapper_gen import (
+    TT_PORTS,
+    check_core_ports,
+    describe_port_problems,
+    generate_wrapper,
+)
 
 WORK = Path("/work")
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
 MAX_CORE_BYTES = 1024 * 1024
-MAX_FINDINGS = 200
 TOOL_TIMEOUT_S = 120
+ELABORATE_TIMEOUT_S = 200
 SEED_CACHE = "/usr/local/bin/ss-seed-cache"
 
-# Tiny Tapeout pins that MyHDL gets as 1-bit signals; the rest are 8 bits wide.
-_BIT_PINS = ("clk", "ena")
-
-
-class DesignError(Exception):
-    """The design cannot be turned into a core; `file` is the project-relative file to fix."""
-
-    def __init__(self, file: str, message: str) -> None:
-        super().__init__(message)
-        self.file = file
-
-
-def _hdl_file(name: str) -> str:
-    return f"hdl/{name}.py"
+_hdl_file = hdl_file
 
 
 # -- step 1: elaboration -------------------------------------------------------------------
 
 
-def _import_design(name: str) -> Any:
-    """Import `/work/hdl/<name>.py` by path, with `/work/hdl` on sys.path for helper modules."""
-    path = WORK / "hdl" / f"{name}.py"
-    if not path.is_file():
-        raise DesignError(_hdl_file(name), f"{_hdl_file(name)} does not exist")
-    sys.path.insert(0, str(WORK / "hdl"))
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise DesignError(_hdl_file(name), f"cannot load {_hdl_file(name)}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+def _reap_processes() -> None:
+    """Kill every process the design left behind (all but this one and PID 1).
+
+    Design code runs as this user in this container, so a process it forks could outlive the
+    elaboration and rewrite files, or the result, while Yosys and Verilator run. `kill(-1)`
+    does not signal the caller. Only done inside the container: on a developer machine this
+    would kill the user's own processes.
+    """
+    if not Path("/.dockerenv").exists() or Path("/work") != WORK:
+        return
+    with contextlib.suppress(OSError):
+        os.kill(-1, signal.SIGKILL)
 
 
-def _elaborate_amaranth(name: str) -> str:
-    # Warm Amaranth's bundled Yosys (WebAssembly) cache; it never fails the caller.
-    subprocess.run([SEED_CACHE], check=False, capture_output=True, timeout=TOOL_TIMEOUT_S)
-    from amaranth.back import verilog
-    from amaranth.hdl import UnusedElaboratable
-    from amaranth.lib import wiring
+def _elaborate(name: str, frontend: str, run_dir: Path) -> tuple[str | None, dict[str, Any] | None]:
+    """Run the design in a child process: `(Verilog text, None)` or `(None, python_error)`.
 
-    warnings.simplefilter("ignore", UnusedElaboratable)
-    module = _import_design(name)
-    top = getattr(module, "top", None)
-    if not callable(top):
-        raise DesignError(
-            _hdl_file(name),
-            f"{_hdl_file(name)} must define a module-level function top() that returns an "
-            "amaranth.lib.wiring.Component (see the starter file)",
+    A toolchain failure (a library that does not import, no seed-cache helper) raises
+    RuntimeError, which the worker's `main` reports as an infrastructure error.
+    """
+    entry = _hdl_file(name)
+    if not (WORK / "hdl" / f"{name}.py").is_file():
+        return None, pyerror.design_error(entry, f"{entry} does not exist")
+    if frontend == "amaranth":
+        # Warm Amaranth's bundled Yosys (WebAssembly) cache; best effort, never the design's fault.
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            subprocess.run([SEED_CACHE], check=False, capture_output=True, timeout=TOOL_TIMEOUT_S)
+    elab = run_dir / "elab.json"
+    elab.unlink(missing_ok=True)
+    payload = json.dumps({"frontend": frontend, "name": name, "run_dir": str(run_dir)})
+    exit_code: int | None = None
+    stderr = ""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "siliconsmith.worker.elaborate"],
+            input=payload,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=ELABORATE_TIMEOUT_S,
+            check=False,
         )
-    design = top()
-    if not isinstance(design, wiring.Component):
-        raise DesignError(
-            _hdl_file(name),
-            f"top() in {_hdl_file(name)} returned {type(design).__name__}; it must return an "
-            "amaranth.lib.wiring.Component whose ports are the Tiny Tapeout pins",
+        exit_code, stderr = proc.returncode, proc.stderr
+    except subprocess.TimeoutExpired:
+        _reap_processes()
+        return None, pyerror.design_error(
+            entry, f"elaboration of {entry} did not finish in {ELABORATE_TIMEOUT_S} s"
         )
-    text: str = verilog.convert(design, name=name, emit_src=False)
-    return text
-
-
-def _elaborate_myhdl(name: str, run_dir: Path) -> str:
-    from myhdl import ResetSignal, Signal, ToVerilogWarning, intbv
-
-    module = _import_design(name)
-    func = getattr(module, name, None)
-    if not callable(func):
-        raise DesignError(
-            _hdl_file(name),
-            f"{_hdl_file(name)} must define a function named {name} decorated with @block, "
-            "whose parameters are Tiny Tapeout pin names",
+    _reap_processes()
+    try:
+        outcome = json.loads(elab.read_text(encoding="utf-8"))
+        if not isinstance(outcome, dict):
+            raise ValueError("not an object")
+    except (OSError, ValueError):
+        tail = _tool_tail(stderr, name, run_dir / "out", lines=3)
+        return None, pyerror.design_error(
+            entry,
+            f"{entry} stopped the Python interpreter before it produced Verilog "
+            f"(exit code {exit_code})" + (f":\n{tail}" if tail else ""),
         )
-    params = list(inspect.signature(func).parameters)
-    unknown = [p for p in params if p not in TT_PORTS]
-    if unknown:
-        raise DesignError(
-            _hdl_file(name),
-            f"parameter(s) {', '.join(unknown)} of {name}() are not Tiny Tapeout pins; "
-            f"use only: {', '.join(TT_PORTS)}",
-        )
-    signals: dict[str, Any] = {}
-    for param in params:
-        if param == "rst_n":
-            signals[param] = ResetSignal(0, active=0, isasync=False)
-        elif param in _BIT_PINS:
-            signals[param] = Signal(bool(0))
-        else:
-            signals[param] = Signal(intbv(0)[8:])
-    instance = func(**signals)
-    if not callable(getattr(instance, "convert", None)):
-        raise DesignError(
-            _hdl_file(name), f"{name}() in {_hdl_file(name)} must be decorated with @block"
-        )
-    target = run_dir / "myhdl"
-    target.mkdir(parents=True, exist_ok=True)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", ToVerilogWarning)
-        instance.convert(
-            hdl="Verilog",
-            name=name,
-            path=str(target),
-            testbench=False,
-            no_myhdl_header=True,
-            timescale="1ns/1ps",
-        )
-    return (target / f"{name}.v").read_text(encoding="utf-8")
+    if isinstance(outcome.get("internal"), str):
+        raise RuntimeError(outcome["internal"])
+    error = outcome.get("design_error")
+    if isinstance(error, dict):
+        return None, pyerror.design_error(str(error.get("file", entry)), str(error.get("message")))
+    python_error = outcome.get("python_error")
+    if isinstance(python_error, dict):
+        return None, python_error
+    body = outcome.get("body")
+    if not isinstance(body, str):
+        return None, pyerror.design_error(entry, f"{entry} produced no Verilog")
+    return body, None
 
 
 def _read_verilog_core(name: str) -> str:
@@ -267,6 +246,32 @@ def _lint(
     return found
 
 
+def _yosys_check(out_dir: Path, name: str) -> list[dict[str, Any]]:
+    """What Verilator does not catch: multiple drivers (except across clocking), logic loops."""
+    script = f"read_verilog -sv {name}.v; hierarchy -top {name}; proc; check -assert"
+    try:
+        proc = subprocess.run(
+            ["yosys", "-q", "-p", script],
+            cwd=out_dir,
+            capture_output=True,
+            text=True,
+            timeout=TOOL_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [_finding("error", "TIMEOUT", f"yosys check did not finish in {TOOL_TIMEOUT_S} s")]
+    if proc.returncode == 0:
+        return []
+    output = proc.stdout + "\n" + proc.stderr
+    found = lint.parse_yosys_check(output, f"src/{name}.v")
+    for item in found:
+        item["file"] = _lint_file(item["file"], name, out_dir)
+        item["msg"] = _project_files(_out_paths(item["msg"], name, out_dir), name)
+    return found or [
+        _finding("error", "YOSYS_CHECK", _tool_tail(output, name, out_dir) or "failed")
+    ]
+
+
 def _finding(severity: str, code: str, msg: str) -> dict[str, Any]:
     return {"severity": severity, "code": code, "file": "", "line": 0, "col": 0, "msg": msg,
             "detail": ""}  # fmt: skip
@@ -314,6 +319,11 @@ def _check_request(request: dict[str, Any]) -> tuple[str, str, str, Path]:
 
 
 def emit(request: dict[str, Any]) -> dict[str, Any]:
+    """Run the pipeline; every text field in the result is clipped to the host's limits."""
+    return clamp_result(_emit(request))
+
+
+def _emit(request: dict[str, Any]) -> dict[str, Any]:
     name, frontend, author, run_dir = _check_request(request)
     out_dir = run_dir / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -322,17 +332,24 @@ def emit(request: dict[str, Any]) -> dict[str, Any]:
 
     # 1. the core
     try:
-        if frontend == "amaranth":
-            body = _elaborate_amaranth(name)
-        elif frontend == "myhdl":
-            body = _elaborate_myhdl(name, run_dir)
+        if frontend == "verilog":
+            body: str | None = _read_verilog_core(name)
         else:
-            body = _read_verilog_core(name)
+            body, python_error = _elaborate(name, frontend, run_dir)
+            if body is None:
+                return _result(out_dir, python_error=python_error)
     except DesignError as exc:
         return _result(out_dir, python_error=pyerror.design_error(exc.file, str(exc)))
-    except BaseException as exc:  # the agent's code may raise anything, even SystemExit
-        return _result(out_dir, python_error=pyerror.extract(exc, entry))
+    assert body is not None
     text = (_core_header(author, name) + body) if generated else body
+    if generated and len(text.encode("utf-8")) > MAX_GENERATED_BYTES:
+        return _result(
+            out_dir,
+            python_error=pyerror.design_error(
+                entry,
+                f"the Verilog generated from {entry} is larger than {MAX_GENERATED_BYTES} bytes",
+            ),
+        )
     (out_dir / f"{name}.v").write_text(text, encoding="utf-8")
 
     # 2. the core's ports
@@ -367,7 +384,9 @@ def emit(request: dict[str, Any]) -> dict[str, Any]:
             out_dir,
             stage="ports",
             ports=_ports_json(ports),
-            message=f"the ports of {name} do not fit Tiny Tapeout:\n" + "\n".join(problems) + extra,
+            message=f"the ports of {name} do not fit Tiny Tapeout:\n"
+            + describe_port_problems(problems)
+            + extra,
         )
 
     # 3. the wrapper
@@ -388,6 +407,7 @@ def emit(request: dict[str, Any]) -> dict[str, Any]:
 
     # 4. lint
     found = _lint(out_dir, name, generated=generated)
+    found += _yosys_check(out_dir, name)
     return _result(
         out_dir,
         ok=not found,

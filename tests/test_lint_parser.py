@@ -114,3 +114,42 @@ def test_fixture_folder_is_complete() -> None:
         "unusedsignal.txt",
         "widthtrunc_widthexpand.txt",
     ]
+
+
+# -- `yosys check -assert` output (real, captured from the image) -----------------------------
+
+CHECKS = REPO_ROOT / "tests" / "fixtures" / "yosys_check"
+
+
+def checked(name: str) -> list[dict[str, object]]:
+    from siliconsmith.worker.lint import parse_yosys_check
+
+    return parse_yosys_check((CHECKS / name).read_text(), "src/a.v")
+
+
+def test_yosys_check_merges_per_bit_multiple_driver_warnings() -> None:
+    found = checked("always_multidriven.txt")
+    assert [(f["code"], f["msg"]) for f in found] == [
+        ("MULTIDRIVEN", "multiple conflicting drivers for b.\\uo_out")
+    ]
+    assert found[0]["severity"] == "error" and found[0]["file"] == "src/a.v"
+
+
+def test_yosys_check_finds_loops_with_a_source_line() -> None:
+    found = checked("assign_loop.txt")
+    assert {f["code"] for f in found} == {"MULTIDRIVEN", "LOGICLOOP"}
+    assert all("$" not in str(f["msg"]) for f in found)
+    loop = next(f for f in found if f["code"] == "LOGICLOOP")
+    assert loop["line"] == 3
+
+
+def test_yosys_check_undriven_wire() -> None:
+    assert [f["code"] for f in checked("nodriver.txt")] == ["NODRIVER"]
+
+
+def test_yosys_check_unexplained_error_still_gives_a_finding() -> None:
+    from siliconsmith.worker.lint import parse_yosys_check
+
+    found = parse_yosys_check("ERROR: Found 2 problems in 'check -assert'.\n", "src/a.v")
+    assert [f["code"] for f in found] == ["YOSYS_CHECK"]
+    assert parse_yosys_check("", "src/a.v") == []

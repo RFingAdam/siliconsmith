@@ -79,3 +79,79 @@ def parse(text: str) -> list[dict[str, Any]]:
             close()  # banner lines such as "- V e r i l a t i o n   R e p o r t"
     close()
     return findings
+
+
+_CHECK_HEAD = re.compile(r"^(?:Warning|ERROR): (?P<msg>.*)$")
+_CHECK_KINDS = (
+    (re.compile(r"^multiple conflicting drivers for (?P<what>.+?):$"), "MULTIDRIVEN"),
+    (re.compile(r"^found logic loop in module (?P<what>\S+?):$"), "LOGICLOOP"),
+    (re.compile(r"^Wire (?P<what>.+?) is used but has no driver\.$"), "NODRIVER"),
+)
+_CHECK_SOURCE = re.compile(r"(?P<file>[\w./-]+\.v):(?P<line>\d+)")
+_BIT_SUFFIX = re.compile(r"\s*\[\d+\]$")
+
+
+def parse_yosys_check(text: str, default_file: str) -> list[dict[str, Any]]:
+    """Findings from `yosys ... check -assert` output (the checks Verilator does not make).
+
+    Yosys warns once per bit, so the findings are merged per signal. `MULTIDRIVEN` is a signal
+    with more than one driver, `LOGICLOOP` a combinational loop and `NODRIVER` a used wire that
+    nothing drives. The line comes from a `file:line` in the finding's own lines (a cell's
+    source), or is 0. `ERROR: Found N problems` only gives a finding when no warning explains it.
+    """
+    findings: dict[tuple[str, str], dict[str, Any]] = {}
+    current: dict[str, Any] | None = None
+    error = ""
+    for raw in text.splitlines():
+        head = _CHECK_HEAD.match(raw)
+        if head:
+            current = None
+            msg = head["msg"].strip()
+            for pattern, code in _CHECK_KINDS:
+                found = pattern.match(msg)
+                if found:
+                    what = _BIT_SUFFIX.sub("", found["what"].strip())
+                    key = (code, what)
+                    if key not in findings:
+                        # `$not$a.v:3$1_Y` is Yosys's name for an internal net, not the agent's.
+                        named = f"for {what}" if "$" not in what else "(a net driven twice)"
+                        text_ = {
+                            "MULTIDRIVEN": f"multiple conflicting drivers {named}",
+                            "LOGICLOOP": f"combinational logic loop in module {what}",
+                            "NODRIVER": f"wire {what} is used but has no driver",
+                        }[code]
+                        findings[key] = {
+                            "severity": "error",
+                            "code": code,
+                            "file": default_file,
+                            "line": 0,
+                            "col": 0,
+                            "msg": text_,
+                            "detail": "",
+                        }
+                    current = findings[key]
+                    break
+            else:
+                if raw.startswith("ERROR: "):
+                    error = error or msg
+            sources = _CHECK_SOURCE.search(msg)
+            if current is not None and sources and not current["line"]:
+                current["line"] = int(sources["line"])
+        elif current is not None and raw[:1] in (" ", "\t"):
+            source = _CHECK_SOURCE.search(raw)
+            if source and not current["line"]:
+                current["line"] = int(source["line"])
+    out = list(findings.values())
+    if not out and error:
+        out.append(
+            {
+                "severity": "error",
+                "code": "YOSYS_CHECK",
+                "file": default_file,
+                "line": 0,
+                "col": 0,
+                "msg": error,
+                "detail": "",
+            }
+        )
+    return out

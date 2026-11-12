@@ -148,3 +148,56 @@ def test_every_worker_module_imports_without_host_packages(tmp_path: Path) -> No
     loaded = json.loads(proc.stdout)
     assert "siliconsmith.worker.emit" in loaded
     assert not any(m in loaded for m in ("siliconsmith.paths", "siliconsmith.wrapper"))
+
+
+# -- elaboration runs in a child process --------------------------------------------------------
+
+
+def test_elaboration_without_the_toolchain_library_is_internal_not_a_design_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from siliconsmith.worker import elaborate
+
+    monkeypatch.setitem(sys.modules, "amaranth", None)
+    monkeypatch.setitem(sys.modules, "myhdl", None)
+    for frontend in ("amaranth", "myhdl"):
+        out = elaborate.run({"frontend": frontend, "name": "chip", "run_dir": str(tmp_path)})
+        assert list(out) == ["internal"]
+        assert frontend in out["internal"]
+
+
+def test_a_child_that_vanishes_is_a_design_error_and_internal_is_a_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = tmp_path / "work"
+    (work / "hdl").mkdir(parents=True)
+    (work / "hdl" / "chip.py").write_text("import os\nos._exit(0)\n")
+    monkeypatch.setattr(worker_emit, "WORK", work)
+    run_dir = work / "build" / ".ss" / "r1"
+    run_dir.mkdir(parents=True)
+    fake = tmp_path / "fake.py"
+    fake.write_text("import sys\nsys.stdin.read()\n")  # exits without writing elab.json
+    real_run = subprocess.run
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return real_run([sys.executable, str(fake)], **kwargs)  # type: ignore[call-overload, no-any-return]
+
+    monkeypatch.setattr(worker_emit.subprocess, "run", fake_run)
+    body, error = worker_emit._elaborate("chip", "myhdl", run_dir)
+    assert body is None and error is not None
+    assert error["file"] == "hdl/chip.py" and "before it produced Verilog" in error["msg"]
+    (run_dir / "elab.json").write_text(json.dumps({"internal": "ImportError: x"}))
+    fake.write_text(
+        f"import sys\nsys.stdin.read()\nopen({str(run_dir / 'elab.json')!r}, 'w')"
+        '.write(\'{"internal": "ImportError: x"}\')\n'
+    )
+    with pytest.raises(RuntimeError, match="ImportError"):
+        worker_emit._elaborate("chip", "myhdl", run_dir)
+
+
+def test_reaping_is_off_outside_the_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[object] = []
+    monkeypatch.setattr(worker_emit.os, "kill", lambda *a: called.append(a))
+    monkeypatch.setattr(worker_emit, "WORK", Path("/nonexistent-work"))
+    worker_emit._reap_processes()
+    assert not called
