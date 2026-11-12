@@ -107,11 +107,11 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - `siliconsmith approve <dir>`: command line only, terminal confirmation, records git `user.name` and the spec hash. Documented as an honest-use convention; the `chip-design-loop` skill forbids agents from running it.
 - `tests/reference/`: the frozen, held-out counter reference test.
 **Acceptance criteria**
-- [ ] Each step goes stale only when its own inputs change. *Proof:* one unit test per input class (editing X makes exactly the dependent steps stale; for example, editing a nested test helper such as `test/sub/x.py` makes simulation and coverage stale).
-- [ ] Simulation and coverage steps are set only by unfiltered runs with at least one test, and coverage needs passing runs on both simulators at the current digest. *Proof:* unit and integration tests.
-- [ ] No MCP tool can approve the spec, and generated docs are not writable through the tools. *Proof:* tools/list and allow-list tests; `approve` refuses to run without a terminal.
-- [ ] The `status` tool and the command line give the same output; a corrupt or missing ledger gives `not_run` without a crash; M1–M3 steps show `not_available`. *Proof:* unit tests.
-- [ ] A frozen reference test for the counter is committed under `tests/reference/`. It assumes only the prompt: +1 per clock while `ui_in[0]` is 1, hold while it is 0, wrap from 255 to 0, and no particular reset value. *Proof:* committed with this issue's PR and run by CI and the M0-6 demo.
+- [x] Each step goes stale only when its own inputs change. *Proof:* one unit test per input class (editing X makes exactly the dependent steps stale; for example, editing a nested test helper such as `test/sub/x.py` makes simulation and coverage stale).
+- [x] Simulation and coverage steps are set only by unfiltered runs with at least one test, and coverage needs passing runs on both simulators at the current digest. *Proof:* unit and integration tests.
+- [x] No MCP tool can approve the spec, and generated docs are not writable through the tools. *Proof:* tools/list and allow-list tests; `approve` refuses to run without a terminal.
+- [x] The `status` tool and the command line give the same output; a corrupt or missing ledger gives `not_run` without a crash; M1–M3 steps show `not_available`. *Proof:* unit tests.
+- [x] A frozen reference test for the counter is committed under `tests/reference/`. It assumes only the prompt: +1 per clock while `ui_in[0]` is 1, hold while it is 0, wrap from 255 to 0, and no particular reset value. *Proof:* committed with this issue's PR and run by CI and the M0-6 demo.
 
 ---
 
