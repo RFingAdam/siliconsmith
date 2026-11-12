@@ -9,10 +9,12 @@ from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
 from siliconsmith.context import ServerContext
+from siliconsmith.covers import parse_covers
 from siliconsmith.paths import Category
-from siliconsmith.result import ToolResult
-from siliconsmith.tools._common import write_text_file
+from siliconsmith.result import ToolResult, make_summary
+from siliconsmith.tools._common import get_project, read_spec_ids, write_text_file
 
+MAX_DETAIL_ITEMS = 50
 ACCEPTS: frozenset[Category] = frozenset({"test"})
 
 DESCRIPTION = """\
@@ -32,7 +34,7 @@ def register(server: MCPServer, ctx: ServerContext) -> None:
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True),
     )
     def write_test(project: str, path: str, content: str) -> ToolResult:
-        return write_text_file(
+        result = write_text_file(
             ctx,
             tool="write_test",
             accepts=ACCEPTS,
@@ -40,3 +42,29 @@ def register(server: MCPServer, ctx: ServerContext) -> None:
             path=path,
             content=content,
         )
+        if not path.endswith(".py"):
+            return result
+        # Static only: the test file is parsed with ast and never imported or run here.
+        spec_ids = read_spec_ids(get_project(ctx, project))
+        report = parse_covers(content, path, spec_ids)
+        if report.error is not None:
+            return result  # the syntax-error report from write_text_file already says it
+        covers = {t.name: list(t.covers) for t in report.tests[:MAX_DETAIL_ITEMS]}
+        result.details["covers"] = covers
+        result.details["covers_warnings"] = report.warnings[:MAX_DETAIL_ITEMS]
+        result.details["covers_warnings_total"] = len(report.warnings)
+        result.details["tests"] = [t.as_dict() for t in report.tests[:MAX_DETAIL_ITEMS]]
+        result.details["tests_total"] = len(report.tests)
+        lines = result.summary.splitlines()
+        if report.tests:
+            lines.append(
+                "Covers: "
+                + "; ".join(f"{t.name} -> {', '.join(t.covers) or '(none)'}" for t in report.tests)
+            )
+        else:
+            lines.append("No cocotb tests (@cocotb.test) found in this file.")
+        if spec_ids is None:
+            lines.append("Requirement ids were not checked: no valid spec.yaml (use write_spec).")
+        lines.extend(f"Warning: {w}" for w in report.warnings)
+        result.summary = make_summary(lines)
+        return result

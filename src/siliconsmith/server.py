@@ -26,9 +26,12 @@ FRONTENDS = ("amaranth", "myhdl", "verilog")
 
 INSTRUCTIONS = (
     "Siliconsmith designs small digital chips for Tiny Tapeout with open-source tools. "
-    "Loop: create_project once, then write the tests first with write_test, then the design "
-    "with write_rtl, then call emit_verilog to generate and lint the Verilog (tools for running "
-    "tests arrive in later releases; use only the tools this server lists). "
+    "Loop: create_project once, then write the spec first with write_spec (spec.yaml: clock, "
+    "pins, numbered requirements R1, R2, ...), then the tests with write_test (each test "
+    "docstring says 'Covers: R1'), then the design with write_rtl, then call emit_verilog to "
+    "generate and lint the Verilog (use only the tools this server lists). "
+    "spec.yaml is the single source of the clock, pins and requirements; create_project writes "
+    "a placeholder spec for the starter design, so replace it. "
     "Every project tool takes the project name first. Write whole files, never diffs. "
     "Your design is the core module named after the project, using the Tiny Tapeout pins: "
     "clk, rst_n (active low), ena, ui_in, uio_in as inputs; uo_out, uio_out, uio_oe as outputs. "
