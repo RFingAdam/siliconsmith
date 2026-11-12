@@ -12,7 +12,7 @@ from mcp.server import MCPServer
 from siliconsmith.context import ServerContext
 
 # Names of submodules of this package, for example "create_project". Later PRs add entries.
-TOOL_MODULES: tuple[str, ...] = ()
+TOOL_MODULES: tuple[str, ...] = ("toolchain_info",)
 
 
 def register_all(server: MCPServer, ctx: ServerContext) -> None:
