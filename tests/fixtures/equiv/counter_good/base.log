@@ -1,0 +1,8 @@
+BASE-X
+3. Executing SAT pass (solving SAT problems in the circuit).
+Solving problem with 16197 variables and 41974 clauses..
+SAT proof finished - no model found: SUCCESS!
+BASE-DEF
+4. Executing SAT pass (solving SAT problems in the circuit).
+Solving problem with 16134 variables and 41784 clauses..
+SAT proof finished - no model found: SUCCESS!

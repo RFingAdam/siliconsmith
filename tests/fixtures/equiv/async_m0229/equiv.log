@@ -1,0 +1,15 @@
+INITS-BEGIN
+INITS-END
+GUARD-TRISTATE
+GUARD-STRUCTURE
+20. Executing CHECK pass (checking for obvious problems).
+GUARD-CLOCKING
+GUARD-OK
+GUARD-STRUCTURE
+29. Executing CHECK pass (checking for obvious problems).
+GUARD-CELLS
+GUARD-TRISTATE
+GUARD-ASYNCSR
+ERROR: Assertion failed: selection is not empty: t:$dffsr t:$dffsre t:$_DFFSR_* t:$_DFFSRE_* t:$aldff* t:$_ALDFF*
+Selection contains:
+tt_um_counter_async/$flatten\_34_.$auto$liberty.cc:255:create_ff$1543

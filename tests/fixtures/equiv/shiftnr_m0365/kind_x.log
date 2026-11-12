@@ -1,0 +1,78 @@
+GUARD-TRISTATE
+GUARD-STRUCTURE
+13. Executing CHECK pass (checking for obvious problems).
+GUARD-CLOCKING
+GUARD-OK
+GUARD-STRUCTURE
+22. Executing CHECK pass (checking for obvious problems).
+GUARD-CELLS
+GUARD-TRISTATE
+GUARD-ASYNCSR
+GUARD-CLOCKING
+GUARD-OK
+27. Executing SAT pass (solving SAT problems in the circuit).
+** Trying induction with length 1 **
+[base case 1] Solving problem with 3801 variables and 9762 clauses..
+Base case for induction length 1 proven.
+[induction step 1] Solving problem with 3609 variables and 9155 clauses..
+** Trying induction with length 2 **
+[base case 2] Solving problem with 6065 variables and 15751 clauses..
+Base case for induction length 2 proven.
+[induction step 2] Solving problem with 6130 variables and 15946 clauses..
+** Trying induction with length 3 **
+[base case 3] Solving problem with 8528 variables and 22368 clauses..
+Base case for induction length 3 proven.
+[induction step 3] Solving problem with 8876 variables and 23443 clauses..
+** Trying induction with length 4 **
+[base case 4] Solving problem with 11222 variables and 29709 clauses..
+Base case for induction length 4 proven.
+[induction step 4] Solving problem with 11847 variables and 31646 clauses..
+** Trying induction with length 5 **
+[base case 5] Solving problem with 14149 variables and 37780 clauses..
+Base case for induction length 5 proven.
+[induction step 5] Solving problem with 15043 variables and 40555 clauses..
+** Trying induction with length 6 **
+[base case 6] Solving problem with 17311 variables and 46587 clauses..
+Base case for induction length 6 proven.
+[induction step 6] Solving problem with 18464 variables and 50170 clauses..
+** Trying induction with length 7 **
+[base case 7] Solving problem with 20710 variables and 56136 clauses..
+Base case for induction length 7 proven.
+[induction step 7] Solving problem with 22110 variables and 60491 clauses..
+** Trying induction with length 8 **
+[base case 8] Solving problem with 24348 variables and 66433 clauses..
+Base case for induction length 8 proven.
+[induction step 8] Solving problem with 25981 variables and 71518 clauses..
+** Trying induction with length 9 **
+[base case 9] Solving problem with 28227 variables and 77484 clauses..
+Base case for induction length 9 proven.
+[induction step 9] Solving problem with 30077 variables and 83251 clauses..
+** Trying induction with length 10 **
+[base case 10] Solving problem with 32349 variables and 89295 clauses..
+Base case for induction length 10 proven.
+[induction step 10] Solving problem with 34398 variables and 95690 clauses..
+** Trying induction with length 11 **
+[base case 11] Solving problem with 36716 variables and 101872 clauses..
+Base case for induction length 11 proven.
+[induction step 11] Solving problem with 38944 variables and 108835 clauses..
+** Trying induction with length 12 **
+[base case 12] Solving problem with 41330 variables and 115221 clauses..
+Base case for induction length 12 proven.
+[induction step 12] Solving problem with 43715 variables and 122686 clauses..
+** Trying induction with length 13 **
+[base case 13] Solving problem with 46193 variables and 129348 clauses..
+Base case for induction length 13 proven.
+[induction step 13] Solving problem with 48711 variables and 137243 clauses..
+** Trying induction with length 14 **
+[base case 14] Solving problem with 51307 variables and 144259 clauses..
+Base case for induction length 14 proven.
+[induction step 14] Solving problem with 53932 variables and 152506 clauses..
+** Trying induction with length 15 **
+[base case 15] Solving problem with 56674 variables and 159960 clauses..
+Base case for induction length 15 proven.
+[induction step 15] Solving problem with 59378 variables and 168475 clauses..
+** Trying induction with length 16 **
+[base case 16] Solving problem with 62296 variables and 176457 clauses..
+Base case for induction length 16 proven.
+[induction step 16] Solving problem with 65049 variables and 185150 clauses..
+Induction step proven: SUCCESS!

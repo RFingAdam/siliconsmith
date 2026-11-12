@@ -1,0 +1,8 @@
+INITS-BEGIN
+INITS-END
+GUARD-TRISTATE
+GUARD-STRUCTURE
+20. Executing CHECK pass (checking for obvious problems).
+GUARD-CLOCKING
+GUARD-OK
+ERROR: Module `\sky130_fd_sc_hd__dlclkp_1' referenced in module `\tt_um_counter' in cell `\_21_' is not part of the design.

@@ -1,0 +1,11 @@
+INITS-BEGIN
+INITS-END
+GUARD-TRISTATE
+GUARD-STRUCTURE
+20. Executing CHECK pass (checking for obvious problems).
+GUARD-CLOCKING
+GUARD-OK
+GUARD-STRUCTURE
+29. Executing CHECK pass (checking for obvious problems).
+Warning: found logic loop in module tt_um_counter:
+ERROR: Found 1 problems in 'check -assert'.

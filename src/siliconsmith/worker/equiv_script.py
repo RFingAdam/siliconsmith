@@ -1,0 +1,238 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+
+"""The Yosys scripts of the equivalence check (RTL against the sky130 netlist).
+
+Pure text: every function returns the script for one Yosys call, and the log markers the
+parser (`equiv_parse.py`) looks for are constants here, so the two cannot drift apart. The
+orchestration is in `equiv.py`. Stdlib only: this runs in the container.
+
+## What the check is (stages)
+
+0. The netlist text must not contain an `x`/`z` constant (our synthesis ties undefined inputs
+   low, so a correct netlist has none).
+1. Guards plus the proof. The RTL side ("gold") is the design as the PRODUCTION synthesis sees it
+   just before technology mapping (same `proc`, `flatten`, `opt -nodffe -nosdff`, `fsm`, `opt`,
+   memories to flops, `$pmux` to gates, `$print`/`$assert` removed, initial values removed). The
+   netlist side ("gate") is read from the netlist FILE the synthesis wrote. Both sides refuse
+   what the proof cannot model (see the `GUARD_*` blocks). `equiv_make` pairs signals by name,
+   `equiv_simple -seq 5` and `equiv_induct -seq 5` prove the induction step.
+2. If the RTL has initial values: the RTL with them against the RTL without them. A difference
+   means the RTL relies on values a chip does not have.
+3. The base case of the stage-1 induction, on the stage-1 model itself (`equiv.il`), for cycles
+   1..seq+2, in two runs: every flip-flop powers up `x` (X), and every flip-flop powers up defined,
+   a netlist flip-flop equal to the RTL register it is paired with (DEF). Stages 1 and 3 together
+   are a complete induction proof.
+4. A referee from reset that does not depend on name pairing or on the `fsm` pass: the RTL as
+   written against the netlist, a bounded search (`depth` cycles) with `x` power-up; or
+   k-induction twice (`kind_x`, `kind_zero`) when stage 1 did not prove everything.
+
+Cycle 1 is power-up with `rst_n` low; outputs are compared from cycle 2 on.
+
+## Keeping in step with the synthesis script
+
+`PRODUCTION_FSM_PASSES` and `PRODUCTION_MEMORY_PASSES` are the pass lines of
+`synth_script.front_script` that the RTL side repeats. `tests/test_equiv_script.py` fails when the
+production script changes them and this file does not.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from siliconsmith.worker import synth_script
+
+LIBERTY = synth_script.LIBERTY
+OUTPUTS = ("uo_out", "uio_out", "uio_oe")
+
+# The pass lines of synth_script.front_script that the RTL side repeats, in order.
+PRODUCTION_FSM_PASSES = ("opt -nodffe -nosdff", "fsm", "opt")
+PRODUCTION_MEMORY_PASSES = ("memory -nomap", "memory_map")
+# What the production synthesis removes before mapping (`delete t:$print`, `delete t:$assert`;
+# the check cells go with `hierarchy -nokeep_asserts`).
+DELETE_NON_HARDWARE = "delete t:$print t:$check t:$assert t:$assume t:$cover t:$live t:$fair"
+
+# Log markers. Each guard prints its marker first, so the last marker in a failed log names the
+# guard that refused.
+M_CLOCKING = "GUARD-CLOCKING"
+M_TRISTATE = "GUARD-TRISTATE"
+M_ASYNC_SR = "GUARD-ASYNCSR"
+M_STRUCTURE = "GUARD-STRUCTURE"
+M_CELLS = "GUARD-CELLS"
+M_OK = "GUARD-OK"
+INITS_BEGIN = "INITS-BEGIN"
+INITS_END = "INITS-END"
+BASE_PREFIX = "BASE-"
+
+GUARD_CLOCK = (
+    f"log {M_CLOCKING}\n"
+    "select -set st t:$*dff* t:$*DFF* t:$ff t:$_FF_ t:$*latch* t:$*LATCH* t:$sr t:$_SR_* "
+    "t:$mem* t:$anyconst t:$anyinit t:$allconst t:$allseq\n"
+    "select -set okff t:$_DFF_P_ t:$dff r:CLK_POLARITY!=0 %i %u\n"
+    "select -assert-none @st @okff %d\n"
+    "select -assert-none @okff %x:+[CLK,C] @okff %d w:clk %d\n"
+    f"log {M_OK}\n"
+)
+GUARD_TRISTATE = f"log {M_TRISTATE}\nselect -assert-none t:$tribuf t:$_TBUF_\n"
+GUARD_ASYNC_SR = (
+    f"log {M_ASYNC_SR}\n"
+    "select -assert-none t:$dffsr t:$dffsre t:$_DFFSR_* t:$_DFFSRE_* t:$aldff* t:$_ALDFF*\n"
+)
+GUARD_STRUCTURE = f"log {M_STRUCTURE}\ncheck -assert\n"
+GUARD_CELLS = f"log {M_CELLS}\nselect -assert-none t:* t:$* %d\n"
+
+
+def _read_rtl(name: str) -> list[str]:
+    """Read the RTL the way the production synthesis does (same defines, same flags)."""
+    defines = " ".join(f"-D{d}" for d in synth_script.DEFINES)
+    return [
+        f"read_verilog -defer -noautowire -sv {defines} project.v {name}.v",
+        f"hierarchy -check -top tt_um_{name}",
+    ]
+
+
+def gold(name: str, mode: str) -> str:
+    """The RTL side.
+
+    `mode`: `proof` (stages 1 and 3: as synthesis sees it before mapping, initial values
+    removed), `rtl` (as written, initial values kept) or `rtl_noinit` (as written, initial values
+    removed: what a chip does at power-up).
+    """
+    if mode not in ("proof", "rtl", "rtl_noinit"):
+        raise ValueError(f"unknown mode {mode!r}")
+    s = [*_read_rtl(name), "proc", "flatten", DELETE_NON_HARDWARE, "opt_expr", "opt_clean"]
+    if mode == "proof":
+        s += [*PRODUCTION_FSM_PASSES, "opt_clean"]
+        s += [
+            "memory",
+            "opt_clean",
+            # $pmux as the gates synthesis uses (OR of the selected cases). It only differs when
+            # several selects are high, which `case` (proc) and fsm one-hot never reach.
+            "techmap t:$pmux",
+            "opt_clean",
+            f"log {INITS_BEGIN}",
+            "select -list a:init",
+            f"log {INITS_END}",
+            "attrmap -remove init",
+        ]
+    else:
+        s += ["memory", "opt_clean"]
+        if mode == "rtl_noinit":
+            s += ["attrmap -remove init"]
+    s += ["splitnets", "tribuf", GUARD_TRISTATE, GUARD_STRUCTURE.rstrip("\n"), "async2sync"]
+    s += ["dffunmap", GUARD_CLOCK.rstrip("\n")]
+    return "\n".join(s) + "\n"
+
+
+def gate(name: str, netlist: str) -> str:
+    """The netlist side, read from the netlist FILE."""
+    return (
+        "\n".join(
+            [
+                f"read_liberty -ignore_miss_func {LIBERTY}",  # cell functions (dlclkp has none)
+                f"read_verilog {netlist}",
+                f"hierarchy -check -top tt_um_{name}",
+                "flatten",
+                "opt_clean",
+                "setundef -undriven -anyseq",
+                GUARD_STRUCTURE.rstrip("\n"),
+                GUARD_CELLS.rstrip("\n"),
+                GUARD_TRISTATE.rstrip("\n"),
+                GUARD_ASYNC_SR.rstrip("\n"),
+                "async2sync",
+                "dffunmap",
+                GUARD_CLOCK.rstrip("\n"),
+            ]
+        )
+        + "\n"
+    )
+
+
+def stash(script: str, name: str, as_: str) -> str:
+    return script + f"rename tt_um_{name} {as_}\ndesign -stash {as_}\n"
+
+
+def both(a: str = "gold", b: str = "gate") -> str:
+    return f"design -copy-from {a} -as gold {a}\ndesign -copy-from {b} -as gate {b}\n"
+
+
+def stage1(name: str, netlist: str, seq: int) -> str:
+    """Guards and the induction step: writes `equiv.il` and `equiv.json` before the proof."""
+    return (
+        stash(gold(name, "proof"), name, "gold")
+        + stash(gate(name, netlist), name, "gate")
+        + both()
+        + "\n".join(
+            [
+                "equiv_make gold gate equiv",
+                "hierarchy -top equiv",
+                "write_rtlil equiv.il",
+                "write_json equiv.json",
+                f"equiv_simple -seq {seq}",
+                f"equiv_induct -seq {seq}",
+                "equiv_status",
+            ]
+        )
+        + "\n"
+    )
+
+
+@dataclass(frozen=True)
+class Point:
+    """One `$equiv` cell of the stage-1 model: what the RTL and the netlist drive there."""
+
+    label: str
+    a: str  # RTLIL text of the RTL (gold) bit
+    b: str  # RTLIL text of the netlist (gate) bit
+    tie: bool  # the netlist flop may power up equal to the RTL register (DEF run)
+
+
+def base_script(points: list[Point], steps: int) -> str:
+    """Base case of the stage-1 induction (stage 3): the X run and the DEF run.
+
+    The model `base.il` is `equiv.il` plus one named wire per side of every point (see
+    `equiv.write_base_model`). Users of a matched signal read the RTL value, as in `equiv_induct`.
+    """
+    prove = " ".join(f"-prove-x eqa_{i} eqb_{i}" for i in range(len(points)))
+    show = ",".join(f"eqa_{i},eqb_{i}" for i in range(len(points)))
+    ties = " ".join(f"-set-at 1 eqa_{i} eqb_{i}" for i, p in enumerate(points) if p.tie)
+    script = "read_rtlil base.il\nhierarchy -top equiv\n"
+    for tag, extra in (("X", "-set-init-undef"), ("DEF", f"-set-init-def -prove-skip 1 {ties}")):
+        script += (
+            f"log {BASE_PREFIX}{tag}\n"
+            f"sat -seq {steps} {extra} -enable_undef -set-def-inputs -set-at 1 rst_n 0 {prove} "
+            f"-show {show},rst_n,ui_in,uio_in -dump_vcd base_{tag.lower()}.vcd equiv\n"
+        )
+    return script
+
+
+# induct: base (bounded search only), xstep (k-induction, x states allowed in the step: matches
+# the x power-up base) or defstep (k-induction over defined states only).
+SAT_MODE = {
+    "base": "-tempinduct -tempinduct-baseonly",
+    "xstep": "-tempinduct",
+    "defstep": "-tempinduct -tempinduct-def",
+}
+
+
+def miter(golds: str, gates: str, tag: str, init: str, induct: str, depth: int) -> str:
+    """Stages 2 and 4: a miter of two stashed designs and a `sat` run from reset.
+
+    `-enable_undef` is REQUIRED with `-ignore_gold_x` (without it `$eqx` masks hide real
+    mismatches). `-seq 1`: outputs are compared from cycle 2 (cycle 1 is power-up, `rst_n` low).
+    """
+    return (
+        golds
+        + gates
+        + both()
+        + "\n".join(
+            [
+                "miter -equiv -flatten -make_outputs -ignore_gold_x gold gate miter",
+                "hierarchy -top miter",
+                f"sat {SAT_MODE[induct]} -maxsteps {depth} -enable_undef -set-def-inputs "
+                f"-set-init-{init} -set-at 1 in_rst_n 0 -seq 1 -prove trigger 0 -show-ports "
+                f"-dump_vcd cex_{tag}.vcd miter",
+            ]
+        )
+        + "\n"
+    )

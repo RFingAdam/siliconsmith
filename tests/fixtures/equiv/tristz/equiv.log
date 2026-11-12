@@ -1,0 +1,6 @@
+INITS-BEGIN
+INITS-END
+GUARD-TRISTATE
+ERROR: Assertion failed: selection is not empty: t:$tribuf t:$_TBUF_
+Selection contains:
+tt_um_tristz/$flatten\core.$ternary$tristz.v:20$4

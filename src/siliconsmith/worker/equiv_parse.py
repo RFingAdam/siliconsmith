@@ -1,0 +1,313 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+
+"""Read what Yosys printed and wrote during the equivalence check (pure functions, no Yosys).
+
+The text formats are Yosys 0.62's: `equiv_status`, the `sat -show` tables, `write_json`. They are
+pinned by unit tests on saved logs (`tests/fixtures/equiv/`). Stdlib only: this runs in the
+container.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from siliconsmith.worker import equiv_script as es
+
+XZ_LITERAL = re.compile(r"\d+'[sS]?[bBhHdDoO][0-9a-fA-F_]*[xXzZ?]")
+
+# What each guard refusal means: (verdict, reason code, plain English).
+GUARD_VERDICTS: dict[str, tuple[str, str, str]] = {
+    es.M_CLOCKING: (
+        "not_proven",
+        "guard_clocking",
+        "the design has a latch, a memory the proof cannot model, or a flip-flop that is not "
+        "clocked on the rising edge of the top-level clk (a falling-edge flip-flop or a clock "
+        "made inside the design); these are not supported",
+    ),
+    es.M_TRISTATE: (
+        "not_proven",
+        "guard_tristate",
+        "the design has tri-state logic ('z' in the RTL or an ebufn cell in the netlist), which "
+        "is not supported; on Tiny Tapeout drive uio_out and set uio_oe instead of writing z",
+    ),
+    es.M_ASYNC_SR: (
+        "not_proven",
+        "guard_async_set_reset",
+        "the netlist has a flip-flop with both an asynchronous set and an asynchronous reset "
+        "(sky130 dfbb*): the library's own models disagree when both are active, so it is not "
+        "supported",
+    ),
+    es.M_STRUCTURE: (
+        "error",
+        "structure",
+        "the design or the netlist has a combinational loop or a net with several drivers",
+    ),
+    es.M_CELLS: (
+        "error",
+        "cells",
+        "the netlist has a cell without a logic function",
+    ),
+}
+
+_ERROR_MARKS = ("ERROR", "logic loop", "conflicting drivers")
+
+
+def xz_constant(netlist_text: str) -> str | None:
+    """The first x/z/? constant in the netlist text, or None."""
+    found = XZ_LITERAL.search(netlist_text)
+    return found.group(0) if found else None
+
+
+def guard_failure(rc: int | None, log: str) -> dict[str, Any] | None:
+    """Map a guard refusal or a tool failure to `{verdict, reason, message, detail}`.
+
+    None means the script ran to the end (rc 0). rc None means the call was killed at its time
+    limit.
+    """
+    if rc == 0:
+        return None
+    if rc is None:
+        return {
+            "verdict": "not_proven",
+            "reason": "time_limit",
+            "message": "a Yosys step ran out of time",
+            "detail": [],
+        }
+    lines = log.splitlines()
+    marks = re.findall(r"^(GUARD-\w+)\s*$", log, re.M)
+    errors: list[str] = []
+    for i, line in enumerate(lines):  # error lines, plus the objects a failed select names
+        if any(m in line for m in _ERROR_MARKS) and line.strip() not in errors:
+            errors.append(line.strip())
+        if line.startswith("Selection contains:"):
+            errors += [x.strip() for x in lines[i + 1 : i + 6] if "/" in x]
+    detail = list(dict.fromkeys(errors))[-6:]
+    last = marks[-1] if marks else ""
+    unknown = re.search(
+        r"Module `\\?(\S+?)' referenced in module .* is not part of the design", log
+    )
+    if unknown is not None:  # a cell the liberty file gives no function for (a clock gate, say)
+        return {
+            "verdict": "error",
+            "reason": "cells",
+            "message": f"the netlist uses a cell the check cannot model ({unknown.group(1)}): it "
+            "has no logic function in the library",
+            "detail": detail,
+        }
+    if last in GUARD_VERDICTS:
+        verdict, reason, message = GUARD_VERDICTS[last]
+        return {"verdict": verdict, "reason": reason, "message": message, "detail": detail}
+    return {
+        "verdict": "error",
+        "reason": "yosys_failed",
+        "message": "Yosys stopped with an error",
+        "detail": detail,
+    }
+
+
+def has_inits(log: str) -> bool:
+    """True if the RTL carried initial values (`a:init` objects listed between the markers)."""
+    block = re.search(rf"^{es.INITS_BEGIN}\n(.*?)^{es.INITS_END}", log, re.M | re.S)
+    return bool(block and re.search(r"\S/\S", block.group(1)))
+
+
+def parse_stage1(log: str) -> dict[str, Any] | None:
+    """`equiv_status`: counts, unproven points and the output signals that were paired."""
+    m = re.search(r"Of those cells (\d+) are proven and (\d+) are unproven", log)
+    if m is None:
+        return None
+    cells = re.findall(r"Unproven \$equiv \S+: \\(\S+?)_gold( \[\d+\])? ", log)
+    paired = set(re.findall(r"Presumably equivalent wires: (\S+)_gold", log))
+    return {
+        "proven": int(m.group(1)),
+        "unproven": int(m.group(2)),
+        "unproven_signals": sorted({b + i.strip() for b, i in cells}),
+        "unpaired_outputs": [p for p in es.OUTPUTS if p not in paired],
+    }
+
+
+def table(log: str) -> dict[int, dict[str, str]]:
+    """`sat -show` table -> {step: {signal: bits}} (rows: `step name dec hex bin`, `--` for x)."""
+    vals: dict[int, dict[str, str]] = {}
+    for line in log.splitlines():
+        f = line.split()
+        if len(f) >= 5 and f[0].isdigit() and re.fullmatch(r"[01xz]+", f[-1]):
+            vals.setdefault(int(f[0]), {})[" ".join(f[1:-3]).lstrip("\\")] = f[-1]
+    return vals
+
+
+def show_bits(bits: str | None) -> str:
+    """One bit as it is, several defined bits as hex, else the bit string with x (`0b0x01`)."""
+    if bits is None:
+        return "x"
+    if len(bits) == 1:
+        return bits
+    if re.fullmatch(r"[01]+", bits):
+        return f"0x{int(bits, 2):0{(len(bits) + 3) // 4}x}"
+    return "0b" + bits
+
+
+# -- the stage-1 model -----------------------------------------------------------------------
+
+
+def rtlil_sig(name: str, width: int, i: int) -> str:
+    """RTLIL text for bit `i` (raw position, LSB = 0) of a wire: the parser ignores offsets."""
+    n = name if name.startswith("$") else "\\" + name
+    return n if width == 1 else f"{n} [{i}]"
+
+
+def equiv_points(equiv_json: str) -> tuple[list[es.Point], int, int]:
+    """The `$equiv` cells of the stage-1 model, and the flip-flop bits of each side.
+
+    A point is tied (the netlist flop may power up equal to the RTL register) when its RTL bit is
+    the Q of a `$dff` (the RTL side) and its netlist bit the Q of a `$_DFF_P_`, and the RTL bit
+    is not already tied to another flop: each RTL bit is tied to one flop only, so ties never
+    restrict the netlist's power-up state.
+    """
+    mod = json.loads(equiv_json)["modules"]["equiv"]
+    names: dict[int, tuple[tuple[int, int], str]] = {}  # bit -> (rank, RTLIL signal)
+    label: dict[int, str] = {}
+    for n, w in mod["netnames"].items():
+        bits, off, upto = w["bits"], w.get("offset", 0), w.get("upto", 0)
+        hide = int(w.get("hide_name", 0))
+        for i, b in enumerate(bits):
+            if not isinstance(b, int):
+                continue
+            idx = off + (len(bits) - 1 - i if upto else i)
+            rank = (hide, len(n))
+            if b not in names or rank < names[b][0]:
+                names[b] = (rank, rtlil_sig(n, len(bits), i))
+                if not hide:
+                    label[b] = n if len(bits) == 1 else f"{n}[{idx}]"
+
+    def sig(b: int | str) -> str:
+        return f"1'{b}" if isinstance(b, str) else names[b][1]
+
+    ffq: dict[str, set[int]] = {"_gold": set(), "_gate": set()}
+    for cn, c in mod["cells"].items():
+        if c["type"] in ("$dff", "$_DFF_P_"):
+            for side in ffq:
+                if cn.endswith(side):
+                    ffq[side].update(b for b in c["connections"]["Q"] if isinstance(b, int))
+    points: list[es.Point] = []
+    chosen: dict[int, int] = {}
+    for c in mod["cells"].values():
+        if c["type"] == "$equiv":
+            a, b, y = (c["connections"][p][0] for p in "ABY")
+            tie = (
+                isinstance(a, int)
+                and isinstance(b, int)
+                and a in ffq["_gold"]
+                and b in ffq["_gate"]
+                and chosen.setdefault(a, b) == b
+            )
+            points.append(
+                es.Point(
+                    label.get(y, sig(y)) if isinstance(y, int) else sig(y), sig(a), sig(b), tie
+                )
+            )
+    return points, len(ffq["_gold"]), len(ffq["_gate"])
+
+
+def base_model(equiv_il: str, points: list[es.Point]) -> str:
+    """`equiv.il` plus a named wire for each side of every point (`eqa_i`, `eqb_i`)."""
+    end = equiv_il.rstrip().rfind("\nend")
+    add: list[str] = []
+    for i, p in enumerate(points):
+        add += [
+            f"  wire \\eqa_{i}",
+            f"  wire \\eqb_{i}",
+            f"  connect \\eqa_{i} {p.a}",
+            f"  connect \\eqb_{i} {p.b}",
+        ]
+    return equiv_il[:end] + "\n" + "\n".join(add) + equiv_il[end:]
+
+
+# -- stage 3: the base case ------------------------------------------------------------------
+
+
+def parse_base(log: str, points: list[es.Point]) -> dict[str, Any]:
+    """Read the two base-case runs. `{"status": "ok"}`, `{"status": "cex", ...}` (the first
+    difference: run, cycle, the differing points, the inputs) or `{"status": "unreadable"}`."""
+    for part in re.split(rf"^{es.BASE_PREFIX}", log, flags=re.M)[1:]:
+        if "model found: FAIL" not in part:
+            continue
+        run = part.split()[0]
+        vals = table(part)
+        for t in sorted(vals):
+            if run == "DEF" and t == 1:
+                continue  # the DEF run starts from defined values: cycle 1 proves nothing
+            row = vals[t]
+            diffs = [
+                {"signal": p.label, "rtl": row.get(f"eqa_{i}"), "netlist": row.get(f"eqb_{i}")}
+                for i, p in enumerate(points)
+                if row.get(f"eqa_{i}") in ("0", "1") and row.get(f"eqb_{i}") != row.get(f"eqa_{i}")
+            ]
+            if diffs:
+                return {
+                    "status": "cex",
+                    "run": run,
+                    "cycle": t,
+                    "differs": diffs,
+                    "inputs": {k: row.get(k) for k in ("rst_n", "ui_in", "uio_in")},
+                    "outputs_differ": any(str(d["signal"]).startswith(es.OUTPUTS) for d in diffs),
+                }
+        return {"status": "unreadable", "run": run}
+    return {"status": "ok"}
+
+
+# -- stages 2 and 4: counterexamples ----------------------------------------------------------
+
+
+def parse_cex(log: str) -> dict[str, Any]:
+    """A `sat -show-ports` counterexample: the per-cycle trace and the first mismatch (from
+    cycle 2) as `{"cycle", "differs": [{"signal", "rtl", "netlist"}]}`."""
+    vals = table(log)
+    trace: list[dict[str, Any]] = []
+    first: dict[str, Any] | None = None
+    for t in sorted(vals):
+        row = vals[t]
+        diffs: list[dict[str, str]] = []
+        for k, gv in row.items():
+            hv = row.get("gate_" + k[5:]) if k.startswith("gold_") else None
+            if hv is None or len(hv) != len(gv):
+                continue
+            diffs += [
+                {"signal": f"{k[5:]}[{len(gv) - 1 - i}]", "rtl": a, "netlist": b}
+                for i, (a, b) in enumerate(zip(gv, hv, strict=True))
+                if a != b and a in "01"
+            ]
+        trace.append(
+            {
+                "cycle": t,
+                "inputs": {
+                    k[3:]: v for k, v in row.items() if k in ("in_rst_n", "in_ui_in", "in_uio_in")
+                },
+                "rtl": {k[5:]: v for k, v in row.items() if k.startswith("gold_")},
+                "netlist": {k[5:]: v for k, v in row.items() if k.startswith("gate_")},
+            }
+        )
+        if diffs and first is None and t >= 2:
+            first = {"cycle": t, "differs": diffs}
+    return {"first_mismatch": first, "trace": trace}
+
+
+def covered_cycles(log: str) -> int:
+    """How many cycles from reset a bounded or inductive search covered without a difference."""
+    return max(
+        (
+            int(n)
+            for n in re.findall(
+                r"(?:Base case for induction length|proved base case for) (\d+)", log
+            )
+        ),
+        default=0,
+    )
+
+
+def induction_length(log: str) -> int | None:
+    k = re.findall(r"Trying induction with length (\d+)", log)
+    return int(k[-1]) if k else None

@@ -1,0 +1,57 @@
+INITS-BEGIN
+INITS-END
+GUARD-TRISTATE
+GUARD-STRUCTURE
+20. Executing CHECK pass (checking for obvious problems).
+GUARD-CLOCKING
+GUARD-OK
+GUARD-STRUCTURE
+29. Executing CHECK pass (checking for obvious problems).
+GUARD-CELLS
+GUARD-TRISTATE
+GUARD-ASYNCSR
+GUARD-CLOCKING
+GUARD-OK
+32. Executing EQUIV_MAKE pass (creating equiv checking module).
+Presumably equivalent wires: clk_gold (\clk_gold), clk_gate (\clk_gate) -> clk
+Presumably equivalent wires: ena_gold (\ena_gold), ena_gate (\ena_gate) -> ena
+Presumably equivalent wires: rst_n_gold (\rst_n_gold), rst_n_gate (\rst_n_gate) -> rst_n
+Presumably equivalent wires: ui_in_gold (\ui_in_gold), ui_in_gate (\ui_in_gate) -> ui_in
+Presumably equivalent wires: uio_in_gold (\uio_in_gold), uio_in_gate (\uio_in_gate) -> uio_in
+Presumably equivalent wires: uio_oe_gold (8'00000000), uio_oe_gate ({ 7'0000000 \_50_.IQ_gate }) -> uio_oe
+Presumably equivalent wires: uio_out_gold (8'00000000), uio_out_gate (8'00000000) -> uio_out
+Presumably equivalent wires: uo_out_gold ({ \core.count[7]_gold \core.count[6]_gold \core.count[5]_gold \core.count[4]_gold \core.count[3]_gold \core.count[2]_gold \core.count[1]_gold \core.count[0]_gold }), uo_out_gate ({ \_45_.IQ_gate \_44_.IQ_gate \_43_.IQ_gate \_42_.IQ_gate \_49_.IQ_gate \_48_.IQ_gate \_47_.IQ_gate \_46_.IQ_gate }) -> uo_out
+36. Executing EQUIV_SIMPLE pass.
+Found 24 unproven $equiv cells (3 groups) in equiv:
+  Trying to prove $equiv for \uo_out [0]: success!
+  Trying to prove $equiv for \uo_out [1]: success!
+  Trying to prove $equiv for \uo_out [2]: success!
+  Trying to prove $equiv for \uo_out [3]: success!
+  Trying to prove $equiv for \uo_out [4]: success!
+  Trying to prove $equiv for \uo_out [5]: success!
+  Trying to prove $equiv for \uo_out [6]: success!
+  Trying to prove $equiv for \uo_out [7]: success!
+  Trying to prove $equiv for \uio_out [0]: success!
+  Trying to prove $equiv for \uio_out [1]: success!
+  Trying to prove $equiv for \uio_out [2]: success!
+  Trying to prove $equiv for \uio_out [3]: success!
+  Trying to prove $equiv for \uio_out [4]: success!
+  Trying to prove $equiv for \uio_out [5]: success!
+  Trying to prove $equiv for \uio_out [6]: success!
+  Trying to prove $equiv for \uio_out [7]: success!
+  Trying to prove $equiv for \uio_oe [0]: success!
+  Trying to prove $equiv for \uio_oe [1]: success!
+  Trying to prove $equiv for \uio_oe [2]: success!
+  Trying to prove $equiv for \uio_oe [3]: success!
+  Trying to prove $equiv for \uio_oe [4]: success!
+  Trying to prove $equiv for \uio_oe [5]: success!
+  Trying to prove $equiv for \uio_oe [6]: success!
+  Trying to prove $equiv for \uio_oe [7]: success!
+Proved 24 previously unproven $equiv cells.
+37. Executing EQUIV_INDUCT pass.
+No selected unproven $equiv cells found in equiv.
+Proved 0 previously unproven $equiv cells.
+38. Executing EQUIV_STATUS pass.
+Found 24 $equiv cells in equiv:
+  Of those cells 24 are proven and 0 are unproven.
+  Equivalence successfully proven!

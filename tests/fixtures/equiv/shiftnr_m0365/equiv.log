@@ -1,0 +1,101 @@
+INITS-BEGIN
+INITS-END
+GUARD-TRISTATE
+GUARD-STRUCTURE
+20. Executing CHECK pass (checking for obvious problems).
+GUARD-CLOCKING
+GUARD-OK
+GUARD-STRUCTURE
+29. Executing CHECK pass (checking for obvious problems).
+GUARD-CELLS
+GUARD-TRISTATE
+GUARD-ASYNCSR
+GUARD-CLOCKING
+GUARD-OK
+32. Executing EQUIV_MAKE pass (creating equiv checking module).
+Presumably equivalent wires: core.sr[15]_gold (\core.sr[15]_gold), core.sr[15]_gate (\_44_.IQ_gate) -> core.sr[15]
+Presumably equivalent wires: core.sr[14]_gold (\core.sr[14]_gold), core.sr[14]_gate (\_14_.B_gate) -> core.sr[14]
+Presumably equivalent wires: core.sr[13]_gold (\core.sr[13]_gold), core.sr[13]_gate (\_42_.IQ_gate) -> core.sr[13]
+Presumably equivalent wires: core.sr[12]_gold (\core.sr[12]_gold), core.sr[12]_gate (\_41_.IQ_gate) -> core.sr[12]
+Presumably equivalent wires: core.sr[11]_gold (\core.sr[11]_gold), core.sr[11]_gate (\_40_.IQ_gate) -> core.sr[11]
+Presumably equivalent wires: core.sr[10]_gold (\core.sr[10]_gold), core.sr[10]_gate (\_39_.IQ_gate) -> core.sr[10]
+Presumably equivalent wires: core.sr[9]_gold (\core.sr[9]_gold), core.sr[9]_gate (\_38_.IQ_gate) -> core.sr[9]
+Presumably equivalent wires: core.sr[8]_gold (\core.sr[8]_gold), core.sr[8]_gate (\_37_.IQ_gate) -> core.sr[8]
+Presumably equivalent wires: core.sr[7]_gold (\core.sr[7]_gold), core.sr[7]_gate (\_36_.IQ_gate) -> core.sr[7]
+Presumably equivalent wires: core.sr[6]_gold (\core.sr[6]_gold), core.sr[6]_gate (\_35_.IQ_gate) -> core.sr[6]
+Presumably equivalent wires: core.sr[5]_gold (\core.sr[5]_gold), core.sr[5]_gate (\_34_.IQ_gate) -> core.sr[5]
+Presumably equivalent wires: core.sr[4]_gold (\core.sr[4]_gold), core.sr[4]_gate (\_33_.IQ_gate) -> core.sr[4]
+Presumably equivalent wires: core.sr[3]_gold (\core.sr[3]_gold), core.sr[3]_gate (\_32_.IQ_gate) -> core.sr[3]
+Presumably equivalent wires: core.sr[2]_gold (\core.sr[2]_gold), core.sr[2]_gate (\_31_.IQ_gate) -> core.sr[2]
+Presumably equivalent wires: core.sr[1]_gold (\core.sr[1]_gold), core.sr[1]_gate (\_30_.IQ_gate) -> core.sr[1]
+Presumably equivalent wires: core.sr[0]_gold (\core.sr[0]_gold), core.sr[0]_gate (\_29_.IQ_gate) -> core.sr[0]
+Presumably equivalent wires: clk_gold (\clk_gold), clk_gate (\clk_gate) -> clk
+Presumably equivalent wires: ena_gold (\ena_gold), ena_gate (\ena_gate) -> ena
+Presumably equivalent wires: rst_n_gold (\rst_n_gold), rst_n_gate (\rst_n_gate) -> rst_n
+Presumably equivalent wires: ui_in_gold (\ui_in_gold), ui_in_gate (\ui_in_gate) -> ui_in
+Presumably equivalent wires: uio_in_gold (\uio_in_gold), uio_in_gate (\uio_in_gate) -> uio_in
+Presumably equivalent wires: uio_oe_gold (8'00000000), uio_oe_gate (8'00000000) -> uio_oe
+Presumably equivalent wires: uio_out_gold (8'00000000), uio_out_gate (8'00000000) -> uio_out
+Presumably equivalent wires: uo_out_gold ({ 7'0000000 \uo_out_gold [0] }), uo_out_gate ({ 7'0000000 \_28_.Y_gate }) -> uo_out
+36. Executing EQUIV_SIMPLE pass.
+Found 40 unproven $equiv cells (19 groups) in equiv:
+  Trying to prove $equiv for \uo_out [0]: failed.
+  Trying to prove $equiv for \uo_out [1]: success!
+  Trying to prove $equiv for \uo_out [2]: success!
+  Trying to prove $equiv for \uo_out [3]: success!
+  Trying to prove $equiv for \uo_out [4]: success!
+  Trying to prove $equiv for \uo_out [5]: success!
+  Trying to prove $equiv for \uo_out [6]: success!
+  Trying to prove $equiv for \uo_out [7]: success!
+  Trying to prove $equiv for \uio_out [0]: success!
+  Trying to prove $equiv for \uio_out [1]: success!
+  Trying to prove $equiv for \uio_out [2]: success!
+  Trying to prove $equiv for \uio_out [3]: success!
+  Trying to prove $equiv for \uio_out [4]: success!
+  Trying to prove $equiv for \uio_out [5]: success!
+  Trying to prove $equiv for \uio_out [6]: success!
+  Trying to prove $equiv for \uio_out [7]: success!
+  Trying to prove $equiv for \uio_oe [0]: success!
+  Trying to prove $equiv for \uio_oe [1]: success!
+  Trying to prove $equiv for \uio_oe [2]: success!
+  Trying to prove $equiv for \uio_oe [3]: success!
+  Trying to prove $equiv for \uio_oe [4]: success!
+  Trying to prove $equiv for \uio_oe [5]: success!
+  Trying to prove $equiv for \uio_oe [6]: success!
+  Trying to prove $equiv for \uio_oe [7]: success!
+  Trying to prove $equiv for \core.sr[15]: failed.
+  Trying to prove $equiv for \core.sr[14]: failed.
+  Trying to prove $equiv for \core.sr[13]: failed.
+  Trying to prove $equiv for \core.sr[12]: failed.
+  Trying to prove $equiv for \core.sr[11]: failed.
+  Trying to prove $equiv for \core.sr[10]: failed.
+  Trying to prove $equiv for \core.sr[9]: failed.
+  Trying to prove $equiv for \core.sr[8]: failed.
+  Trying to prove $equiv for \core.sr[7]: failed.
+  Trying to prove $equiv for \core.sr[6]: failed.
+  Trying to prove $equiv for \core.sr[5]: failed.
+  Trying to prove $equiv for \core.sr[4]: success!
+  Trying to prove $equiv for \core.sr[3]: success!
+  Trying to prove $equiv for \core.sr[2]: success!
+  Trying to prove $equiv for \core.sr[1]: success!
+  Trying to prove $equiv for \core.sr[0]: success!
+Proved 28 previously unproven $equiv cells.
+37. Executing EQUIV_INDUCT pass.
+Found 12 unproven $equiv cells in module equiv:
+Proved 0 previously unproven $equiv cells.
+38. Executing EQUIV_STATUS pass.
+Found 40 $equiv cells in equiv:
+  Of those cells 28 are proven and 12 are unproven.
+  Unproven $equiv $auto$equiv_make.cc:257:find_same_wires$4570: \uo_out_gold [0] \uo_out_gate [0]
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4538: \core.sr[15]_gold \core.sr[15]_gate
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4539: \core.sr[14]_gold \core.sr[14]_gate
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4540: \core.sr[13]_gold \core.sr[13]_gate
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4541: \core.sr[12]_gold \core.sr[12]_gate
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4542: \core.sr[11]_gold \core.sr[11]_gate
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4543: \core.sr[10]_gold \core.sr[10]_gate
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4544: \core.sr[9]_gold \core.sr[9]_gate
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4545: \core.sr[8]_gold \core.sr[8]_gate
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4546: \core.sr[7]_gold \core.sr[7]_gate
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4547: \core.sr[6]_gold \core.sr[6]_gate
+  Unproven $equiv $auto$equiv_make.cc:294:find_same_wires$4548: \core.sr[5]_gold \core.sr[5]_gate
+Found a total of 12 unproven $equiv cells.

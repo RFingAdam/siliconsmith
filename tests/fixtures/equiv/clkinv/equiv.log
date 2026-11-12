@@ -1,0 +1,16 @@
+INITS-BEGIN
+INITS-END
+GUARD-TRISTATE
+GUARD-STRUCTURE
+20. Executing CHECK pass (checking for obvious problems).
+GUARD-CLOCKING
+GUARD-OK
+GUARD-STRUCTURE
+29. Executing CHECK pass (checking for obvious problems).
+GUARD-CELLS
+GUARD-TRISTATE
+GUARD-ASYNCSR
+GUARD-CLOCKING
+ERROR: Assertion failed: selection is not empty: @okff %x:+[CLK,C] @okff %d w:clk %d
+Selection contains:
+tt_um_counter/_42_.CLK

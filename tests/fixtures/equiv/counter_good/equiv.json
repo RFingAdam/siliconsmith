@@ -1,0 +1,5035 @@
+{
+  "creator": "Yosys 0.62 (git sha1 7326bb7d6, ccache clang++ 18.1.3 -O3 -flto -flto)",
+  "modules": {
+    "equiv": {
+      "attributes": {
+        "hdlname": "tt_um_counter",
+        "top": "00000000000000000000000000000001",
+        "src": "netlist.v:3.1-257.10"
+      },
+      "ports": {
+        "clk": {
+          "direction": "input",
+          "bits": [ 2 ]
+        },
+        "ui_in": {
+          "direction": "input",
+          "bits": [ 3, 4, 5, 6, 7, 8, 9, 10 ]
+        },
+        "uo_out": {
+          "direction": "output",
+          "bits": [ 11, 12, 13, 14, 15, 16, 17, 18 ]
+        },
+        "uio_in": {
+          "direction": "input",
+          "bits": [ 19, 20, 21, 22, 23, 24, 25, 26 ]
+        },
+        "uio_out": {
+          "direction": "output",
+          "bits": [ 27, 28, 29, 30, 31, 32, 33, 34 ]
+        },
+        "uio_oe": {
+          "direction": "output",
+          "bits": [ 35, 36, 37, 38, 39, 40, 41, 42 ]
+        },
+        "ena": {
+          "direction": "input",
+          "bits": [ 43 ]
+        },
+        "rst_n": {
+          "direction": "input",
+          "bits": [ 44 ]
+        }
+      },
+      "cells": {
+        "$auto$equiv_make.cc:257:find_same_wires$4541": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 35 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4542": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 36 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4543": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 37 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4544": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 38 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4545": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 39 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4546": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 40 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4547": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 41 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4548": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 42 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4549": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 27 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4550": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 28 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4551": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 29 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4552": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 30 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4553": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 31 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4554": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 32 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4555": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 33 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4556": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0" ],
+            "B": [ "0" ],
+            "Y": [ 34 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4557": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 45 ],
+            "B": [ 46 ],
+            "Y": [ 11 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4558": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 47 ],
+            "B": [ 48 ],
+            "Y": [ 12 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4559": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 49 ],
+            "B": [ 50 ],
+            "Y": [ 13 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4560": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 51 ],
+            "B": [ 52 ],
+            "Y": [ 14 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4561": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 53 ],
+            "B": [ 54 ],
+            "Y": [ 15 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4562": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 55 ],
+            "B": [ 56 ],
+            "Y": [ 16 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4563": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 57 ],
+            "B": [ 58 ],
+            "Y": [ 17 ]
+          }
+        },
+        "$auto$equiv_make.cc:257:find_same_wires$4564": {
+          "hide_name": 1,
+          "type": "$equiv",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 59 ],
+            "B": [ 60 ],
+            "Y": [ 18 ]
+          }
+        },
+        "$auto$ff.cc:337:slice$14_gold": {
+          "hide_name": 1,
+          "type": "$dff",
+          "parameters": {
+            "CLK_POLARITY": "00000000000000000000000000000001",
+            "WIDTH": "00000000000000000000000000001000"
+          },
+          "attributes": {
+            "src": "counter.v:13.3-16.6"
+          },
+          "port_directions": {
+            "CLK": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "CLK": [ 2 ],
+            "D": [ 61, 62, 63, 64, 65, 66, 67, 68 ],
+            "Q": [ 45, 47, 49, 51, 53, 55, 57, 59 ]
+          }
+        },
+        "$auto$ff.cc:592:unmap_ce$90_gold": {
+          "hide_name": 1,
+          "type": "$mux",
+          "parameters": {
+            "WIDTH": "00000000000000000000000000001000"
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "S": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 11, 12, 13, 14, 15, 16, 17, 18 ],
+            "B": [ 69, 70, 71, 72, 73, 74, 75, 76 ],
+            "S": [ 3 ],
+            "Y": [ 77, 78, 79, 80, 81, 82, 83, 84 ]
+          }
+        },
+        "$auto$ff.cc:614:unmap_srst$92_gold": {
+          "hide_name": 1,
+          "type": "$mux",
+          "parameters": {
+            "WIDTH": "00000000000000000000000000001000"
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "S": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ "0", "0", "0", "0", "0", "0", "0", "0" ],
+            "B": [ 77, 78, 79, 80, 81, 82, 83, 84 ],
+            "S": [ 44 ],
+            "Y": [ 61, 62, 63, 64, 65, 66, 67, 68 ]
+          }
+        },
+        "$flatten\\_21_.$auto$liberty.cc:124:parse_func_reduce$2436_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 85 ],
+            "B": [ 86 ],
+            "Y": [ 87 ]
+          }
+        },
+        "$flatten\\_21_.$auto$liberty.cc:124:parse_func_reduce$2440_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 87 ],
+            "B": [ 88 ],
+            "Y": [ 89 ]
+          }
+        },
+        "$flatten\\_21_.$auto$liberty.cc:61:parse_func_reduce$2432_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 3 ],
+            "Y": [ 85 ]
+          }
+        },
+        "$flatten\\_21_.$auto$liberty.cc:61:parse_func_reduce$2434_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 12 ],
+            "Y": [ 86 ]
+          }
+        },
+        "$flatten\\_21_.$auto$liberty.cc:61:parse_func_reduce$2438_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 11 ],
+            "Y": [ 88 ]
+          }
+        },
+        "$flatten\\_22_.$auto$liberty.cc:108:parse_func_reduce$1436_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 3 ],
+            "B": [ 13 ],
+            "Y": [ 90 ]
+          }
+        },
+        "$flatten\\_22_.$auto$liberty.cc:108:parse_func_reduce$1438_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 90 ],
+            "B": [ 12 ],
+            "Y": [ 91 ]
+          }
+        },
+        "$flatten\\_22_.$auto$liberty.cc:108:parse_func_reduce$1440_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 91 ],
+            "B": [ 11 ],
+            "Y": [ 92 ]
+          }
+        },
+        "$flatten\\_23_.$auto$liberty.cc:108:parse_func_reduce$1404_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 14 ],
+            "B": [ 15 ],
+            "Y": [ 93 ]
+          }
+        },
+        "$flatten\\_23_.$auto$liberty.cc:108:parse_func_reduce$1406_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 93 ],
+            "B": [ 92 ],
+            "Y": [ 94 ]
+          }
+        },
+        "$flatten\\_24_.$auto$liberty.cc:108:parse_func_reduce$384_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 14 ],
+            "B": [ 92 ],
+            "Y": [ 95 ]
+          }
+        },
+        "$flatten\\_24_.$auto$liberty.cc:124:parse_func_reduce$386_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 95 ],
+            "B": [ 15 ],
+            "Y": [ 96 ]
+          }
+        },
+        "$flatten\\_25_.$auto$liberty.cc:108:parse_func_reduce$1420_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 97 ],
+            "B": [ 96 ],
+            "Y": [ 98 ]
+          }
+        },
+        "$flatten\\_25_.$auto$liberty.cc:108:parse_func_reduce$1422_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 98 ],
+            "B": [ 44 ],
+            "Y": [ 99 ]
+          }
+        },
+        "$flatten\\_25_.$auto$liberty.cc:61:parse_func_reduce$1418_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 94 ],
+            "Y": [ 97 ]
+          }
+        },
+        "$flatten\\_26_.$auto$liberty.cc:108:parse_func_reduce$1436_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 14 ],
+            "B": [ 16 ],
+            "Y": [ 100 ]
+          }
+        },
+        "$flatten\\_26_.$auto$liberty.cc:108:parse_func_reduce$1438_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 100 ],
+            "B": [ 15 ],
+            "Y": [ 101 ]
+          }
+        },
+        "$flatten\\_26_.$auto$liberty.cc:108:parse_func_reduce$1440_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 101 ],
+            "B": [ 92 ],
+            "Y": [ 102 ]
+          }
+        },
+        "$flatten\\_27_.$auto$liberty.cc:108:parse_func_reduce$2992_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 103 ],
+            "B": [ 104 ],
+            "Y": [ 105 ]
+          }
+        },
+        "$flatten\\_27_.$auto$liberty.cc:124:parse_func_reduce$2996_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 105 ],
+            "B": [ 106 ],
+            "Y": [ 107 ]
+          }
+        },
+        "$flatten\\_27_.$auto$liberty.cc:61:parse_func_reduce$2988_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 16 ],
+            "Y": [ 103 ]
+          }
+        },
+        "$flatten\\_27_.$auto$liberty.cc:61:parse_func_reduce$2990_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 94 ],
+            "Y": [ 104 ]
+          }
+        },
+        "$flatten\\_27_.$auto$liberty.cc:61:parse_func_reduce$2994_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 44 ],
+            "Y": [ 106 ]
+          }
+        },
+        "$flatten\\_28_.$auto$liberty.cc:108:parse_func_reduce$2594_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 108 ],
+            "B": [ 109 ],
+            "Y": [ 110 ]
+          }
+        },
+        "$flatten\\_28_.$auto$liberty.cc:61:parse_func_reduce$2590_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 102 ],
+            "Y": [ 108 ]
+          }
+        },
+        "$flatten\\_28_.$auto$liberty.cc:61:parse_func_reduce$2592_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 107 ],
+            "Y": [ 109 ]
+          }
+        },
+        "$flatten\\_29_.$auto$liberty.cc:108:parse_func_reduce$2992_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 111 ],
+            "B": [ 112 ],
+            "Y": [ 113 ]
+          }
+        },
+        "$flatten\\_29_.$auto$liberty.cc:124:parse_func_reduce$2996_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 113 ],
+            "B": [ 114 ],
+            "Y": [ 115 ]
+          }
+        },
+        "$flatten\\_29_.$auto$liberty.cc:61:parse_func_reduce$2988_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 17 ],
+            "Y": [ 111 ]
+          }
+        },
+        "$flatten\\_29_.$auto$liberty.cc:61:parse_func_reduce$2990_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 102 ],
+            "Y": [ 112 ]
+          }
+        },
+        "$flatten\\_29_.$auto$liberty.cc:61:parse_func_reduce$2994_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 44 ],
+            "Y": [ 114 ]
+          }
+        },
+        "$flatten\\_30_.$auto$liberty.cc:108:parse_func_reduce$410_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 116 ],
+            "B": [ 117 ],
+            "Y": [ 118 ]
+          }
+        },
+        "$flatten\\_30_.$auto$liberty.cc:108:parse_func_reduce$416_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 119 ],
+            "B": [ 120 ],
+            "Y": [ 121 ]
+          }
+        },
+        "$flatten\\_30_.$auto$liberty.cc:124:parse_func_reduce$418_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 118 ],
+            "B": [ 121 ],
+            "Y": [ 122 ]
+          }
+        },
+        "$flatten\\_30_.$auto$liberty.cc:61:parse_func_reduce$406_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 17 ],
+            "Y": [ 116 ]
+          }
+        },
+        "$flatten\\_30_.$auto$liberty.cc:61:parse_func_reduce$408_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 115 ],
+            "Y": [ 117 ]
+          }
+        },
+        "$flatten\\_30_.$auto$liberty.cc:61:parse_func_reduce$412_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 102 ],
+            "Y": [ 119 ]
+          }
+        },
+        "$flatten\\_30_.$auto$liberty.cc:61:parse_func_reduce$414_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 115 ],
+            "Y": [ 120 ]
+          }
+        },
+        "$flatten\\_31_.$auto$liberty.cc:124:parse_func_reduce$2436_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 123 ],
+            "B": [ 124 ],
+            "Y": [ 125 ]
+          }
+        },
+        "$flatten\\_31_.$auto$liberty.cc:124:parse_func_reduce$2440_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 125 ],
+            "B": [ 126 ],
+            "Y": [ 127 ]
+          }
+        },
+        "$flatten\\_31_.$auto$liberty.cc:61:parse_func_reduce$2432_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 18 ],
+            "Y": [ 123 ]
+          }
+        },
+        "$flatten\\_31_.$auto$liberty.cc:61:parse_func_reduce$2434_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 17 ],
+            "Y": [ 124 ]
+          }
+        },
+        "$flatten\\_31_.$auto$liberty.cc:61:parse_func_reduce$2438_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 102 ],
+            "Y": [ 126 ]
+          }
+        },
+        "$flatten\\_32_.$auto$liberty.cc:108:parse_func_reduce$384_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 17 ],
+            "B": [ 102 ],
+            "Y": [ 128 ]
+          }
+        },
+        "$flatten\\_32_.$auto$liberty.cc:124:parse_func_reduce$386_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 128 ],
+            "B": [ 18 ],
+            "Y": [ 129 ]
+          }
+        },
+        "$flatten\\_33_.$auto$liberty.cc:108:parse_func_reduce$1404_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 44 ],
+            "B": [ 127 ],
+            "Y": [ 130 ]
+          }
+        },
+        "$flatten\\_33_.$auto$liberty.cc:108:parse_func_reduce$1406_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 130 ],
+            "B": [ 129 ],
+            "Y": [ 131 ]
+          }
+        },
+        "$flatten\\_34_.$auto$liberty.cc:108:parse_func_reduce$2992_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 132 ],
+            "B": [ 133 ],
+            "Y": [ 134 ]
+          }
+        },
+        "$flatten\\_34_.$auto$liberty.cc:124:parse_func_reduce$2996_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 134 ],
+            "B": [ 135 ],
+            "Y": [ 136 ]
+          }
+        },
+        "$flatten\\_34_.$auto$liberty.cc:61:parse_func_reduce$2988_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 3 ],
+            "Y": [ 132 ]
+          }
+        },
+        "$flatten\\_34_.$auto$liberty.cc:61:parse_func_reduce$2990_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 11 ],
+            "Y": [ 133 ]
+          }
+        },
+        "$flatten\\_34_.$auto$liberty.cc:61:parse_func_reduce$2994_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 44 ],
+            "Y": [ 135 ]
+          }
+        },
+        "$flatten\\_35_.$auto$liberty.cc:108:parse_func_reduce$410_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 137 ],
+            "B": [ 138 ],
+            "Y": [ 139 ]
+          }
+        },
+        "$flatten\\_35_.$auto$liberty.cc:108:parse_func_reduce$416_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 140 ],
+            "B": [ 141 ],
+            "Y": [ 142 ]
+          }
+        },
+        "$flatten\\_35_.$auto$liberty.cc:124:parse_func_reduce$418_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 139 ],
+            "B": [ 142 ],
+            "Y": [ 143 ]
+          }
+        },
+        "$flatten\\_35_.$auto$liberty.cc:61:parse_func_reduce$406_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 3 ],
+            "Y": [ 137 ]
+          }
+        },
+        "$flatten\\_35_.$auto$liberty.cc:61:parse_func_reduce$408_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 136 ],
+            "Y": [ 138 ]
+          }
+        },
+        "$flatten\\_35_.$auto$liberty.cc:61:parse_func_reduce$412_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 11 ],
+            "Y": [ 140 ]
+          }
+        },
+        "$flatten\\_35_.$auto$liberty.cc:61:parse_func_reduce$414_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 136 ],
+            "Y": [ 141 ]
+          }
+        },
+        "$flatten\\_36_.$auto$liberty.cc:108:parse_func_reduce$384_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 3 ],
+            "B": [ 11 ],
+            "Y": [ 144 ]
+          }
+        },
+        "$flatten\\_36_.$auto$liberty.cc:124:parse_func_reduce$386_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 144 ],
+            "B": [ 12 ],
+            "Y": [ 145 ]
+          }
+        },
+        "$flatten\\_37_.$auto$liberty.cc:108:parse_func_reduce$1404_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 44 ],
+            "B": [ 89 ],
+            "Y": [ 146 ]
+          }
+        },
+        "$flatten\\_37_.$auto$liberty.cc:108:parse_func_reduce$1406_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 146 ],
+            "B": [ 145 ],
+            "Y": [ 147 ]
+          }
+        },
+        "$flatten\\_38_.$auto$liberty.cc:108:parse_func_reduce$1026_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 3 ],
+            "B": [ 12 ],
+            "Y": [ 148 ]
+          }
+        },
+        "$flatten\\_38_.$auto$liberty.cc:108:parse_func_reduce$1028_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 148 ],
+            "B": [ 11 ],
+            "Y": [ 149 ]
+          }
+        },
+        "$flatten\\_38_.$auto$liberty.cc:124:parse_func_reduce$1030_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 149 ],
+            "B": [ 13 ],
+            "Y": [ 150 ]
+          }
+        },
+        "$flatten\\_39_.$auto$liberty.cc:108:parse_func_reduce$1420_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 151 ],
+            "B": [ 150 ],
+            "Y": [ 152 ]
+          }
+        },
+        "$flatten\\_39_.$auto$liberty.cc:108:parse_func_reduce$1422_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 152 ],
+            "B": [ 44 ],
+            "Y": [ 153 ]
+          }
+        },
+        "$flatten\\_39_.$auto$liberty.cc:61:parse_func_reduce$1418_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 92 ],
+            "Y": [ 151 ]
+          }
+        },
+        "$flatten\\_40_.$auto$liberty.cc:108:parse_func_reduce$2992_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 154 ],
+            "B": [ 155 ],
+            "Y": [ 156 ]
+          }
+        },
+        "$flatten\\_40_.$auto$liberty.cc:124:parse_func_reduce$2996_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 156 ],
+            "B": [ 157 ],
+            "Y": [ 158 ]
+          }
+        },
+        "$flatten\\_40_.$auto$liberty.cc:61:parse_func_reduce$2988_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 14 ],
+            "Y": [ 154 ]
+          }
+        },
+        "$flatten\\_40_.$auto$liberty.cc:61:parse_func_reduce$2990_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 92 ],
+            "Y": [ 155 ]
+          }
+        },
+        "$flatten\\_40_.$auto$liberty.cc:61:parse_func_reduce$2994_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 44 ],
+            "Y": [ 157 ]
+          }
+        },
+        "$flatten\\_41_.$auto$liberty.cc:108:parse_func_reduce$410_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 159 ],
+            "B": [ 160 ],
+            "Y": [ 161 ]
+          }
+        },
+        "$flatten\\_41_.$auto$liberty.cc:108:parse_func_reduce$416_gate": {
+          "hide_name": 1,
+          "type": "$_AND_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 162 ],
+            "B": [ 163 ],
+            "Y": [ 164 ]
+          }
+        },
+        "$flatten\\_41_.$auto$liberty.cc:124:parse_func_reduce$418_gate": {
+          "hide_name": 1,
+          "type": "$_OR_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 161 ],
+            "B": [ 164 ],
+            "Y": [ 165 ]
+          }
+        },
+        "$flatten\\_41_.$auto$liberty.cc:61:parse_func_reduce$406_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 14 ],
+            "Y": [ 159 ]
+          }
+        },
+        "$flatten\\_41_.$auto$liberty.cc:61:parse_func_reduce$408_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 158 ],
+            "Y": [ 160 ]
+          }
+        },
+        "$flatten\\_41_.$auto$liberty.cc:61:parse_func_reduce$412_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 92 ],
+            "Y": [ 162 ]
+          }
+        },
+        "$flatten\\_41_.$auto$liberty.cc:61:parse_func_reduce$414_gate": {
+          "hide_name": 1,
+          "type": "$_NOT_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "A": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 158 ],
+            "Y": [ 163 ]
+          }
+        },
+        "$flatten\\_42_.$auto$liberty.cc:255:create_ff$1595_gate": {
+          "hide_name": 1,
+          "type": "$_DFF_P_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "C": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "C": [ 2 ],
+            "D": [ 99 ],
+            "Q": [ 54 ]
+          }
+        },
+        "$flatten\\_43_.$auto$liberty.cc:255:create_ff$1595_gate": {
+          "hide_name": 1,
+          "type": "$_DFF_P_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "C": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "C": [ 2 ],
+            "D": [ 110 ],
+            "Q": [ 56 ]
+          }
+        },
+        "$flatten\\_44_.$auto$liberty.cc:255:create_ff$1595_gate": {
+          "hide_name": 1,
+          "type": "$_DFF_P_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "C": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "C": [ 2 ],
+            "D": [ 122 ],
+            "Q": [ 58 ]
+          }
+        },
+        "$flatten\\_45_.$auto$liberty.cc:255:create_ff$1595_gate": {
+          "hide_name": 1,
+          "type": "$_DFF_P_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "C": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "C": [ 2 ],
+            "D": [ 131 ],
+            "Q": [ 60 ]
+          }
+        },
+        "$flatten\\_46_.$auto$liberty.cc:255:create_ff$1595_gate": {
+          "hide_name": 1,
+          "type": "$_DFF_P_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "C": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "C": [ 2 ],
+            "D": [ 143 ],
+            "Q": [ 46 ]
+          }
+        },
+        "$flatten\\_47_.$auto$liberty.cc:255:create_ff$1595_gate": {
+          "hide_name": 1,
+          "type": "$_DFF_P_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "C": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "C": [ 2 ],
+            "D": [ 147 ],
+            "Q": [ 48 ]
+          }
+        },
+        "$flatten\\_48_.$auto$liberty.cc:255:create_ff$1595_gate": {
+          "hide_name": 1,
+          "type": "$_DFF_P_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "C": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "C": [ 2 ],
+            "D": [ 153 ],
+            "Q": [ 50 ]
+          }
+        },
+        "$flatten\\_49_.$auto$liberty.cc:255:create_ff$1595_gate": {
+          "hide_name": 1,
+          "type": "$_DFF_P_",
+          "parameters": {
+          },
+          "attributes": {
+          },
+          "port_directions": {
+            "C": "input",
+            "D": "input",
+            "Q": "output"
+          },
+          "connections": {
+            "C": [ 2 ],
+            "D": [ 165 ],
+            "Q": [ 52 ]
+          }
+        },
+        "$flatten\\core.$add$counter.v:15$4_gold": {
+          "hide_name": 1,
+          "type": "$add",
+          "parameters": {
+            "A_SIGNED": "00000000000000000000000000000000",
+            "A_WIDTH": "00000000000000000000000000001000",
+            "B_SIGNED": "00000000000000000000000000000000",
+            "B_WIDTH": "00000000000000000000000000001000",
+            "Y_WIDTH": "00000000000000000000000000001000"
+          },
+          "attributes": {
+            "src": "counter.v:15.33-15.45"
+          },
+          "port_directions": {
+            "A": "input",
+            "B": "input",
+            "Y": "output"
+          },
+          "connections": {
+            "A": [ 11, 12, 13, 14, 15, 16, 17, 18 ],
+            "B": [ "1", "0", "0", "0", "0", "0", "0", "0" ],
+            "Y": [ 69, 70, 71, 72, 73, 74, 75, 76 ]
+          }
+        },
+        "_21__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:41.28-46.4",
+            "module": "sky130_fd_sc_hd__nand3_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "10.009600000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_22__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:47.27-53.4",
+            "module": "sky130_fd_sc_hd__and4_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "10.009600000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_23__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:54.27-59.4",
+            "module": "sky130_fd_sc_hd__and3_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "7.5072000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_24__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:60.27-65.4",
+            "module": "sky130_fd_sc_hd__a21o_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_25__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:66.28-71.4",
+            "module": "sky130_fd_sc_hd__and3b_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "10.009600000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_26__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:72.27-78.4",
+            "module": "sky130_fd_sc_hd__and4_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "10.009600000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_27__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:79.28-84.4",
+            "module": "sky130_fd_sc_hd__o21ai_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_28__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:85.27-89.4",
+            "module": "sky130_fd_sc_hd__nor2_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "6.2560000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_29__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:90.28-95.4",
+            "module": "sky130_fd_sc_hd__o21ai_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_30__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:96.28-101.4",
+            "module": "sky130_fd_sc_hd__a21oi_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_31__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:102.28-107.4",
+            "module": "sky130_fd_sc_hd__nand3_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "10.009600000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_32__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:108.27-113.4",
+            "module": "sky130_fd_sc_hd__a21o_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_33__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:114.27-119.4",
+            "module": "sky130_fd_sc_hd__and3_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "7.5072000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_34__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:120.28-125.4",
+            "module": "sky130_fd_sc_hd__o21ai_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_35__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:126.28-131.4",
+            "module": "sky130_fd_sc_hd__a21oi_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_36__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:132.27-137.4",
+            "module": "sky130_fd_sc_hd__a21o_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_37__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:138.27-143.4",
+            "module": "sky130_fd_sc_hd__and3_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "7.5072000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_38__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:144.27-150.4",
+            "module": "sky130_fd_sc_hd__a31o_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_39__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:151.28-156.4",
+            "module": "sky130_fd_sc_hd__and3b_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "10.009600000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_40__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:157.28-162.4",
+            "module": "sky130_fd_sc_hd__o21ai_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_41__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:163.28-168.4",
+            "module": "sky130_fd_sc_hd__a21oi_2",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "8.758400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_42__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:169.28-173.4",
+            "module": "sky130_fd_sc_hd__dfxtp_2",
+            "module_area": "21.270400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_43__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:174.28-178.4",
+            "module": "sky130_fd_sc_hd__dfxtp_2",
+            "module_area": "21.270400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_44__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:179.28-183.4",
+            "module": "sky130_fd_sc_hd__dfxtp_2",
+            "module_area": "21.270400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_45__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:184.28-188.4",
+            "module": "sky130_fd_sc_hd__dfxtp_2",
+            "module_area": "21.270400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_46__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:189.28-193.4",
+            "module": "sky130_fd_sc_hd__dfxtp_2",
+            "module_area": "21.270400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_47__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:194.28-198.4",
+            "module": "sky130_fd_sc_hd__dfxtp_2",
+            "module_area": "21.270400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_48__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:199.28-203.4",
+            "module": "sky130_fd_sc_hd__dfxtp_2",
+            "module_area": "21.270400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_49__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:204.28-208.4",
+            "module": "sky130_fd_sc_hd__dfxtp_2",
+            "module_area": "21.270400000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_50__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:209.27-211.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_51__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:212.27-214.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_52__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:215.27-217.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_53__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:218.27-220.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_54__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:221.27-223.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_55__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:224.27-226.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_56__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:227.27-229.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_57__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:230.27-232.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_58__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:233.27-235.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_59__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:236.27-238.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_60__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:239.27-241.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_61__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:242.27-244.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_62__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:245.27-247.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_63__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:248.27-250.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_64__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:251.27-253.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "_65__gate": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "netlist.v:254.27-256.4",
+            "module": "sky130_fd_sc_hd__conb_1",
+            "module_abc9_box": "00000000000000000000000000000001",
+            "module_area": "3.7536000000"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        },
+        "core_gold": {
+          "hide_name": 0,
+          "type": "$scopeinfo",
+          "parameters": {
+            "TYPE": "module"
+          },
+          "attributes": {
+            "cell_module_not_derived": "00000000000000000000000000000001",
+            "cell_src": "project.v:18.11-25.4",
+            "module": "counter",
+            "module_hdlname": "counter",
+            "module_src": "counter.v:4.1-21.10"
+          },
+          "port_directions": {
+          },
+          "connections": {
+          }
+        }
+      },
+      "netnames": {
+        "$auto$rtlil.cc:3472:Mux$91_gold": {
+          "hide_name": 1,
+          "bits": [ 77, 78, 79, 80, 81, 82, 83, 84 ],
+          "attributes": {
+          }
+        },
+        "$auto$rtlil.cc:3472:Mux$93_gold": {
+          "hide_name": 1,
+          "bits": [ 61, 62, 63, 64, 65, 66, 67, 68 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_21_.$auto$rtlil.cc:3574:NotGate$2433_gate": {
+          "hide_name": 1,
+          "bits": [ 85 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_21_.$auto$rtlil.cc:3574:NotGate$2435_gate": {
+          "hide_name": 1,
+          "bits": [ 86 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_21_.$auto$rtlil.cc:3574:NotGate$2439_gate": {
+          "hide_name": 1,
+          "bits": [ 88 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_21_.$auto$rtlil.cc:3577:OrGate$2437_gate": {
+          "hide_name": 1,
+          "bits": [ 87 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_22_.$auto$rtlil.cc:3575:AndGate$1437_gate": {
+          "hide_name": 1,
+          "bits": [ 90 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_22_.$auto$rtlil.cc:3575:AndGate$1439_gate": {
+          "hide_name": 1,
+          "bits": [ 91 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_23_.$auto$rtlil.cc:3575:AndGate$1405_gate": {
+          "hide_name": 1,
+          "bits": [ 93 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_24_.$auto$rtlil.cc:3575:AndGate$385_gate": {
+          "hide_name": 1,
+          "bits": [ 95 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_25_.$auto$rtlil.cc:3574:NotGate$1419_gate": {
+          "hide_name": 1,
+          "bits": [ 97 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_25_.$auto$rtlil.cc:3575:AndGate$1421_gate": {
+          "hide_name": 1,
+          "bits": [ 98 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_26_.$auto$rtlil.cc:3575:AndGate$1437_gate": {
+          "hide_name": 1,
+          "bits": [ 100 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_26_.$auto$rtlil.cc:3575:AndGate$1439_gate": {
+          "hide_name": 1,
+          "bits": [ 101 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_27_.$auto$rtlil.cc:3574:NotGate$2989_gate": {
+          "hide_name": 1,
+          "bits": [ 103 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_27_.$auto$rtlil.cc:3574:NotGate$2991_gate": {
+          "hide_name": 1,
+          "bits": [ 104 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_27_.$auto$rtlil.cc:3574:NotGate$2995_gate": {
+          "hide_name": 1,
+          "bits": [ 106 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_27_.$auto$rtlil.cc:3575:AndGate$2993_gate": {
+          "hide_name": 1,
+          "bits": [ 105 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_28_.$auto$rtlil.cc:3574:NotGate$2591_gate": {
+          "hide_name": 1,
+          "bits": [ 108 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_28_.$auto$rtlil.cc:3574:NotGate$2593_gate": {
+          "hide_name": 1,
+          "bits": [ 109 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_29_.$auto$rtlil.cc:3574:NotGate$2989_gate": {
+          "hide_name": 1,
+          "bits": [ 111 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_29_.$auto$rtlil.cc:3574:NotGate$2991_gate": {
+          "hide_name": 1,
+          "bits": [ 112 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_29_.$auto$rtlil.cc:3574:NotGate$2995_gate": {
+          "hide_name": 1,
+          "bits": [ 114 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_29_.$auto$rtlil.cc:3575:AndGate$2993_gate": {
+          "hide_name": 1,
+          "bits": [ 113 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_30_.$auto$rtlil.cc:3574:NotGate$407_gate": {
+          "hide_name": 1,
+          "bits": [ 116 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_30_.$auto$rtlil.cc:3574:NotGate$409_gate": {
+          "hide_name": 1,
+          "bits": [ 117 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_30_.$auto$rtlil.cc:3574:NotGate$413_gate": {
+          "hide_name": 1,
+          "bits": [ 119 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_30_.$auto$rtlil.cc:3574:NotGate$415_gate": {
+          "hide_name": 1,
+          "bits": [ 120 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_30_.$auto$rtlil.cc:3575:AndGate$411_gate": {
+          "hide_name": 1,
+          "bits": [ 118 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_30_.$auto$rtlil.cc:3575:AndGate$417_gate": {
+          "hide_name": 1,
+          "bits": [ 121 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_31_.$auto$rtlil.cc:3574:NotGate$2433_gate": {
+          "hide_name": 1,
+          "bits": [ 123 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_31_.$auto$rtlil.cc:3574:NotGate$2435_gate": {
+          "hide_name": 1,
+          "bits": [ 124 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_31_.$auto$rtlil.cc:3574:NotGate$2439_gate": {
+          "hide_name": 1,
+          "bits": [ 126 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_31_.$auto$rtlil.cc:3577:OrGate$2437_gate": {
+          "hide_name": 1,
+          "bits": [ 125 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_32_.$auto$rtlil.cc:3575:AndGate$385_gate": {
+          "hide_name": 1,
+          "bits": [ 128 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_33_.$auto$rtlil.cc:3575:AndGate$1405_gate": {
+          "hide_name": 1,
+          "bits": [ 130 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_34_.$auto$rtlil.cc:3574:NotGate$2989_gate": {
+          "hide_name": 1,
+          "bits": [ 132 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_34_.$auto$rtlil.cc:3574:NotGate$2991_gate": {
+          "hide_name": 1,
+          "bits": [ 133 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_34_.$auto$rtlil.cc:3574:NotGate$2995_gate": {
+          "hide_name": 1,
+          "bits": [ 135 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_34_.$auto$rtlil.cc:3575:AndGate$2993_gate": {
+          "hide_name": 1,
+          "bits": [ 134 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_35_.$auto$rtlil.cc:3574:NotGate$407_gate": {
+          "hide_name": 1,
+          "bits": [ 137 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_35_.$auto$rtlil.cc:3574:NotGate$409_gate": {
+          "hide_name": 1,
+          "bits": [ 138 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_35_.$auto$rtlil.cc:3574:NotGate$413_gate": {
+          "hide_name": 1,
+          "bits": [ 140 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_35_.$auto$rtlil.cc:3574:NotGate$415_gate": {
+          "hide_name": 1,
+          "bits": [ 141 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_35_.$auto$rtlil.cc:3575:AndGate$411_gate": {
+          "hide_name": 1,
+          "bits": [ 139 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_35_.$auto$rtlil.cc:3575:AndGate$417_gate": {
+          "hide_name": 1,
+          "bits": [ 142 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_36_.$auto$rtlil.cc:3575:AndGate$385_gate": {
+          "hide_name": 1,
+          "bits": [ 144 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_37_.$auto$rtlil.cc:3575:AndGate$1405_gate": {
+          "hide_name": 1,
+          "bits": [ 146 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_38_.$auto$rtlil.cc:3575:AndGate$1027_gate": {
+          "hide_name": 1,
+          "bits": [ 148 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_38_.$auto$rtlil.cc:3575:AndGate$1029_gate": {
+          "hide_name": 1,
+          "bits": [ 149 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_39_.$auto$rtlil.cc:3574:NotGate$1419_gate": {
+          "hide_name": 1,
+          "bits": [ 151 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_39_.$auto$rtlil.cc:3575:AndGate$1421_gate": {
+          "hide_name": 1,
+          "bits": [ 152 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_40_.$auto$rtlil.cc:3574:NotGate$2989_gate": {
+          "hide_name": 1,
+          "bits": [ 154 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_40_.$auto$rtlil.cc:3574:NotGate$2991_gate": {
+          "hide_name": 1,
+          "bits": [ 155 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_40_.$auto$rtlil.cc:3574:NotGate$2995_gate": {
+          "hide_name": 1,
+          "bits": [ 157 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_40_.$auto$rtlil.cc:3575:AndGate$2993_gate": {
+          "hide_name": 1,
+          "bits": [ 156 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_41_.$auto$rtlil.cc:3574:NotGate$407_gate": {
+          "hide_name": 1,
+          "bits": [ 159 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_41_.$auto$rtlil.cc:3574:NotGate$409_gate": {
+          "hide_name": 1,
+          "bits": [ 160 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_41_.$auto$rtlil.cc:3574:NotGate$413_gate": {
+          "hide_name": 1,
+          "bits": [ 162 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_41_.$auto$rtlil.cc:3574:NotGate$415_gate": {
+          "hide_name": 1,
+          "bits": [ 163 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_41_.$auto$rtlil.cc:3575:AndGate$411_gate": {
+          "hide_name": 1,
+          "bits": [ 161 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\_41_.$auto$rtlil.cc:3575:AndGate$417_gate": {
+          "hide_name": 1,
+          "bits": [ 164 ],
+          "attributes": {
+          }
+        },
+        "$flatten\\core.$add$counter.v:15$4_Y[0]_gold": {
+          "hide_name": 1,
+          "bits": [ 69 ],
+          "attributes": {
+            "src": "counter.v:15.33-15.45"
+          }
+        },
+        "$flatten\\core.$add$counter.v:15$4_Y[1]_gold": {
+          "hide_name": 1,
+          "bits": [ 70 ],
+          "offset": 1,
+          "attributes": {
+            "src": "counter.v:15.33-15.45"
+          }
+        },
+        "$flatten\\core.$add$counter.v:15$4_Y[2]_gold": {
+          "hide_name": 1,
+          "bits": [ 71 ],
+          "offset": 2,
+          "attributes": {
+            "src": "counter.v:15.33-15.45"
+          }
+        },
+        "$flatten\\core.$add$counter.v:15$4_Y[3]_gold": {
+          "hide_name": 1,
+          "bits": [ 72 ],
+          "offset": 3,
+          "attributes": {
+            "src": "counter.v:15.33-15.45"
+          }
+        },
+        "$flatten\\core.$add$counter.v:15$4_Y[4]_gold": {
+          "hide_name": 1,
+          "bits": [ 73 ],
+          "offset": 4,
+          "attributes": {
+            "src": "counter.v:15.33-15.45"
+          }
+        },
+        "$flatten\\core.$add$counter.v:15$4_Y[5]_gold": {
+          "hide_name": 1,
+          "bits": [ 74 ],
+          "offset": 5,
+          "attributes": {
+            "src": "counter.v:15.33-15.45"
+          }
+        },
+        "$flatten\\core.$add$counter.v:15$4_Y[6]_gold": {
+          "hide_name": 1,
+          "bits": [ 75 ],
+          "offset": 6,
+          "attributes": {
+            "src": "counter.v:15.33-15.45"
+          }
+        },
+        "$flatten\\core.$add$counter.v:15$4_Y[7]_gold": {
+          "hide_name": 1,
+          "bits": [ 76 ],
+          "offset": 7,
+          "attributes": {
+            "src": "counter.v:15.33-15.45"
+          }
+        },
+        "_21_.A_gate": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "capacitance": "0.0043400000",
+            "hdlname": "_21_ A"
+          }
+        },
+        "_21_.B_gate": {
+          "hide_name": 0,
+          "bits": [ 48 ],
+          "attributes": {
+            "capacitance": "0.0044680000",
+            "hdlname": "_21_ B"
+          }
+        },
+        "_21_.C_gate": {
+          "hide_name": 0,
+          "bits": [ 46 ],
+          "attributes": {
+            "capacitance": "0.0045040000",
+            "hdlname": "_21_ C"
+          }
+        },
+        "_21_.Y_gate": {
+          "hide_name": 0,
+          "bits": [ 89 ],
+          "attributes": {
+            "hdlname": "_21_ Y"
+          }
+        },
+        "_22_.A_gate": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "capacitance": "0.0014950000",
+            "hdlname": "_22_ A"
+          }
+        },
+        "_22_.B_gate": {
+          "hide_name": 0,
+          "bits": [ 50 ],
+          "attributes": {
+            "capacitance": "0.0015240000",
+            "hdlname": "_22_ B"
+          }
+        },
+        "_22_.C_gate": {
+          "hide_name": 0,
+          "bits": [ 48 ],
+          "attributes": {
+            "capacitance": "0.0015200000",
+            "hdlname": "_22_ C"
+          }
+        },
+        "_22_.D_gate": {
+          "hide_name": 0,
+          "bits": [ 46 ],
+          "attributes": {
+            "capacitance": "0.0015370000",
+            "hdlname": "_22_ D"
+          }
+        },
+        "_22_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 92 ],
+          "attributes": {
+            "hdlname": "_22_ X"
+          }
+        },
+        "_23_.A_gate": {
+          "hide_name": 0,
+          "bits": [ 52 ],
+          "attributes": {
+            "capacitance": "0.0014260000",
+            "hdlname": "_23_ A"
+          }
+        },
+        "_23_.B_gate": {
+          "hide_name": 0,
+          "bits": [ 54 ],
+          "attributes": {
+            "capacitance": "0.0015050000",
+            "hdlname": "_23_ B"
+          }
+        },
+        "_23_.C_gate": {
+          "hide_name": 0,
+          "bits": [ 92 ],
+          "attributes": {
+            "capacitance": "0.0015240000",
+            "hdlname": "_23_ C"
+          }
+        },
+        "_23_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 94 ],
+          "attributes": {
+            "hdlname": "_23_ X"
+          }
+        },
+        "_24_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 52 ],
+          "attributes": {
+            "capacitance": "0.0023590000",
+            "hdlname": "_24_ A1"
+          }
+        },
+        "_24_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 92 ],
+          "attributes": {
+            "capacitance": "0.0023150000",
+            "hdlname": "_24_ A2"
+          }
+        },
+        "_24_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 54 ],
+          "attributes": {
+            "capacitance": "0.0023800000",
+            "hdlname": "_24_ B1"
+          }
+        },
+        "_24_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 96 ],
+          "attributes": {
+            "hdlname": "_24_ X"
+          }
+        },
+        "_25_.A_N_gate": {
+          "hide_name": 0,
+          "bits": [ 94 ],
+          "attributes": {
+            "capacitance": "0.0014120000",
+            "hdlname": "_25_ A_N"
+          }
+        },
+        "_25_.B_gate": {
+          "hide_name": 0,
+          "bits": [ 96 ],
+          "attributes": {
+            "capacitance": "0.0015010000",
+            "hdlname": "_25_ B"
+          }
+        },
+        "_25_.C_gate": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "capacitance": "0.0015160000",
+            "hdlname": "_25_ C"
+          }
+        },
+        "_25_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 99 ],
+          "attributes": {
+            "hdlname": "_25_ X"
+          }
+        },
+        "_26_.A_gate": {
+          "hide_name": 0,
+          "bits": [ 52 ],
+          "attributes": {
+            "capacitance": "0.0014950000",
+            "hdlname": "_26_ A"
+          }
+        },
+        "_26_.B_gate": {
+          "hide_name": 0,
+          "bits": [ 56 ],
+          "attributes": {
+            "capacitance": "0.0015240000",
+            "hdlname": "_26_ B"
+          }
+        },
+        "_26_.C_gate": {
+          "hide_name": 0,
+          "bits": [ 54 ],
+          "attributes": {
+            "capacitance": "0.0015200000",
+            "hdlname": "_26_ C"
+          }
+        },
+        "_26_.D_gate": {
+          "hide_name": 0,
+          "bits": [ 92 ],
+          "attributes": {
+            "capacitance": "0.0015370000",
+            "hdlname": "_26_ D"
+          }
+        },
+        "_26_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 102 ],
+          "attributes": {
+            "hdlname": "_26_ X"
+          }
+        },
+        "_27_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 56 ],
+          "attributes": {
+            "capacitance": "0.0048320000",
+            "hdlname": "_27_ A1"
+          }
+        },
+        "_27_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 94 ],
+          "attributes": {
+            "capacitance": "0.0044220000",
+            "hdlname": "_27_ A2"
+          }
+        },
+        "_27_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "capacitance": "0.0043790000",
+            "hdlname": "_27_ B1"
+          }
+        },
+        "_27_.Y_gate": {
+          "hide_name": 0,
+          "bits": [ 107 ],
+          "attributes": {
+            "hdlname": "_27_ Y"
+          }
+        },
+        "_28_.A_gate": {
+          "hide_name": 0,
+          "bits": [ 102 ],
+          "attributes": {
+            "capacitance": "0.0044010000",
+            "hdlname": "_28_ A"
+          }
+        },
+        "_28_.B_gate": {
+          "hide_name": 0,
+          "bits": [ 107 ],
+          "attributes": {
+            "capacitance": "0.0044380000",
+            "hdlname": "_28_ B"
+          }
+        },
+        "_28_.Y_gate": {
+          "hide_name": 0,
+          "bits": [ 110 ],
+          "attributes": {
+            "hdlname": "_28_ Y"
+          }
+        },
+        "_29_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 58 ],
+          "attributes": {
+            "capacitance": "0.0048320000",
+            "hdlname": "_29_ A1"
+          }
+        },
+        "_29_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 102 ],
+          "attributes": {
+            "capacitance": "0.0044220000",
+            "hdlname": "_29_ A2"
+          }
+        },
+        "_29_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "capacitance": "0.0043790000",
+            "hdlname": "_29_ B1"
+          }
+        },
+        "_29_.Y_gate": {
+          "hide_name": 0,
+          "bits": [ 115 ],
+          "attributes": {
+            "hdlname": "_29_ Y"
+          }
+        },
+        "_30_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 58 ],
+          "attributes": {
+            "capacitance": "0.0044430000",
+            "hdlname": "_30_ A1"
+          }
+        },
+        "_30_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 102 ],
+          "attributes": {
+            "capacitance": "0.0048300000",
+            "hdlname": "_30_ A2"
+          }
+        },
+        "_30_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 115 ],
+          "attributes": {
+            "capacitance": "0.0044130000",
+            "hdlname": "_30_ B1"
+          }
+        },
+        "_30_.Y_gate": {
+          "hide_name": 0,
+          "bits": [ 122 ],
+          "attributes": {
+            "hdlname": "_30_ Y"
+          }
+        },
+        "_31_.A_gate": {
+          "hide_name": 0,
+          "bits": [ 60 ],
+          "attributes": {
+            "capacitance": "0.0043400000",
+            "hdlname": "_31_ A"
+          }
+        },
+        "_31_.B_gate": {
+          "hide_name": 0,
+          "bits": [ 58 ],
+          "attributes": {
+            "capacitance": "0.0044680000",
+            "hdlname": "_31_ B"
+          }
+        },
+        "_31_.C_gate": {
+          "hide_name": 0,
+          "bits": [ 102 ],
+          "attributes": {
+            "capacitance": "0.0045040000",
+            "hdlname": "_31_ C"
+          }
+        },
+        "_31_.Y_gate": {
+          "hide_name": 0,
+          "bits": [ 127 ],
+          "attributes": {
+            "hdlname": "_31_ Y"
+          }
+        },
+        "_32_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 58 ],
+          "attributes": {
+            "capacitance": "0.0023590000",
+            "hdlname": "_32_ A1"
+          }
+        },
+        "_32_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 102 ],
+          "attributes": {
+            "capacitance": "0.0023150000",
+            "hdlname": "_32_ A2"
+          }
+        },
+        "_32_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 60 ],
+          "attributes": {
+            "capacitance": "0.0023800000",
+            "hdlname": "_32_ B1"
+          }
+        },
+        "_32_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 129 ],
+          "attributes": {
+            "hdlname": "_32_ X"
+          }
+        },
+        "_33_.A_gate": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "capacitance": "0.0014260000",
+            "hdlname": "_33_ A"
+          }
+        },
+        "_33_.B_gate": {
+          "hide_name": 0,
+          "bits": [ 127 ],
+          "attributes": {
+            "capacitance": "0.0015050000",
+            "hdlname": "_33_ B"
+          }
+        },
+        "_33_.C_gate": {
+          "hide_name": 0,
+          "bits": [ 129 ],
+          "attributes": {
+            "capacitance": "0.0015240000",
+            "hdlname": "_33_ C"
+          }
+        },
+        "_33_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 131 ],
+          "attributes": {
+            "hdlname": "_33_ X"
+          }
+        },
+        "_34_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "capacitance": "0.0048320000",
+            "hdlname": "_34_ A1"
+          }
+        },
+        "_34_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 46 ],
+          "attributes": {
+            "capacitance": "0.0044220000",
+            "hdlname": "_34_ A2"
+          }
+        },
+        "_34_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "capacitance": "0.0043790000",
+            "hdlname": "_34_ B1"
+          }
+        },
+        "_34_.Y_gate": {
+          "hide_name": 0,
+          "bits": [ 136 ],
+          "attributes": {
+            "hdlname": "_34_ Y"
+          }
+        },
+        "_35_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "capacitance": "0.0044430000",
+            "hdlname": "_35_ A1"
+          }
+        },
+        "_35_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 46 ],
+          "attributes": {
+            "capacitance": "0.0048300000",
+            "hdlname": "_35_ A2"
+          }
+        },
+        "_35_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 136 ],
+          "attributes": {
+            "capacitance": "0.0044130000",
+            "hdlname": "_35_ B1"
+          }
+        },
+        "_35_.Y_gate": {
+          "hide_name": 0,
+          "bits": [ 143 ],
+          "attributes": {
+            "hdlname": "_35_ Y"
+          }
+        },
+        "_36_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "capacitance": "0.0023590000",
+            "hdlname": "_36_ A1"
+          }
+        },
+        "_36_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 46 ],
+          "attributes": {
+            "capacitance": "0.0023150000",
+            "hdlname": "_36_ A2"
+          }
+        },
+        "_36_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 48 ],
+          "attributes": {
+            "capacitance": "0.0023800000",
+            "hdlname": "_36_ B1"
+          }
+        },
+        "_36_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 145 ],
+          "attributes": {
+            "hdlname": "_36_ X"
+          }
+        },
+        "_37_.A_gate": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "capacitance": "0.0014260000",
+            "hdlname": "_37_ A"
+          }
+        },
+        "_37_.B_gate": {
+          "hide_name": 0,
+          "bits": [ 89 ],
+          "attributes": {
+            "capacitance": "0.0015050000",
+            "hdlname": "_37_ B"
+          }
+        },
+        "_37_.C_gate": {
+          "hide_name": 0,
+          "bits": [ 145 ],
+          "attributes": {
+            "capacitance": "0.0015240000",
+            "hdlname": "_37_ C"
+          }
+        },
+        "_37_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 147 ],
+          "attributes": {
+            "hdlname": "_37_ X"
+          }
+        },
+        "_38_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "capacitance": "0.0023710000",
+            "hdlname": "_38_ A1"
+          }
+        },
+        "_38_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 48 ],
+          "attributes": {
+            "capacitance": "0.0023480000",
+            "hdlname": "_38_ A2"
+          }
+        },
+        "_38_.A3_gate": {
+          "hide_name": 0,
+          "bits": [ 46 ],
+          "attributes": {
+            "capacitance": "0.0023730000",
+            "hdlname": "_38_ A3"
+          }
+        },
+        "_38_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 50 ],
+          "attributes": {
+            "capacitance": "0.0023260000",
+            "hdlname": "_38_ B1"
+          }
+        },
+        "_38_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 150 ],
+          "attributes": {
+            "hdlname": "_38_ X"
+          }
+        },
+        "_39_.A_N_gate": {
+          "hide_name": 0,
+          "bits": [ 92 ],
+          "attributes": {
+            "capacitance": "0.0014120000",
+            "hdlname": "_39_ A_N"
+          }
+        },
+        "_39_.B_gate": {
+          "hide_name": 0,
+          "bits": [ 150 ],
+          "attributes": {
+            "capacitance": "0.0015010000",
+            "hdlname": "_39_ B"
+          }
+        },
+        "_39_.C_gate": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "capacitance": "0.0015160000",
+            "hdlname": "_39_ C"
+          }
+        },
+        "_39_.X_gate": {
+          "hide_name": 0,
+          "bits": [ 153 ],
+          "attributes": {
+            "hdlname": "_39_ X"
+          }
+        },
+        "_40_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 52 ],
+          "attributes": {
+            "capacitance": "0.0048320000",
+            "hdlname": "_40_ A1"
+          }
+        },
+        "_40_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 92 ],
+          "attributes": {
+            "capacitance": "0.0044220000",
+            "hdlname": "_40_ A2"
+          }
+        },
+        "_40_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "capacitance": "0.0043790000",
+            "hdlname": "_40_ B1"
+          }
+        },
+        "_40_.Y_gate": {
+          "hide_name": 0,
+          "bits": [ 158 ],
+          "attributes": {
+            "hdlname": "_40_ Y"
+          }
+        },
+        "_41_.A1_gate": {
+          "hide_name": 0,
+          "bits": [ 52 ],
+          "attributes": {
+            "capacitance": "0.0044430000",
+            "hdlname": "_41_ A1"
+          }
+        },
+        "_41_.A2_gate": {
+          "hide_name": 0,
+          "bits": [ 92 ],
+          "attributes": {
+            "capacitance": "0.0048300000",
+            "hdlname": "_41_ A2"
+          }
+        },
+        "_41_.B1_gate": {
+          "hide_name": 0,
+          "bits": [ 158 ],
+          "attributes": {
+            "capacitance": "0.0044130000",
+            "hdlname": "_41_ B1"
+          }
+        },
+        "_41_.Y_gate": {
+          "hide_name": 0,
+          "bits": [ 165 ],
+          "attributes": {
+            "hdlname": "_41_ Y"
+          }
+        },
+        "_42_.CLK_gate": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "capacitance": "0.0017870000",
+            "hdlname": "_42_ CLK"
+          }
+        },
+        "_42_.D_gate": {
+          "hide_name": 0,
+          "bits": [ 99 ],
+          "attributes": {
+            "capacitance": "0.0016770000",
+            "hdlname": "_42_ D"
+          }
+        },
+        "_42_.IQ_gate": {
+          "hide_name": 0,
+          "bits": [ 54 ],
+          "attributes": {
+            "hdlname": "_42_ IQ"
+          }
+        },
+        "_42_.Q_gate": {
+          "hide_name": 0,
+          "bits": [ 54 ],
+          "attributes": {
+            "hdlname": "_42_ Q"
+          }
+        },
+        "_43_.CLK_gate": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "capacitance": "0.0017870000",
+            "hdlname": "_43_ CLK"
+          }
+        },
+        "_43_.D_gate": {
+          "hide_name": 0,
+          "bits": [ 110 ],
+          "attributes": {
+            "capacitance": "0.0016770000",
+            "hdlname": "_43_ D"
+          }
+        },
+        "_43_.IQ_gate": {
+          "hide_name": 0,
+          "bits": [ 56 ],
+          "attributes": {
+            "hdlname": "_43_ IQ"
+          }
+        },
+        "_43_.Q_gate": {
+          "hide_name": 0,
+          "bits": [ 56 ],
+          "attributes": {
+            "hdlname": "_43_ Q"
+          }
+        },
+        "_44_.CLK_gate": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "capacitance": "0.0017870000",
+            "hdlname": "_44_ CLK"
+          }
+        },
+        "_44_.D_gate": {
+          "hide_name": 0,
+          "bits": [ 122 ],
+          "attributes": {
+            "capacitance": "0.0016770000",
+            "hdlname": "_44_ D"
+          }
+        },
+        "_44_.IQ_gate": {
+          "hide_name": 0,
+          "bits": [ 58 ],
+          "attributes": {
+            "hdlname": "_44_ IQ"
+          }
+        },
+        "_44_.Q_gate": {
+          "hide_name": 0,
+          "bits": [ 58 ],
+          "attributes": {
+            "hdlname": "_44_ Q"
+          }
+        },
+        "_45_.CLK_gate": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "capacitance": "0.0017870000",
+            "hdlname": "_45_ CLK"
+          }
+        },
+        "_45_.D_gate": {
+          "hide_name": 0,
+          "bits": [ 131 ],
+          "attributes": {
+            "capacitance": "0.0016770000",
+            "hdlname": "_45_ D"
+          }
+        },
+        "_45_.IQ_gate": {
+          "hide_name": 0,
+          "bits": [ 60 ],
+          "attributes": {
+            "hdlname": "_45_ IQ"
+          }
+        },
+        "_45_.Q_gate": {
+          "hide_name": 0,
+          "bits": [ 60 ],
+          "attributes": {
+            "hdlname": "_45_ Q"
+          }
+        },
+        "_46_.CLK_gate": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "capacitance": "0.0017870000",
+            "hdlname": "_46_ CLK"
+          }
+        },
+        "_46_.D_gate": {
+          "hide_name": 0,
+          "bits": [ 143 ],
+          "attributes": {
+            "capacitance": "0.0016770000",
+            "hdlname": "_46_ D"
+          }
+        },
+        "_46_.IQ_gate": {
+          "hide_name": 0,
+          "bits": [ 46 ],
+          "attributes": {
+            "hdlname": "_46_ IQ"
+          }
+        },
+        "_46_.Q_gate": {
+          "hide_name": 0,
+          "bits": [ 46 ],
+          "attributes": {
+            "hdlname": "_46_ Q"
+          }
+        },
+        "_47_.CLK_gate": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "capacitance": "0.0017870000",
+            "hdlname": "_47_ CLK"
+          }
+        },
+        "_47_.D_gate": {
+          "hide_name": 0,
+          "bits": [ 147 ],
+          "attributes": {
+            "capacitance": "0.0016770000",
+            "hdlname": "_47_ D"
+          }
+        },
+        "_47_.IQ_gate": {
+          "hide_name": 0,
+          "bits": [ 48 ],
+          "attributes": {
+            "hdlname": "_47_ IQ"
+          }
+        },
+        "_47_.Q_gate": {
+          "hide_name": 0,
+          "bits": [ 48 ],
+          "attributes": {
+            "hdlname": "_47_ Q"
+          }
+        },
+        "_48_.CLK_gate": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "capacitance": "0.0017870000",
+            "hdlname": "_48_ CLK"
+          }
+        },
+        "_48_.D_gate": {
+          "hide_name": 0,
+          "bits": [ 153 ],
+          "attributes": {
+            "capacitance": "0.0016770000",
+            "hdlname": "_48_ D"
+          }
+        },
+        "_48_.IQ_gate": {
+          "hide_name": 0,
+          "bits": [ 50 ],
+          "attributes": {
+            "hdlname": "_48_ IQ"
+          }
+        },
+        "_48_.Q_gate": {
+          "hide_name": 0,
+          "bits": [ 50 ],
+          "attributes": {
+            "hdlname": "_48_ Q"
+          }
+        },
+        "_49_.CLK_gate": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "capacitance": "0.0017870000",
+            "hdlname": "_49_ CLK"
+          }
+        },
+        "_49_.D_gate": {
+          "hide_name": 0,
+          "bits": [ 165 ],
+          "attributes": {
+            "capacitance": "0.0016770000",
+            "hdlname": "_49_ D"
+          }
+        },
+        "_49_.IQ_gate": {
+          "hide_name": 0,
+          "bits": [ 52 ],
+          "attributes": {
+            "hdlname": "_49_ IQ"
+          }
+        },
+        "_49_.Q_gate": {
+          "hide_name": 0,
+          "bits": [ 52 ],
+          "attributes": {
+            "hdlname": "_49_ Q"
+          }
+        },
+        "_50_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_50_ HI"
+          }
+        },
+        "_50_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_50_ LO"
+          }
+        },
+        "_51_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_51_ HI"
+          }
+        },
+        "_51_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_51_ LO"
+          }
+        },
+        "_52_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_52_ HI"
+          }
+        },
+        "_52_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_52_ LO"
+          }
+        },
+        "_53_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_53_ HI"
+          }
+        },
+        "_53_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_53_ LO"
+          }
+        },
+        "_54_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_54_ HI"
+          }
+        },
+        "_54_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_54_ LO"
+          }
+        },
+        "_55_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_55_ HI"
+          }
+        },
+        "_55_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_55_ LO"
+          }
+        },
+        "_56_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_56_ HI"
+          }
+        },
+        "_56_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_56_ LO"
+          }
+        },
+        "_57_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_57_ HI"
+          }
+        },
+        "_57_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_57_ LO"
+          }
+        },
+        "_58_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_58_ HI"
+          }
+        },
+        "_58_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_58_ LO"
+          }
+        },
+        "_59_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_59_ HI"
+          }
+        },
+        "_59_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_59_ LO"
+          }
+        },
+        "_60_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_60_ HI"
+          }
+        },
+        "_60_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_60_ LO"
+          }
+        },
+        "_61_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_61_ HI"
+          }
+        },
+        "_61_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_61_ LO"
+          }
+        },
+        "_62_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_62_ HI"
+          }
+        },
+        "_62_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_62_ LO"
+          }
+        },
+        "_63_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_63_ HI"
+          }
+        },
+        "_63_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_63_ LO"
+          }
+        },
+        "_64_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_64_ HI"
+          }
+        },
+        "_64_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_64_ LO"
+          }
+        },
+        "_65_.HI_gate": {
+          "hide_name": 0,
+          "bits": [ "1" ],
+          "attributes": {
+            "hdlname": "_65_ HI"
+          }
+        },
+        "_65_.LO_gate": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "_65_ LO"
+          }
+        },
+        "_unused_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "src": "project.v:28.8-28.15"
+          }
+        },
+        "clk": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+          }
+        },
+        "clk_gate": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "src": "netlist.v:16.9-16.12"
+          }
+        },
+        "clk_gold": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "src": "project.v:14.23-14.26"
+          }
+        },
+        "core._unused_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "core _unused",
+            "src": "counter.v:20.8-20.15"
+          }
+        },
+        "core.clk_gold": {
+          "hide_name": 0,
+          "bits": [ 2 ],
+          "attributes": {
+            "hdlname": "core clk",
+            "src": "counter.v:9.23-9.26"
+          }
+        },
+        "core.count[0]_gold": {
+          "hide_name": 0,
+          "bits": [ 45 ],
+          "attributes": {
+            "hdlname": "core count",
+            "src": "counter.v:12.13-12.18"
+          }
+        },
+        "core.count[1]_gold": {
+          "hide_name": 0,
+          "bits": [ 47 ],
+          "offset": 1,
+          "attributes": {
+            "hdlname": "core count",
+            "src": "counter.v:12.13-12.18"
+          }
+        },
+        "core.count[2]_gold": {
+          "hide_name": 0,
+          "bits": [ 49 ],
+          "offset": 2,
+          "attributes": {
+            "hdlname": "core count",
+            "src": "counter.v:12.13-12.18"
+          }
+        },
+        "core.count[3]_gold": {
+          "hide_name": 0,
+          "bits": [ 51 ],
+          "offset": 3,
+          "attributes": {
+            "hdlname": "core count",
+            "src": "counter.v:12.13-12.18"
+          }
+        },
+        "core.count[4]_gold": {
+          "hide_name": 0,
+          "bits": [ 53 ],
+          "offset": 4,
+          "attributes": {
+            "hdlname": "core count",
+            "src": "counter.v:12.13-12.18"
+          }
+        },
+        "core.count[5]_gold": {
+          "hide_name": 0,
+          "bits": [ 55 ],
+          "offset": 5,
+          "attributes": {
+            "hdlname": "core count",
+            "src": "counter.v:12.13-12.18"
+          }
+        },
+        "core.count[6]_gold": {
+          "hide_name": 0,
+          "bits": [ 57 ],
+          "offset": 6,
+          "attributes": {
+            "hdlname": "core count",
+            "src": "counter.v:12.13-12.18"
+          }
+        },
+        "core.count[7]_gold": {
+          "hide_name": 0,
+          "bits": [ 59 ],
+          "offset": 7,
+          "attributes": {
+            "hdlname": "core count",
+            "src": "counter.v:12.13-12.18"
+          }
+        },
+        "core.rst_n_gold": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "hdlname": "core rst_n",
+            "src": "counter.v:10.23-10.28"
+          }
+        },
+        "core.ui_in[0]_gold": {
+          "hide_name": 0,
+          "bits": [ 3 ],
+          "attributes": {
+            "hdlname": "core ui_in",
+            "src": "counter.v:5.23-5.28"
+          }
+        },
+        "core.ui_in[1]_gold": {
+          "hide_name": 0,
+          "bits": [ 4 ],
+          "offset": 1,
+          "attributes": {
+            "hdlname": "core ui_in",
+            "src": "counter.v:5.23-5.28"
+          }
+        },
+        "core.ui_in[2]_gold": {
+          "hide_name": 0,
+          "bits": [ 5 ],
+          "offset": 2,
+          "attributes": {
+            "hdlname": "core ui_in",
+            "src": "counter.v:5.23-5.28"
+          }
+        },
+        "core.ui_in[3]_gold": {
+          "hide_name": 0,
+          "bits": [ 6 ],
+          "offset": 3,
+          "attributes": {
+            "hdlname": "core ui_in",
+            "src": "counter.v:5.23-5.28"
+          }
+        },
+        "core.ui_in[4]_gold": {
+          "hide_name": 0,
+          "bits": [ 7 ],
+          "offset": 4,
+          "attributes": {
+            "hdlname": "core ui_in",
+            "src": "counter.v:5.23-5.28"
+          }
+        },
+        "core.ui_in[5]_gold": {
+          "hide_name": 0,
+          "bits": [ 8 ],
+          "offset": 5,
+          "attributes": {
+            "hdlname": "core ui_in",
+            "src": "counter.v:5.23-5.28"
+          }
+        },
+        "core.ui_in[6]_gold": {
+          "hide_name": 0,
+          "bits": [ 9 ],
+          "offset": 6,
+          "attributes": {
+            "hdlname": "core ui_in",
+            "src": "counter.v:5.23-5.28"
+          }
+        },
+        "core.ui_in[7]_gold": {
+          "hide_name": 0,
+          "bits": [ 10 ],
+          "offset": 7,
+          "attributes": {
+            "hdlname": "core ui_in",
+            "src": "counter.v:5.23-5.28"
+          }
+        },
+        "core.uio_oe[0]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "core uio_oe",
+            "src": "counter.v:8.23-8.29"
+          }
+        },
+        "core.uio_oe[1]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 1,
+          "attributes": {
+            "hdlname": "core uio_oe",
+            "src": "counter.v:8.23-8.29"
+          }
+        },
+        "core.uio_oe[2]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 2,
+          "attributes": {
+            "hdlname": "core uio_oe",
+            "src": "counter.v:8.23-8.29"
+          }
+        },
+        "core.uio_oe[3]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 3,
+          "attributes": {
+            "hdlname": "core uio_oe",
+            "src": "counter.v:8.23-8.29"
+          }
+        },
+        "core.uio_oe[4]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 4,
+          "attributes": {
+            "hdlname": "core uio_oe",
+            "src": "counter.v:8.23-8.29"
+          }
+        },
+        "core.uio_oe[5]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 5,
+          "attributes": {
+            "hdlname": "core uio_oe",
+            "src": "counter.v:8.23-8.29"
+          }
+        },
+        "core.uio_oe[6]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 6,
+          "attributes": {
+            "hdlname": "core uio_oe",
+            "src": "counter.v:8.23-8.29"
+          }
+        },
+        "core.uio_oe[7]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 7,
+          "attributes": {
+            "hdlname": "core uio_oe",
+            "src": "counter.v:8.23-8.29"
+          }
+        },
+        "core.uio_out[0]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "attributes": {
+            "hdlname": "core uio_out",
+            "src": "counter.v:7.23-7.30"
+          }
+        },
+        "core.uio_out[1]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 1,
+          "attributes": {
+            "hdlname": "core uio_out",
+            "src": "counter.v:7.23-7.30"
+          }
+        },
+        "core.uio_out[2]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 2,
+          "attributes": {
+            "hdlname": "core uio_out",
+            "src": "counter.v:7.23-7.30"
+          }
+        },
+        "core.uio_out[3]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 3,
+          "attributes": {
+            "hdlname": "core uio_out",
+            "src": "counter.v:7.23-7.30"
+          }
+        },
+        "core.uio_out[4]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 4,
+          "attributes": {
+            "hdlname": "core uio_out",
+            "src": "counter.v:7.23-7.30"
+          }
+        },
+        "core.uio_out[5]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 5,
+          "attributes": {
+            "hdlname": "core uio_out",
+            "src": "counter.v:7.23-7.30"
+          }
+        },
+        "core.uio_out[6]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 6,
+          "attributes": {
+            "hdlname": "core uio_out",
+            "src": "counter.v:7.23-7.30"
+          }
+        },
+        "core.uio_out[7]_gold": {
+          "hide_name": 0,
+          "bits": [ "0" ],
+          "offset": 7,
+          "attributes": {
+            "hdlname": "core uio_out",
+            "src": "counter.v:7.23-7.30"
+          }
+        },
+        "core.uo_out[0]_gold": {
+          "hide_name": 0,
+          "bits": [ 45 ],
+          "attributes": {
+            "hdlname": "core uo_out",
+            "src": "counter.v:6.23-6.29"
+          }
+        },
+        "core.uo_out[1]_gold": {
+          "hide_name": 0,
+          "bits": [ 47 ],
+          "offset": 1,
+          "attributes": {
+            "hdlname": "core uo_out",
+            "src": "counter.v:6.23-6.29"
+          }
+        },
+        "core.uo_out[2]_gold": {
+          "hide_name": 0,
+          "bits": [ 49 ],
+          "offset": 2,
+          "attributes": {
+            "hdlname": "core uo_out",
+            "src": "counter.v:6.23-6.29"
+          }
+        },
+        "core.uo_out[3]_gold": {
+          "hide_name": 0,
+          "bits": [ 51 ],
+          "offset": 3,
+          "attributes": {
+            "hdlname": "core uo_out",
+            "src": "counter.v:6.23-6.29"
+          }
+        },
+        "core.uo_out[4]_gold": {
+          "hide_name": 0,
+          "bits": [ 53 ],
+          "offset": 4,
+          "attributes": {
+            "hdlname": "core uo_out",
+            "src": "counter.v:6.23-6.29"
+          }
+        },
+        "core.uo_out[5]_gold": {
+          "hide_name": 0,
+          "bits": [ 55 ],
+          "offset": 5,
+          "attributes": {
+            "hdlname": "core uo_out",
+            "src": "counter.v:6.23-6.29"
+          }
+        },
+        "core.uo_out[6]_gold": {
+          "hide_name": 0,
+          "bits": [ 57 ],
+          "offset": 6,
+          "attributes": {
+            "hdlname": "core uo_out",
+            "src": "counter.v:6.23-6.29"
+          }
+        },
+        "core.uo_out[7]_gold": {
+          "hide_name": 0,
+          "bits": [ 59 ],
+          "offset": 7,
+          "attributes": {
+            "hdlname": "core uo_out",
+            "src": "counter.v:6.23-6.29"
+          }
+        },
+        "ena": {
+          "hide_name": 0,
+          "bits": [ 43 ],
+          "attributes": {
+          }
+        },
+        "ena_gate": {
+          "hide_name": 0,
+          "bits": [ 43 ],
+          "attributes": {
+            "src": "netlist.v:14.9-14.12"
+          }
+        },
+        "ena_gold": {
+          "hide_name": 0,
+          "bits": [ 43 ],
+          "attributes": {
+            "src": "project.v:13.23-13.26"
+          }
+        },
+        "rst_n": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+          }
+        },
+        "rst_n_gate": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "src": "netlist.v:18.9-18.14"
+          }
+        },
+        "rst_n_gold": {
+          "hide_name": 0,
+          "bits": [ 44 ],
+          "attributes": {
+            "src": "project.v:15.23-15.28"
+          }
+        },
+        "ui_in": {
+          "hide_name": 0,
+          "bits": [ 3, 4, 5, 6, 7, 8, 9, 10 ],
+          "attributes": {
+          }
+        },
+        "ui_in_gate": {
+          "hide_name": 0,
+          "bits": [ 3, 4, 5, 6, 7, 8, 9, 10 ],
+          "attributes": {
+            "src": "netlist.v:4.15-4.20"
+          }
+        },
+        "ui_in_gold": {
+          "hide_name": 0,
+          "bits": [ 3, 4, 5, 6, 7, 8, 9, 10 ],
+          "attributes": {
+            "src": "project.v:8.23-8.28"
+          }
+        },
+        "uio_in": {
+          "hide_name": 0,
+          "bits": [ 19, 20, 21, 22, 23, 24, 25, 26 ],
+          "attributes": {
+          }
+        },
+        "uio_in_gate": {
+          "hide_name": 0,
+          "bits": [ 19, 20, 21, 22, 23, 24, 25, 26 ],
+          "attributes": {
+            "src": "netlist.v:8.15-8.21"
+          }
+        },
+        "uio_in_gold": {
+          "hide_name": 0,
+          "bits": [ 19, 20, 21, 22, 23, 24, 25, 26 ],
+          "attributes": {
+            "src": "project.v:10.23-10.29"
+          }
+        },
+        "uio_oe": {
+          "hide_name": 0,
+          "bits": [ 35, 36, 37, 38, 39, 40, 41, 42 ],
+          "attributes": {
+          }
+        },
+        "uio_oe_gate": {
+          "hide_name": 0,
+          "bits": [ "0", "0", "0", "0", "0", "0", "0", "0" ],
+          "attributes": {
+            "src": "netlist.v:12.16-12.22"
+          }
+        },
+        "uio_oe_gold": {
+          "hide_name": 0,
+          "bits": [ "0", "0", "0", "0", "0", "0", "0", "0" ],
+          "attributes": {
+            "src": "project.v:12.23-12.29"
+          }
+        },
+        "uio_out": {
+          "hide_name": 0,
+          "bits": [ 27, 28, 29, 30, 31, 32, 33, 34 ],
+          "attributes": {
+          }
+        },
+        "uio_out_gate": {
+          "hide_name": 0,
+          "bits": [ "0", "0", "0", "0", "0", "0", "0", "0" ],
+          "attributes": {
+            "src": "netlist.v:10.16-10.23"
+          }
+        },
+        "uio_out_gold": {
+          "hide_name": 0,
+          "bits": [ "0", "0", "0", "0", "0", "0", "0", "0" ],
+          "attributes": {
+            "src": "project.v:11.23-11.30"
+          }
+        },
+        "uo_out": {
+          "hide_name": 0,
+          "bits": [ 11, 12, 13, 14, 15, 16, 17, 18 ],
+          "attributes": {
+          }
+        },
+        "uo_out_gate": {
+          "hide_name": 0,
+          "bits": [ 46, 48, 50, 52, 54, 56, 58, 60 ],
+          "attributes": {
+            "src": "netlist.v:6.16-6.22"
+          }
+        },
+        "uo_out_gold": {
+          "hide_name": 0,
+          "bits": [ 45, 47, 49, 51, 53, 55, 57, 59 ],
+          "attributes": {
+            "src": "project.v:9.23-9.29"
+          }
+        }
+      }
+    }
+  }
+}

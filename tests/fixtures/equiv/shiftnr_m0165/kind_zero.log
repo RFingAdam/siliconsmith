@@ -1,0 +1,80 @@
+GUARD-TRISTATE
+GUARD-STRUCTURE
+13. Executing CHECK pass (checking for obvious problems).
+GUARD-CLOCKING
+GUARD-OK
+GUARD-STRUCTURE
+22. Executing CHECK pass (checking for obvious problems).
+GUARD-CELLS
+GUARD-TRISTATE
+GUARD-ASYNCSR
+GUARD-CLOCKING
+GUARD-OK
+27. Executing SAT pass (solving SAT problems in the circuit).
+** Trying induction with length 1 **
+[base case 1] Solving problem with 3801 variables and 9762 clauses..
+Base case for induction length 1 proven.
+[induction step 1] Solving problem with 3610 variables and 9189 clauses..
+     1 \gate_uio_oe                     0         0      00000000
+     1 \gate_uio_out                    0         0      00000000
+     1 \gate_uo_out                     0         0      00000000
+     1 \gold_uio_oe                     0         0      00000000
+     1 \gold_uio_out                    0         0      00000000
+     1 \gold_uo_out                     0         0      00000000
+     1 \in_clk                          0         0             0
+     1 \in_ena                          0         0             0
+     1 \in_rst_n                        0         0             0
+     1 \in_ui_in                        0         0      00000000
+     1 \in_uio_in                       0         0      00000000
+     1 \trigger                         0         0             0
+     2 \gate_uio_oe                     0         0      00000000
+     2 \gate_uio_out                    0         0      00000000
+     2 \gate_uo_out                     1         1      00000001
+     2 \gold_uio_oe                     0         0      00000000
+     2 \gold_uio_out                    0         0      00000000
+     2 \gold_uo_out                     0         0      00000000
+     2 \in_clk                          0         0             0
+     2 \in_ena                          0         0             0
+     2 \in_rst_n                        0         0             0
+     2 \in_ui_in                        0         0      00000000
+     2 \in_uio_in                       0         0      00000000
+     2 \trigger                         1         1             1
+** Trying induction with length 2 **
+[base case 2] Solving problem with 6065 variables and 15751 clauses..
+SAT temporal induction proof finished - model found for base case: FAIL!
+     1 \gate_uio_oe                     0         0      00000000
+     1 \gate_uio_out                    0         0      00000000
+     1 \gate_uo_out                     1         1      00000001
+     1 \gold_uio_oe                     0         0      00000000
+     1 \gold_uio_out                    0         0      00000000
+     1 \gold_uo_out                     0         0      00000000
+     1 \in_clk                          0         0             0
+     1 \in_ena                          0         0             0
+     1 \in_rst_n                        0         0             0
+     1 \in_ui_in                        1         1      00000001
+     1 \in_uio_in                       0         0      00000000
+     1 \trigger                         1         1             1
+     2 \gate_uio_oe                     0         0      00000000
+     2 \gate_uio_out                    0         0      00000000
+     2 \gate_uo_out                     1         1      00000001
+     2 \gold_uio_oe                     0         0      00000000
+     2 \gold_uio_out                    0         0      00000000
+     2 \gold_uo_out                     1         1      00000001
+     2 \in_clk                          0         0             0
+     2 \in_ena                          0         0             0
+     2 \in_rst_n                        0         0             0
+     2 \in_ui_in                        0         0      00000000
+     2 \in_uio_in                       0         0      00000000
+     2 \trigger                         0         0             0
+     3 \gate_uio_oe                     0         0      00000000
+     3 \gate_uio_out                    0         0      00000000
+     3 \gate_uo_out                     0         0      00000000
+     3 \gold_uio_oe                     0         0      00000000
+     3 \gold_uio_out                    0         0      00000000
+     3 \gold_uo_out                     1         1      00000001
+     3 \in_clk                          0         0             0
+     3 \in_ena                          0         0             0
+     3 \in_rst_n                        0         0             0
+     3 \in_ui_in                        0         0      00000000
+     3 \in_uio_in                       0         0      00000000
+     3 \trigger                         1         1             1

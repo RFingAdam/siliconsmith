@@ -1,0 +1,38 @@
+GUARD-TRISTATE
+GUARD-STRUCTURE
+13. Executing CHECK pass (checking for obvious problems).
+GUARD-CLOCKING
+GUARD-OK
+GUARD-TRISTATE
+GUARD-STRUCTURE
+29. Executing CHECK pass (checking for obvious problems).
+GUARD-CLOCKING
+GUARD-OK
+34. Executing SAT pass (solving SAT problems in the circuit).
+** Trying induction with length 1 **
+[base case 1] Solving problem with 2091 variables and 5398 clauses..
+SAT temporal induction proof finished - model found for base case: FAIL!
+     1 \gate_uio_oe                     0         0      00000000
+     1 \gate_uio_out                    0         0      00000000
+     1 \gate_uo_out                    --        --      xxxxxxxx
+     1 \gold_uio_oe                     0         0      00000000
+     1 \gold_uio_out                    0         0      00000000
+     1 \gold_uo_out                     0         0      00000000
+     1 \in_clk                          0         0             0
+     1 \in_ena                          0         0             0
+     1 \in_rst_n                        0         0             0
+     1 \in_ui_in                        0         0      00000000
+     1 \in_uio_in                       0         0      00000000
+     1 \trigger                         1         1             1
+     2 \gate_uio_oe                     0         0      00000000
+     2 \gate_uio_out                    0         0      00000000
+     2 \gate_uo_out                    --        --      xxxxxxxx
+     2 \gold_uio_oe                     0         0      00000000
+     2 \gold_uio_out                    0         0      00000000
+     2 \gold_uo_out                     1         1      00000001
+     2 \in_clk                          0         0             0
+     2 \in_ena                          0         0             0
+     2 \in_rst_n                        0         0             0
+     2 \in_ui_in                        0         0      00000000
+     2 \in_uio_in                       0         0      00000000
+     2 \trigger                         1         1             1
