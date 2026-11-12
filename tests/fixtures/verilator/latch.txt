@@ -1,0 +1,6 @@
+%Error-LATCH: t_latch.v:3:3: Latch inferred for signal 'y' (not all control paths of combinational always assign a value)
+                           : ... Suggest use of always_latch for intentional latches
+    3 |   always @* if (en) y = a;
+      |   ^~~~~~
+              ... For error description see https://verilator.org/warn/LATCH?v=5.046
+%Error: Exiting due to 1 error(s)

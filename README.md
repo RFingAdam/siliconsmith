@@ -22,8 +22,9 @@ The server runs on your machine and talks to the agent over standard input and o
 nothing is exposed on the network.
 
 Today the server offers `toolchain_info`, `create_project`, `list_files`, `read_file`,
-`write_rtl` and `write_test`. The tools that turn a design into Verilog and run its tests arrive in the next
-milestone steps and need Docker and the toolchain image.
+`write_rtl`, `write_test` and `emit_verilog`. `emit_verilog` turns the design (Amaranth, MyHDL or
+Verilog) into a checked Verilog core plus the Tiny Tapeout wrapper and lints it with Verilator. The
+tool that runs the tests arrives in the next milestone step. Emitting needs Docker and the toolchain image.
 
 ### Install
 

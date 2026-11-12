@@ -322,3 +322,38 @@ def test_paths_allow_list_accepts(frontend: str, rel: str, category: str) -> Non
 def test_paths_allow_list_rejects(frontend: str, rel: str, needle: str) -> None:
     with pytest.raises(ToolError, match=needle):
         classify_write("chip", frontend, rel)
+
+
+# --- hidden folders (only Siliconsmith's own code asks for them) ------------------------------
+
+
+def test_safe_read_refuses_hidden_components_unless_allowed(proj: Path) -> None:
+    run = proj / "build" / ".ss" / "r1"
+    run.mkdir(parents=True)
+    (run / "out.txt").write_text("x")
+    with pytest.raises(ToolError, match="starts with a dot"):
+        safe_read(proj, "build/.ss/r1/out.txt", 100)
+    assert safe_read(proj, "build/.ss/r1/out.txt", 100, allow_hidden=True) == b"x"
+
+
+def test_allow_hidden_still_refuses_symlinks_and_traversal(proj: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "f.txt").write_text("secret")
+    (proj / "build").mkdir()
+    (proj / "build" / ".ss").symlink_to(outside)
+    with pytest.raises(ToolError, match="symlink"):
+        safe_read(proj, "build/.ss/f.txt", 100, allow_hidden=True)
+    with pytest.raises(ToolError, match=r"\.\."):
+        safe_read(proj, "build/../src/x", 100, allow_hidden=True)
+
+
+def test_missing_and_oversize_have_their_own_error_types(proj: Path) -> None:
+    from siliconsmith.paths import FileTooLargeError, MissingFileError
+
+    with pytest.raises(MissingFileError):
+        safe_read(proj, "test/nope.py", 100)
+    with pytest.raises(MissingFileError):
+        safe_read(proj, "nodir/nope.py", 100)
+    with pytest.raises(FileTooLargeError):
+        safe_read(proj, "test/test.py", 3)

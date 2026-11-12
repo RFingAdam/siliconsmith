@@ -1,0 +1,6 @@
+{
+  "ui_in": {"direction": "input", "width": 8},
+  "uo_out": {"direction": "output", "width": 8},
+  "clk": {"direction": "input", "width": 1},
+  "rst_n": {"direction": "input", "width": 1}
+}

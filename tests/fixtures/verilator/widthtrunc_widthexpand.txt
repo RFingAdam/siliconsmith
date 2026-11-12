@@ -1,0 +1,19 @@
+%Warning-WIDTHTRUNC: t_width.v:3:12: Operator ASSIGNW expects 4 bits on the Assign RHS, but Assign RHS's VARREF 'a' generates 8 bits.
+                                   : ... note: In instance 'w'
+    3 |   assign y = a;
+      |            ^
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.046
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: t_width.v:4:12: Operator ASSIGNW expects 16 bits on the Assign RHS, but Assign RHS's VARREF 'b' generates 4 bits.
+                                    : ... note: In instance 'w'
+    4 |   assign z = b;
+      |            ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.046
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-UNUSEDSIGNAL: t_width.v:2:28: Bits of signal are not used: 'a'[7:4]
+                                     : ... note: In instance 'w'
+    2 | module w (input wire [7:0] a, input wire [3:0] b, output wire [3:0] y, output wire [15:0] z);
+      |                            ^
+                       ... For warning description see https://verilator.org/warn/UNUSEDSIGNAL?v=5.046
+                       ... Use "/* verilator lint_off UNUSEDSIGNAL */" and lint_on around source to disable this message.
+%Error: Exiting due to 3 warning(s)

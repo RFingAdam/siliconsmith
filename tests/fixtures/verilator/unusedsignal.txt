@@ -1,0 +1,11 @@
+%Warning-UNUSEDSIGNAL: t_unused.v:2:28: Bits of signal are not used: 'a'[3:1]
+                                      : ... note: In instance 'u'
+    2 | module u (input wire [3:0] a, input wire b, output wire y);
+      |                            ^
+                       ... For warning description see https://verilator.org/warn/UNUSEDSIGNAL?v=5.046
+                       ... Use "/* verilator lint_off UNUSEDSIGNAL */" and lint_on around source to disable this message.
+%Warning-UNUSEDSIGNAL: t_unused.v:2:42: Signal is not used: 'b'
+                                      : ... note: In instance 'u'
+    2 | module u (input wire [3:0] a, input wire b, output wire y);
+      |                                          ^
+%Error: Exiting due to 2 warning(s)
