@@ -6,7 +6,7 @@
 #     --python-platform x86_64-manylinux_2_39 --no-header -o requirements.lock requirements.in
 
 cocotb==2.1.0
-pytest==8.4.2
+pytest==9.2.0
 amaranth[builtin-yosys]==0.5.10
 myhdl==0.11.52
 pywellen==0.25.7
