@@ -10,6 +10,7 @@ notice to travel with the binary, so this script gathers them into two generated
 
     docker/licenses/THIRD_PARTY_NOTICES-rust-crates.txt
     docker/licenses/THIRD_PARTY_NOTICES-yosys-bundled.txt
+    docker/licenses/THIRD_PARTY_NOTICES-wasm-runtime.txt
 
 It needs network access and is run by hand, never by CI. The output is deterministic (sorted,
 no timestamps), so running it again gives byte-identical files; commit the result.
@@ -17,6 +18,7 @@ no timestamps), so running it again gives byte-identical files; commit the resul
     python3 scripts/collect_notices.py resolve   # rebuild scripts/third_party_crates.json
     python3 scripts/collect_notices.py rust      # write the Rust crate notices
     python3 scripts/collect_notices.py yosys     # write the Yosys bundled-library notices
+    python3 scripts/collect_notices.py wasm      # write the wasi-libc and LLVM runtime notices
     python3 scripts/collect_notices.py all       # rust + yosys (the default)
 
 `resolve` needs pip, git and cargo. The Rust crate list is:
@@ -51,6 +53,7 @@ CRATES_JSON = ROOT / "scripts" / "third_party_crates.json"
 OUT_DIR = ROOT / "docker" / "licenses"
 RUST_OUT = OUT_DIR / "THIRD_PARTY_NOTICES-rust-crates.txt"
 YOSYS_OUT = OUT_DIR / "THIRD_PARTY_NOTICES-yosys-bundled.txt"
+WASM_OUT = OUT_DIR / "THIRD_PARTY_NOTICES-wasm-runtime.txt"
 
 PYWELLEN_VERSION = "0.25.7"
 WASMTIME_TAG = "v47.0.1"
@@ -232,6 +235,19 @@ def github_license_files(owner: str, repo: str, sha: str, directory: str) -> lis
     return sorted(found)
 
 
+def is_vendored_c_license(crate: str, rel: str) -> bool:
+    """License files of C libraries vendored inside a *-sys crate (not tests or bindings)."""
+    parts = rel.split("/")
+    skipped = {"test", "tests", "bindings", "doc", "docs", "examples", "contrib", "programs"}
+    skipped |= {"suite", "regress"}
+    return (
+        crate.endswith("-sys")
+        and 1 < len(parts) <= 4
+        and LICENSE_NAME.match(parts[-1]) is not None
+        and not skipped.intersection(p.lower() for p in parts[:-1])
+    )
+
+
 def crate_license_files(name: str, version: str) -> tuple[list[tuple[str, str]], str] | None:
     """License-like files of a crate and where they came from. None if the download is missing.
 
@@ -256,8 +272,10 @@ def crate_license_files(name: str, version: str) -> tuple[list[tuple[str, str]],
                 vcs = json.loads(extracted.read())
             elif rel == "Cargo.toml":
                 manifest = extracted.read().decode("utf-8", errors="replace")
-            elif ("/" not in rel and LICENSE_NAME.match(rel)) or (
-                rel.startswith("LICENSES/") and rel.count("/") == 1
+            elif (
+                ("/" not in rel and LICENSE_NAME.match(rel))
+                or (rel.startswith("LICENSES/") and rel.count("/") == 1)
+                or is_vendored_c_license(name, rel)
             ):
                 found.append((rel, text_of(extracted.read())))
     if found:
@@ -525,25 +543,18 @@ def notice_text(item: Item) -> str:
     return text
 
 
-def write_yosys_notices() -> None:
+def render_items(pairs: list[tuple[Item, str]]) -> tuple[list[str], int]:
+    """Notice blocks for (item, build) pairs. Identical texts of one component print once."""
     # component -> (spdx, note, text) -> [(build, source URL)] that carry exactly that text
     grouped: dict[str, dict[tuple[str, str, str], list[tuple[str, str]]]] = {}
     order: list[str] = []
-
-    def add(item: Item, build: str) -> None:
+    for item, build in pairs:
         if item.component not in order:
             order.append(item.component)
         key = (item.spdx, item.note, notice_text(item))
         grouped.setdefault(item.component, {}).setdefault(key, []).append(
             (build, f"{item.base}/{item.path}")
         )
-
-    for tag, build in YOSYS_TAGS.items():
-        for item in yosys_items(tag):
-            add(item, build)
-    for item in slang_items():
-        add(item, "yowasp-yosys (yosys-slang and slang)")
-
     blocks = []
     for component in order:
         for (spdx, note, text), sources in sorted(grouped[component].items()):
@@ -562,6 +573,13 @@ def write_yosys_notices() -> None:
                     ]
                 )
             )
+    return blocks, len(order)
+
+
+def write_yosys_notices() -> None:
+    pairs = [(item, build) for tag, build in YOSYS_TAGS.items() for item in yosys_items(tag)]
+    pairs += [(item, "yowasp-yosys (yosys-slang and slang)") for item in slang_items()]
+    blocks, count = render_items(pairs)
     intro = [
         "Third-party notices for libraries bundled in the Yosys source trees that are compiled",
         "into the WebAssembly Yosys builds of this image.",
@@ -577,13 +595,124 @@ def write_yosys_notices() -> None:
         "",
     ]
     YOSYS_OUT.write_text("\n".join(intro) + "\n" + "\n".join(blocks), encoding="utf-8")
-    print(f"wrote {YOSYS_OUT.relative_to(ROOT)}: {len(order)} components")
+    print(f"wrote {YOSYS_OUT.relative_to(ROOT)}: {count} components")
+
+
+# --- C and C++ runtime libraries inside the WebAssembly Yosys builds -------------------------
+
+# Both builds are compiled with a wasi-sdk release (see each build.sh). The release tag pins the
+# wasi-libc and llvm-project submodule commits (src/wasi-libc, src/llvm-project).
+WASI_BUILDS = {
+    "yowasp-yosys 0.62 (wasi-sdk-27)": (
+        "wasi-sdk-27",
+        "3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f",
+        "87f0227cb60147a26a1eeb4fb06e3b505e9c7261",
+    ),
+    "amaranth-yosys 0.50 (wasi-sdk-25)": (
+        "wasi-sdk-25",
+        "574b88da481569b65a237cb80daf9a2d5aeaf82d",
+        "ab4b5a2db582958af1ee308a790cfdb42bd24720",
+    ),
+}
+LLVM_LICENSE_FILES = {
+    "LLVM Project": "LICENSE.TXT",
+    "libc++": "libcxx/LICENSE.TXT",
+    "libc++abi": "libcxxabi/LICENSE.TXT",
+    "compiler-rt": "compiler-rt/LICENSE.TXT",
+}
+
+
+def wasi_libc_items(commit: str) -> list[Item]:
+    listing = fetch(
+        f"https://api.github.com/repos/WebAssembly/wasi-libc/git/trees/{commit}?recursive=1"
+    )
+    assert listing is not None
+    base = f"https://raw.githubusercontent.com/WebAssembly/wasi-libc/{commit}"
+    paths = sorted(
+        e["path"]
+        for e in json.loads(listing)["tree"]
+        if e["type"] == "blob" and LICENSE_NAME.match(e["path"].rsplit("/", 1)[-1])
+    )
+    return [
+        Item(
+            f"wasi-libc: {path}",
+            "see file (wasi-libc mixes Apache-2.0 WITH LLVM-exception, MIT, BSD and musl code)",
+            "wasi-libc (commits in the header of this file)",
+            base,
+            path,
+            "file",
+        )
+        for path in paths
+    ]
+
+
+def llvm_items(commit: str) -> list[Item]:
+    base = f"https://raw.githubusercontent.com/llvm/llvm-project/{commit}"
+    return [
+        Item(
+            f"{name} license file",
+            "Apache-2.0 WITH LLVM-exception (plus the permissive notices listed in the file)",
+            f"llvm-project, {path} (commits in the header of this file)",
+            base,
+            path,
+            "file",
+        )
+        for name, path in LLVM_LICENSE_FILES.items()
+    ]
+
+
+def write_wasm_runtime_notices() -> None:
+    pairs: list[tuple[Item, str]] = []
+    for build, (_, libc, llvm) in WASI_BUILDS.items():
+        pairs += [(item, build) for item in wasi_libc_items(libc) + llvm_items(llvm)]
+    blocks, count = render_items(pairs)
+    intro = [
+        "Third-party notices for the C and C++ runtime libraries compiled into the WebAssembly",
+        "Yosys builds (the yowasp-yosys and amaranth-yosys wheels).",
+        "",
+        "Both builds are compiled with a wasi-sdk release, which supplies the C library and the",
+        "C++ runtime that end up in the .wasm files (build.sh of each project):",
+    ]
+    for build, (tag, libc, llvm) in WASI_BUILDS.items():
+        intro += [
+            f"  {build}: https://github.com/WebAssembly/wasi-sdk/tree/{tag}",
+            f"    wasi-libc commit {libc[:12]}, llvm-project commit {llvm[:12]}",
+            "    (the submodule commits recorded in that wasi-sdk tag; libc++, libc++abi and",
+            "    compiler-rt come from that llvm-project commit)",
+        ]
+    intro += [
+        "",
+        "The license files below are taken from those exact commits. wasi-libc contains musl-",
+        "derived code (MIT, see libc-top-half/musl/COPYRIGHT), cloudlibc (BSD-2-Clause), and",
+        "WASI headers and glue under Apache-2.0 WITH LLVM-exception. dlmalloc in wasi-libc is",
+        "public domain and has no license file. libc++, libc++abi and compiler-rt are under",
+        "Apache-2.0 WITH LLVM-exception.",
+        "",
+        "The LLVM exception waives the attribution conditions of Apache-2.0 for code that is",
+        "embedded in object code, so the LLVM-licensed texts are shipped here for completeness",
+        "and not because the exception requires it. The MIT and BSD notices (musl, cloudlibc,",
+        "musl-fts) do need to travel with the binaries.",
+        "Yosys's own bundled libraries are in THIRD_PARTY_NOTICES-yosys-bundled.txt.",
+        "",
+        "The wasmtime shared library (libwasmtime.so in the wasmtime wheel) is different: it",
+        "is Rust code plus the C code of the zstd-sys crate (zstd 1.5.5; its BSD-3-Clause",
+        "license file is in THIRD_PARTY_NOTICES-rust-crates.txt, under zstd-sys), and it",
+        "dynamically links only the system libraries libc, libm, libdl, libpthread and",
+        "libgcc_s (they come from the Ubuntu base image). No other C or C++ library is",
+        "linked into it: no libc++, no capstone, no Intel ITT code (checked on the wheel's",
+        "ELF NEEDED entries and symbol strings).",
+        "",
+        "Generated by scripts/collect_notices.py. Do not edit by hand.",
+        "",
+    ]
+    WASM_OUT.write_text("\n".join(intro) + "\n" + "\n".join(blocks), encoding="utf-8")
+    print(f"wrote {WASM_OUT.relative_to(ROOT)}: {count} components")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0] if __doc__ else None)
     parser.add_argument(
-        "command", nargs="?", default="all", choices=["resolve", "rust", "yosys", "all"]
+        "command", nargs="?", default="all", choices=["resolve", "rust", "yosys", "wasm", "all"]
     )
     args = parser.parse_args()
     if args.command == "resolve":
@@ -592,6 +721,8 @@ def main() -> int:
         write_rust_notices()
     if args.command in ("yosys", "all"):
         write_yosys_notices()
+    if args.command in ("wasm", "all"):
+        write_wasm_runtime_notices()
     return 0
 
 

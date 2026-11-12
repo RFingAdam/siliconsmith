@@ -37,7 +37,8 @@ Components compiled to WebAssembly inside the Python wheels (not separate progra
   pywellen wheel: wellen and fst-reader (Rust), plus the crates listed in
     licenses/python/pywellen/pywellen.cyclonedx.json ; https://github.com/ekiwi/wellen
 Notices (copyright lines and license texts) for the Rust crates in the pywellen and wasmtime
-wheels and for libraries bundled in the Yosys source trees: licenses/THIRD_PARTY_NOTICES-*.txt
+wheels and for libraries bundled in the Yosys source trees, and for the wasi-libc and LLVM runtime
+libraries inside the WebAssembly Yosys builds: licenses/THIRD_PARTY_NOTICES-*.txt
 """
 
 
