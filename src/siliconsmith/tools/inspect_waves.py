@@ -29,7 +29,7 @@ from siliconsmith.worker import limits as lim
 
 WAVES_TIMEOUT_S = 120.0
 DEFAULT_MAX_ROWS = 50
-WAVE_FILE_RE = re.compile(r"^build/waves/(icarus|verilator)/tb\.(fst|vcd)$")
+WAVE_FILE_RE = re.compile(r"^build/waves/(icarus|icarus-gl|verilator)/tb\.(fst|vcd)$")
 SIGNAL_RE = re.compile(r"^[A-Za-z_$\\][\w$.\[\]:\\ -]{0,299}$")
 
 
@@ -77,8 +77,8 @@ def _check_args(
     if not WAVE_FILE_RE.fullmatch(rel):
         raise ToolError(
             f"{path!r} is not a wave file that run_tests keeps; use the path from its result "
-            "(build/waves/icarus/tb.fst or build/waves/verilator/tb.fst), after "
-            "run_tests with waves=True"
+            "(build/waves/icarus/tb.fst, build/waves/verilator/tb.fst or, for a gate-level run, "
+            "build/waves/icarus-gl/tb.fst), after run_tests with waves=True"
         )
     if not 1 <= len(signals) <= lim.MAX_WAVE_SIGNALS:
         raise ToolError(f"give 1 to {lim.MAX_WAVE_SIGNALS} signal names, for example ['uo_out']")
@@ -238,8 +238,10 @@ def inspect(
 
 DESCRIPTION = """\
 Show how signals changed in a wave file that run_tests kept (run it with waves=True; the result \
-gives the path, build/waves/<simulator>/tb.fst). signals are names like 'uo_out' or \
-'user_project.uo_out' (a suffix of the full hierarchical name; the match nearest the top wins). \
+gives the path, build/waves/<simulator>/tb.fst; a gate-level run, gl=True, keeps its own in \
+build/waves/icarus-gl/tb.fst, where the signal names are those of the sky130 netlist). signals \
+are names like 'uo_out' or 'user_project.uo_out' (a suffix of the full hierarchical name; the \
+match nearest the top wins). \
 start_ns and end_ns limit the time range. The table has one row per time where a requested \
 signal changed: hex for buses, 0/1 for bits, x/z kept. At most max_rows rows come back \
 (default 50, hard limit 1000); a note says how many more there are. details.rows has every \

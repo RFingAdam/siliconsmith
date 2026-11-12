@@ -73,6 +73,7 @@ def add_run(
     stage: str = "sim",
     filtered: bool = False,
     image: str = IMAGE,
+    gl: bool = False,
 ) -> None:
     append_run(
         project.dir,
@@ -83,6 +84,7 @@ def add_run(
             ok=ok,
             stage=stage,
             filtered=filtered,
+            gl=gl,
             image=image,
             siliconsmith_version=ledger_mod.__version__,
             digests=compute_digests(project, image),
@@ -129,7 +131,7 @@ def test_everything_passes_after_full_runs(tmp_path: Path) -> None:
         "sim_verilator": "pass",
         "coverage": "pass",
         "synthesis": "not_run",
-        "gate_sim": "not_available",
+        "gate_sim": "not_run",
         "equivalence": "not_available",
         "layout": "not_available",
         "tt_precheck": "not_available",
@@ -138,8 +140,10 @@ def test_everything_passes_after_full_runs(tmp_path: Path) -> None:
     by_key = {s.key: s for s in report.steps}
     assert by_key["sim_icarus"].evidence == "run_tests icarus: 2/2 passed"
     assert by_key["synthesis"].evidence.startswith("Call synthesize")
-    for key in ("gate_sim", "equivalence"):
-        assert by_key[key].evidence == "Comes with milestone M1"
+    assert by_key["gate_sim"].evidence.startswith(
+        "Call run_tests with simulator icarus and gl=True"
+    )
+    assert by_key["equivalence"].evidence == "Comes with milestone M1"
     assert by_key["layout"].evidence == "Comes with milestone M2"
     assert by_key["tt_precheck"].evidence == "Comes with milestone M3"
     assert by_key["bring_up"].evidence == "Comes with milestone M3"
@@ -152,8 +156,8 @@ def test_new_project_is_not_run_everywhere(tmp_path: Path) -> None:
     assert got["spec_valid"] == "pass"
     for key in ("spec_approved", "check", "sim_icarus", "sim_verilator", "coverage"):
         assert got[key] == "not_run"
-    assert got["synthesis"] == "not_run"
-    assert [got[k] for k in STEP_KEYS[7:]] == ["not_available"] * 5
+    assert got["synthesis"] == "not_run" and got["gate_sim"] == "not_run"
+    assert [got[k] for k in STEP_KEYS[8:]] == ["not_available"] * 4
 
 
 def test_invalid_and_missing_spec(tmp_path: Path) -> None:
@@ -227,28 +231,43 @@ def add_synth(project: Project, *, ok: bool = True, stage: str = "synth") -> Non
     add_run(project, "synthesize", None, tests=[], ok=ok, stage=stage)
 
 
+def add_gl(
+    project: Project,
+    *,
+    ok: bool = True,
+    stage: str = "sim",
+    tests: list[RunTest] | None = None,
+    filtered: bool = False,
+) -> None:
+    add_run(project, sim="icarus", gl=True, ok=ok, stage=stage, tests=tests, filtered=filtered)
+
+
+GL = {"gate_sim"}
+
+
 @pytest.mark.parametrize(
     ("frontend", "change", "expected"),
     [
-        ("amaranth", edit("src/config.json", "\n"), {"synthesis"}),
-        ("amaranth", edit("info.yaml", "# changed\n"), {"synthesis"}),
-        ("amaranth", edit("hdl/chip.py"), CHECK_SIM_COV | {"synthesis"}),
-        ("verilog", edit("src/chip.v", "// changed\n"), CHECK_SIM_COV | {"synthesis"}),
-        ("amaranth", edit("test/tb.v", "// changed\n"), CHECK_SIM_COV | {"synthesis"}),
-        ("amaranth", edit("test/test.py"), SIM_COV),
+        ("amaranth", edit("src/config.json", "\n"), {"synthesis"} | GL),
+        ("amaranth", edit("info.yaml", "# changed\n"), {"synthesis"} | GL),
+        ("amaranth", edit("hdl/chip.py"), CHECK_SIM_COV | {"synthesis"} | GL),
+        ("verilog", edit("src/chip.v", "// changed\n"), CHECK_SIM_COV | {"synthesis"} | GL),
+        ("amaranth", edit("test/tb.v", "// changed\n"), CHECK_SIM_COV | {"synthesis"} | GL),
+        ("amaranth", edit("test/test.py"), SIM_COV | GL),
         ("amaranth", edit("spec.yaml"), {"spec_approved", "coverage"}),
         ("amaranth", edit("docs/info.md", "more\n"), set()),
         ("amaranth", edit("build/out.txt"), set()),
     ],
     ids=lambda v: v if isinstance(v, str) and not v.startswith("<") else "",
 )
-def test_synthesis_stale_matrix(
+def test_synthesis_and_gate_sim_stale_matrix(
     tmp_path: Path, frontend: str, change: Any, expected: set[str]
 ) -> None:
     project = make_project(tmp_path, frontend)
     all_pass(project)
     add_synth(project)
-    assert states(project)["synthesis"] == "pass"
+    add_gl(project)
+    assert states(project)["synthesis"] == "pass" and states(project)["gate_sim"] == "pass"
     assert stale_set(project) == set()
     change(project)
     assert stale_set(project) == expected
@@ -276,7 +295,8 @@ def test_synthesis_image_makes_it_stale(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     all_pass(project)
     add_synth(project)
-    assert stale_set(project, "example/toolchain:ctx-bbbb") == CHECK_SIM_COV | {"synthesis"}
+    add_gl(project)
+    assert stale_set(project, "example/toolchain:ctx-bbbb") == CHECK_SIM_COV | {"synthesis"} | GL
 
 
 def test_synthesis_states(tmp_path: Path) -> None:
@@ -552,6 +572,7 @@ def test_ledger_stores_facts_only(tmp_path: Path) -> None:
         "ok",
         "stage",
         "filtered",
+        "gl",
         "image",
         "image_id",
         "siliconsmith_version",
@@ -739,3 +760,81 @@ def test_cli_status_with_a_corrupt_ledger_exits_zero(
 def test_result_helper_is_a_plain_tool_result(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     assert isinstance(build_result(compute_status(project, IMAGE)), ToolResult)
+
+
+# -- gate-level simulation ----------------------------------------------------------------
+
+
+def test_gate_sim_states(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    got = {s.key: s for s in compute_status(project, IMAGE).steps}
+    assert got["gate_sim"].state == "not_run"
+    add_gl(project)
+    got = {s.key: s for s in compute_status(project, IMAGE).steps}
+    assert got["gate_sim"].state == "pass"
+    assert got["gate_sim"].evidence == "run_tests gl: 2/2 passed on the sky130 netlist"
+    bad = [RunTest(name="test_a", module="test", covers=["R1"], outcome="fail"), *rows()[1:]]
+    add_gl(project, ok=False, tests=bad)
+    got = {s.key: s for s in compute_status(project, IMAGE).steps}
+    assert got["gate_sim"].state == "fail" and "failed: test_a" in got["gate_sim"].evidence
+    # A synthesis problem inside a gate-level run is a failure of this step too.
+    add_gl(project, ok=False, stage="synth_failed", tests=[])
+    got = {s.key: s for s in compute_status(project, IMAGE).steps}
+    assert (
+        got["gate_sim"].state == "fail" and "synthesis found a problem" in got["gate_sim"].evidence
+    )
+    add_gl(project, ok=False, stage="too_big", tests=[])
+    assert states(project)["gate_sim"] == "fail"
+    # A filtered run is never the full run, and a run that failed the emit step says nothing.
+    add_gl(project, filtered=True)
+    add_gl(project, ok=False, stage="lint", tests=[])
+    assert states(project)["gate_sim"] == "fail"  # still the too_big run
+    add_gl(project)
+    assert states(project)["gate_sim"] == "pass"  # the latest full run decides
+
+
+def test_gate_sim_needs_icarus_gl_runs_only(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    all_pass(project)  # RTL runs on both simulators
+    add_synth(project)
+    assert states(project)["gate_sim"] == "not_run"
+
+
+def test_gate_sim_is_stale_when_the_spec_clock_no_longer_matches_the_files(
+    tmp_path: Path,
+) -> None:
+    project = make_project(tmp_path)
+    add_gl(project)
+    spec = project.dir / "spec.yaml"
+    spec.write_text(spec.read_text().replace("clock_hz: 10000000", "clock_hz: 50000000"))
+    assert states(project)["gate_sim"] == "stale"
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_a_gate_level_run_never_changes_the_rtl_rows_or_coverage(tmp_path: Path, ok: bool) -> None:
+    project = make_project(tmp_path)
+    all_pass(project)
+    before = {s.key: (s.state, s.evidence, s.date) for s in compute_status(project, IMAGE).steps}
+    bad = [RunTest(name="test_a", module="test", covers=[], outcome="fail")]
+    # Later than the RTL runs, on icarus, unfiltered: it must still be invisible to them.
+    add_gl(project, ok=ok, tests=rows() if ok else bad)
+    after = {s.key: (s.state, s.evidence, s.date) for s in compute_status(project, IMAGE).steps}
+    for key in ("sim_icarus", "sim_verilator", "coverage", "synthesis"):
+        assert after[key] == before[key], key
+    # The check row may name the latest lint-clean run, but its state does not change.
+    assert after["check"][0] == before["check"][0] == "pass"
+    assert after["check"][1] == "run_tests gl: Verilog generated and lint clean"
+    assert after["gate_sim"][0] == ("pass" if ok else "fail")
+
+
+def test_ledger_without_the_gl_field_still_loads(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    all_pass(project)
+    path = project.dir / LEDGER_REL
+    data = json.loads(path.read_text())
+    for run in data["runs"]:
+        run.pop("gl", None)
+    path.write_text(json.dumps(data))
+    loaded = load_ledger(project.dir)
+    assert loaded.problem is None and all(r.gl is False for r in loaded.ledger.runs)
+    assert states(project)["sim_icarus"] == "pass" and states(project)["gate_sim"] == "not_run"

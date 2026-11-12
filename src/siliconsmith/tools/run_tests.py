@@ -3,6 +3,14 @@
 
 """`run_tests`: simulate the design with the project's cocotb tests on Icarus or Verilator.
 
+With `gl=True` the same tests run on the synthesized sky130 netlist instead of the RTL (gate-level
+simulation, Icarus only). The worker's `test` verb then does the whole job in one container call:
+emit, the shared synthesis (`worker/synth.py`), Icarus on the netlist and the sky130 cell models.
+The netlist stays in the run folder (and is removed with it); `build/synth` belongs to
+`synthesize`. A gate-level run has its own build, sim and wave folders (`icarus-gl`), so it never
+disturbs an RTL result, and the ledger marks it (`RunRecord.gl`) so it never counts for the RTL
+simulation or coverage steps.
+
 One container call (the worker's `test` verb) re-runs the whole emit pipeline and, only if that
 is ok, builds and runs the tests. The emit part is handled by the same code as `emit_verilog`
 (`handle_outcome`), so a design that does not elaborate or lint gives the same report and the
@@ -15,7 +23,13 @@ do not count) and none failed or errored.
 `details` shape (stable; the validation ledger records from it, see `ledger.record_from_result`):
 
     sim            "icarus" | "verilator"
-    stage          last stage reached: elaborate | ports | lint | build | sim
+    gl             null for an RTL run; for a gate-level run {defines, netlist_sha256, synth}:
+                   `defines` is what the netlist build defined (FUNCTIONAL, SIM, UNIT_DELAY),
+                   `netlist_sha256` the hash of the netlist that was simulated (null when
+                   synthesis stopped the run) and `synth` the synthesis facts (cells, flip_flops,
+                   area_um2, utilization, tiles, verdict), or null
+    stage          last stage reached: elaborate | ports | lint | synth_failed | too_big |
+                   timeout | build | sim (the synthesis stages only in a gate-level run)
     filtered       true if a test_filter was given (such a run never counts as a full run)
     test_filter    the regex, or null
     lint           the emit step's lint findings (empty when the emit step was ok)
@@ -24,7 +38,8 @@ do not count) and none failed or errored.
                      actual}]; `covers` is empty for an expect_fail/expect_error test (it
                      covers nothing), `declared_covers` keeps the ids its docstring names
     tests_total    number of tests reported
-    waves          project-relative wave file, or null
+    waves          project-relative wave file (build/waves/icarus-gl/... for a gate-level run),
+                   or null
     coverage       {covered, uncovered, unknown} against spec.yaml, or null without a valid spec
     log            simulator error lines for a failed build or a crashed run
 """
@@ -32,6 +47,7 @@ do not count) and none failed or errored.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from typing import Annotated, Any, Literal
 
@@ -49,14 +65,39 @@ from siliconsmith.project import Project
 from siliconsmith.result import Artifact, ToolResult, make_summary
 from siliconsmith.runners.base import WorkerOutcome
 from siliconsmith.runners.docker import ToolchainError, remove_run_dirs
+from siliconsmith.spec import Spec
 from siliconsmith.tools._common import MAX_WRITE_BYTES, get_project, read_spec_ids_locked
-from siliconsmith.tools.emit_verilog import EmitResult, handle_outcome, precheck, read_author
+from siliconsmith.tools.emit_verilog import (
+    EmitResult,
+    _unreadable,
+    handle_outcome,
+    precheck,
+    read_author,
+)
+from siliconsmith.tools.synthesize import (
+    SYNTH_TIMEOUT_S,
+    _early_stop,
+    _location,
+    _plain_cell,
+    _read_synth_files,
+    _Synth,
+    _yosys_failure,
+)
+from siliconsmith.tt_sync import clock_period_ns, sync_for_synthesis
+from siliconsmith.utilization import (
+    TTConfig,
+    estimate_utilization,
+    pre_abc_budget_um2,
+    read_tt_config,
+)
 from siliconsmith.worker import limits as lim
 
 SIM_TIMEOUT_S = 600.0
 MAX_FILTER_CHARS = 200
 SUMMARY_NAMES = 6
 WAVES_RE = re.compile(r"^build/waves/(icarus|verilator)/tb\.(fst|vcd)$")
+GL_WAVES_RE = re.compile(r"^build/waves/icarus-gl/tb\.(fst|vcd)$")
+GL_LABEL = "Gate-level simulation (sky130 netlist, icarus)"
 MODULE_RE = re.compile(r"^test[A-Za-z0-9_]*$")
 
 Simulator = Literal["icarus", "verilator"]
@@ -93,8 +134,18 @@ class _Sim(_Strict):
     message: str | None = Field(default=None, max_length=lim.TEST_TEXT_MAX)
 
 
+class _Gl(_Strict):
+    """The worker's `gl` entry: the netlist build's defines and the synthesis outcome."""
+
+    defines: dict[str, str] = Field(default_factory=dict, max_length=16)
+    synth: _Synth
+    netlist_sha256: str | None = Field(default=None, max_length=64)
+    simulated: bool = False
+
+
 class _RunResult(EmitResult):
     sim: _Sim | None = None
+    gl: _Gl | None = None
 
 
 # -- helpers ---------------------------------------------------------------------------------
@@ -128,9 +179,22 @@ def _retitle(result: ToolResult, details: dict[str, Any]) -> ToolResult:
     return result
 
 
-def _base_details(simulator: str, test_filter: str | None) -> dict[str, Any]:
+def _gl_details(
+    defines: dict[str, str] | None = None,
+    netlist_sha256: str | None = None,
+    synth: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {"defines": defines or {}, "netlist_sha256": netlist_sha256, "synth": synth}
+
+
+def _is_gl(details: dict[str, Any]) -> bool:
+    return details.get("gl") is not None
+
+
+def _base_details(simulator: str, test_filter: str | None, gl: bool = False) -> dict[str, Any]:
     return {
         "sim": simulator,
+        "gl": _gl_details() if gl else None,
         "filtered": test_filter is not None,
         "test_filter": test_filter,
         "lint": [],
@@ -197,29 +261,34 @@ def _sim_problem(
             )
         )
     editable = frontend.entry(name)
+    gl = _is_gl(details)
     if sim.state == "build_failed":
         details["stage"] = "build"
         details["log"] = sim.log
-        return ToolResult.from_lines(
-            False,
-            [
-                f"run_tests failed: {sim.simulator} could not build the design and testbench.",
-                *sim.log,
-            ],
-            details=details,
-            next_hints=[
+        if gl:
+            head = f"{GL_LABEL}: failed, icarus could not build the netlist and the testbench."
+            hint = (
+                "The netlist and the sky130 cell models come from the toolchain, so unless the "
+                "error names one of your files under test/, call synthesize to check the "
+                "netlist, then call run_tests with gl=True again."
+            )
+        else:
+            head = f"run_tests failed: {sim.simulator} could not build the design and testbench."
+            hint = (
                 f"Fix the first error in {editable} (or in the test files); src/project.v and "
                 "test/tb.v are generated or tool-owned. Then call run_tests again."
-            ],
-        )
+            )
+        return ToolResult.from_lines(False, [head, *sim.log], details=details, next_hints=[hint])
     if sim.state == "no_results":
         details["stage"] = "sim"
         details["log"] = sim.log
+        ended = f"{sim.simulator} ended without test results" + (
+            f" (exit code {sim.exit_code})." if sim.exit_code is not None else "."
+        )
         return ToolResult.from_lines(
             False,
             [
-                f"run_tests failed: {sim.simulator} ended without test results"
-                + (f" (exit code {sim.exit_code})." if sim.exit_code is not None else "."),
+                f"{GL_LABEL}: failed, {ended}" if gl else f"run_tests failed: {ended}",
                 sim.message or "",
                 *sim.log,
             ],
@@ -245,9 +314,14 @@ def _no_tests(sim: _Sim, test_filter: str | None, details: dict[str, Any]) -> To
         hint = (
             "Write tests with write_test: each is an async function decorated with @cocotb.test()."
         )
+    head = (
+        f"{GL_LABEL}: failed, no test ran."
+        if _is_gl(details)
+        else f"run_tests failed on {sim.simulator}: no test ran."
+    )
     return ToolResult.from_lines(
         False,
-        [f"run_tests failed on {sim.simulator}: no test ran.", line],
+        [head, line],
         details=details,
         next_hints=[hint],
     )
@@ -257,8 +331,12 @@ def _all_skipped(sim: _Sim, count: int, details: dict[str, Any]) -> ToolResult:
     return ToolResult.from_lines(
         False,
         [
-            f"run_tests failed on {sim.simulator}: no test ran: all {count} "
-            f"test{'s were' if count != 1 else ' was'} skipped."
+            (
+                f"{GL_LABEL}: failed, no test ran"
+                if _is_gl(details)
+                else f"run_tests failed on {sim.simulator}: no test ran"
+            )
+            + f": all {count} test{'s were' if count != 1 else ' was'} skipped."
         ],
         details=details,
         next_hints=[
@@ -274,8 +352,10 @@ def _finish(
     sim: _Sim,
     test_filter: str | None,
     emit_details: dict[str, Any],
+    gl: dict[str, Any] | None = None,
 ) -> ToolResult:
     details = _base_details(sim.simulator, test_filter)
+    details["gl"] = gl
     details["stage"] = "sim"
     details["lint"] = emit_details.get("lint", [])
     problem = _sim_problem(sim, test_filter, details, frontend, project.name)
@@ -296,10 +376,11 @@ def _finish(
         tests.append(entry)
     details["tests"] = tests
     details["tests_total"] = len(tests)
-    waves = sim.waves if sim.waves and WAVES_RE.fullmatch(sim.waves) else None
+    pattern = GL_WAVES_RE if gl is not None else WAVES_RE
+    waves = sim.waves if sim.waves and pattern.fullmatch(sim.waves) else None
     details["waves"] = waves
     spec_ids = read_spec_ids_locked(project)
-    if spec_ids is not None:
+    if spec_ids is not None and gl is None:  # gate-level tests never count for coverage
         details["coverage"] = coverage(spec_ids, tests).as_dict()
     if not tests:
         return _no_tests(sim, test_filter, details)
@@ -311,10 +392,11 @@ def _finish(
     ok = failed == 0
     verdict = "ok" if ok else "failed"
     scope = f" (filter {test_filter!r})" if test_filter is not None else ""
-    lines = [
-        f"run_tests {verdict} on {sim.simulator}{scope}: {passed} passed, {failed} failed, "
-        f"{skipped} skipped ({len(tests)} tests)."
-    ]
+    counts = f"{passed} passed, {failed} failed, {skipped} skipped ({len(tests)} tests)."
+    if gl is not None:
+        lines = [f"{GL_LABEL}: {verdict}{scope}, {counts}"]
+    else:
+        lines = [f"run_tests {verdict} on {sim.simulator}{scope}: {counts}"]
     hints: list[str] = []
     bad = [t for t in tests if t["outcome"] in ("fail", "error")]
     if bad:
@@ -330,8 +412,9 @@ def _finish(
             only = bad[0]["name"] + "$"  # identifiers, so nothing to escape
             if bad[0]["module"]:
                 only = f"{bad[0]['module']}.{only}"
+            again = "waves=True, gl=True" if gl is not None else "waves=True"
             hints.append(
-                f"Rerun with waves=True and test_filter={only!r}, then use "
+                f"Rerun with {again} and test_filter={only!r}, then use "
                 "inspect_waves to look at the signals."
             )
     elif _count(tests, "pass"):
@@ -355,17 +438,38 @@ def _finish(
         lines.append(f"Note: {sim.message}")
     if ok and test_filter is not None:
         hints.append("This run was filtered; call run_tests without test_filter for a full run.")
-    if ok and test_filter is None:
+    if ok and test_filter is None and gl is not None:
+        hints.append("Call status to see the checks that are still open.")
+    elif ok and test_filter is None:
         other = "verilator" if sim.simulator == "icarus" else "icarus"
         hints.append(f"Run the tests on {other} as well to check both simulators agree.")
     artifacts = [Artifact(path=waves, kind="waves")] if waves else []
     return ToolResult.from_lines(ok, lines, details=details, artifacts=artifacts, next_hints=hints)
 
 
-def _timeout(simulator: str, test_filter: str | None, timeout_s: float) -> ToolResult:
-    details = _base_details(simulator, test_filter)
+def _timeout(
+    simulator: str, test_filter: str | None, timeout_s: float, gl: bool = False
+) -> ToolResult:
+    details = _base_details(simulator, test_filter, gl)
     details["stage"] = "sim"
     details["timed_out"] = True
+    if gl:
+        return ToolResult.from_lines(
+            False,
+            [
+                f"{GL_LABEL}: failed, the run did not finish in {timeout_s:.0f} s "
+                "(synthesis and simulation together).",
+                "It was stopped, so it is not known which of the two was slow; no test results "
+                "were kept.",
+            ],
+            details=details,
+            next_hints=[
+                "Call synthesize to see whether synthesis alone finishes. If it does, a test "
+                "may be waiting forever: give each test a timeout with "
+                "@cocotb.test(timeout_time=100, timeout_unit='us'), and run one test at a time "
+                "with test_filter."
+            ],
+        )
     return ToolResult.from_lines(
         False,
         [
@@ -393,30 +497,27 @@ def run(
 ) -> ToolResult:
     if simulator not in ("icarus", "verilator"):
         raise ToolError(f"unknown simulator {simulator!r}; choose icarus or verilator")
-    if gl:
-        _refuse_gate_level(simulator)
+    if gl and simulator != "icarus":
+        raise ToolError(
+            "gate-level simulation runs on icarus only: call run_tests with simulator='icarus' "
+            "and gl=True (the cell models of the sky130 library are plain Verilog that Icarus "
+            "reads directly)."
+        )
     test_filter = _check_filter(test_filter)
     project = get_project(ctx, project_name)
     frontend = get_frontend(project.frontend)
-    base = _base_details(simulator, test_filter)
+    base = _base_details(simulator, test_filter, gl)
     with project_lock(project.dir):
+        spec = None
+        if gl:
+            # The synthesis reads src/config.json and info.yaml, so they are brought in step
+            # with spec.yaml first, and the digest below covers them (a ToolError if the spec
+            # cannot be used).
+            spec = sync_for_synthesis(project)
         before = snapshot_digests(project, ctx.image)
-        result = _run_locked(ctx, project, frontend, simulator, test_filter, waves, base)
+        result = _run_locked(ctx, project, frontend, simulator, test_filter, waves, base, spec)
         # Every result is a fact about these files (a ToolError is not, and is not recorded).
         return record_run(project, ctx.image, "run_tests", result, before)
-
-
-def _refuse_gate_level(simulator: str) -> None:
-    """Temporary plumbing: `gl` is in the tool schema, but gate-level simulation is not built."""
-    if simulator != "icarus":
-        raise ToolError(
-            "gate-level simulation runs on icarus only, and is not available yet (milestone "
-            "M1-2, issue #8). Run run_tests without gl for the RTL simulation."
-        )
-    raise ToolError(
-        "gate-level simulation arrives with milestone M1-2 (issue #8); it is not available "
-        "yet. Run run_tests without gl for the RTL simulation."
-    )
 
 
 def _run_locked(
@@ -427,19 +528,28 @@ def _run_locked(
     test_filter: str | None,
     waves: bool,
     base: dict[str, Any],
+    spec: Spec | None,
 ) -> ToolResult:
     author = read_author(project)
     early = precheck(project, frontend)
     if early is not None:
         base["stage"] = "elaborate"
         return _retitle(early, base)
-    request = {
+    request: dict[str, Any] = {
         **frontend.worker_request(project.name, author),
         "simulator": simulator,
         "test_filter": test_filter,
         "waves": bool(waves),
+        "gl": spec is not None,
     }
     timeout_s = SIM_TIMEOUT_S
+    config: TTConfig | None = None
+    if spec is not None:
+        config = read_tt_config(project.dir)
+        request["clock_period_ns"] = clock_period_ns(spec.clock_hz)
+        request["stop_area_um2"] = pre_abc_budget_um2(spec.tiles, config)
+        request["timeout_s"] = SYNTH_TIMEOUT_S  # the synthesis part of the call
+        timeout_s = SYNTH_TIMEOUT_S + SIM_TIMEOUT_S
     try:
         try:
             outcome = ctx.get_runner().run(
@@ -447,7 +557,9 @@ def _run_locked(
             )
         except ToolchainError as exc:
             raise ToolError(str(exc)) from exc
-        return _handle(ctx, project, frontend, author, outcome, simulator, test_filter, timeout_s)
+        return _handle(
+            ctx, project, frontend, author, outcome, simulator, test_filter, timeout_s, spec, config
+        )
     finally:
         remove_run_dirs(project.dir / "build")
 
@@ -461,12 +573,15 @@ def _handle(
     simulator: str,
     test_filter: str | None,
     timeout_s: float,
+    spec: Spec | None = None,
+    config: TTConfig | None = None,
 ) -> ToolResult:
+    gl = spec is not None
     if outcome.timed_out:
-        return _timeout(simulator, test_filter, timeout_s)
+        return _timeout(simulator, test_filter, timeout_s, gl)
     # The emit part (files into src/, the failure reports) is shared with emit_verilog.
     emit_report = handle_outcome(ctx, project, frontend, author, outcome)
-    base = _base_details(simulator, test_filter)
+    base = _base_details(simulator, test_filter, gl)
     if not emit_report.ok:
         base["stage"] = str(emit_report.details.get("stage", "elaborate"))
         return _retitle(emit_report, base)
@@ -475,19 +590,147 @@ def _handle(
         result = _RunResult.model_validate(outcome.result)
     except ValidationError:
         return _bad_sim_result(base, "the simulation part of the result has the wrong shape")
+    gl_details: dict[str, Any] | None = None
+    if spec is not None:
+        assert config is not None
+        if result.gl is None:
+            return _bad_sim_result(base, "the result has no gate-level part")
+        stopped = _gl_synthesis(project, frontend, outcome, result, spec, config, base)
+        if isinstance(stopped, ToolResult):
+            return stopped
+        gl_details = stopped
     if result.sim is None or result.sim.simulator != simulator:
         return _bad_sim_result(base, "the result has no simulation part")
     if result.sim.tests_total < len(result.sim.tests):
         return _bad_sim_result(base, "the result contradicts itself")
-    return _finish(project, frontend, result.sim, test_filter, emit_report.details)
+    finished = _finish(project, frontend, result.sim, test_filter, emit_report.details, gl_details)
+    if gl_details is not None and gl_details.get("warnings"):
+        finished.summary = make_summary(
+            [*finished.summary.splitlines(), *[f"Note: {w}" for w in gl_details.pop("warnings")]]
+        )
+        finished.details["gl"] = gl_details
+    return finished
+
+
+def _synth_facts(synth: _Synth, spec: Spec, config: TTConfig, sha: str | None) -> dict[str, Any]:
+    """The synthesis facts a gate-level run keeps (the same fields as the `synthesize` record)."""
+    facts: dict[str, Any] = {"tiles": spec.tiles, "netlist_sha256": sha}
+    if synth.stat is not None:
+        util = estimate_utilization(synth.stat.area_um2, spec.tiles, config)
+        facts.update(
+            cells=synth.stat.cells,
+            flip_flops=synth.stat.flip_flops,
+            area_um2=round(synth.stat.area_um2, 3),
+            utilization=round(util.estimate, 4),
+            verdict=util.verdict,
+        )
+    return facts
+
+
+def _gl_synthesis(
+    project: Project,
+    frontend: Frontend,
+    outcome: WorkerOutcome,
+    result: _RunResult,
+    spec: Spec,
+    config: TTConfig,
+    base: dict[str, Any],
+) -> dict[str, Any] | ToolResult:
+    """The synthesis half of a gate-level run: its facts when a netlist was simulated, or the
+    result that ends the run (synthesis failed, too big, out of time, or a netlist problem)."""
+    assert result.gl is not None
+    synth = result.gl.synth
+    if synth.state in ("yosys_failed", "timeout", "too_big"):
+        return _gl_stopped(project, frontend, spec, config, synth, base)
+    if synth.state != "ran" or synth.stat is None:
+        return _bad_sim_result(base, "the synthesis part of the result is incomplete")
+    sha: str | None = None
+    if result.sim is not None:
+        # The netlist is still in the run folder: hash the bytes the simulator was given.
+        files = _read_synth_files(project, outcome, synth, f"tt_um_{project.name}")
+        if isinstance(files, str):
+            return _unreadable(frontend, project, outcome, files)
+        sha = hashlib.sha256(files[0]).hexdigest()
+    facts = _synth_facts(synth, spec, config, sha)
+    gl = _gl_details(dict(result.gl.defines), sha, facts)
+    problems = [
+        f"The netlist uses {_plain_cell(cell)}, a cell Tiny Tapeout's flow does not allow."
+        for cell in synth.forbidden_cells
+    ] + [f"{_location(c)}: {c.kind.replace('_', ' ')}: {c.message}" for c in synth.checks]
+    if result.sim is None and not problems:
+        return _bad_sim_result(base, "the result has no simulation part")
+    if problems:
+        base["gl"] = gl
+        base["stage"] = "synth_failed"
+        lines = [
+            f"{GL_LABEL} could not run: synthesis found a problem in the gates, so the netlist "
+            "was not simulated.",
+            *problems[:SUMMARY_NAMES],
+        ]
+        if len(problems) > SUMMARY_NAMES:
+            lines.append(f"... {len(problems) - SUMMARY_NAMES} more in details.gl.checks")
+        gl["checks"] = [c.model_dump() for c in synth.checks]
+        gl["forbidden_cells"] = list(synth.forbidden_cells)
+        return ToolResult.from_lines(
+            False,
+            lines,
+            details=base,
+            next_hints=[
+                "Fix the first problem (file and line above) with write_rtl, then call "
+                "synthesize and run_tests with gl=True again."
+            ],
+        )
+    if estimate_utilization(synth.stat.area_um2, spec.tiles, config).verdict == "too_big":
+        gl["warnings"] = [
+            f"the gates would not fit a {spec.tiles} tile (synthesize reports it as too big); "
+            "this run only checks how they behave."
+        ]
+    return gl
+
+
+def _gl_stopped(
+    project: Project,
+    frontend: Frontend,
+    spec: Spec,
+    config: TTConfig,
+    synth: _Synth,
+    base: dict[str, Any],
+) -> ToolResult:
+    """A gate-level run that synthesis ended: its stage and findings, no simulation."""
+    if synth.state == "too_big":
+        sub = _early_stop(frontend, project, spec, config, synth)
+    elif synth.state == "timeout":
+        sub = ToolResult.from_lines(
+            False,
+            ["Synthesis ran out of time: " + (synth.message or "Yosys did not finish") + "."],
+            details={"stage": "timeout", "timed_out": True},
+            next_hints=["Make the design smaller and call synthesize again."],
+        )
+    else:
+        sub = _yosys_failure(frontend, project, synth)
+    reason = sub.summary.splitlines()
+    lines = [
+        f"{GL_LABEL} could not run: synthesis failed, so there is no netlist to simulate.",
+        *reason,
+    ]
+    details = {**base, "stage": sub.details.get("stage", "synth_failed")}
+    for key in ("log", "message", "estimate", "utilization", "yosys_seconds", "timed_out"):
+        if key in sub.details:
+            details[key] = sub.details[key]
+    details["gl"] = _gl_details(synth=None)
+    hints = list(sub.next_hints) or [
+        "Call synthesize to see why synthesis fails, then call run_tests with gl=True again."
+    ]
+    return ToolResult.from_lines(False, lines, details=details, next_hints=hints)
 
 
 def _bad_sim_result(details: dict[str, Any], why: str) -> ToolResult:
     details["stage"] = "sim"
+    label = GL_LABEL if _is_gl(details) else "run_tests"
     return ToolResult.from_lines(
         False,
         [
-            f"run_tests failed: the simulation returned an unreadable result ({why}).",
+            f"{label} failed: the simulation returned an unreadable result ({why}).",
             "No test results can be shown.",
         ],
         details=details,
@@ -510,9 +753,17 @@ inspect_waves. details.tests lists every test with outcome and the requirement i
 details.coverage says which spec.yaml requirements have a passing test. The first Verilator run \
 takes about half a minute; later runs reuse the build.
 
-gl=True is for gate-level simulation: the same tests run on the synthesized sky130 netlist \
-instead of the RTL, on Icarus only. It is not available yet (milestone M1-2), so for now it \
-only returns an error.
+gl=True runs the tests at gate level (Icarus only; with Verilator it is an error). The tool \
+first does what synthesize does, with the same checks and the same time limits (a design that \
+fails or is too big stops there and the summary says gate-level simulation could not run), then \
+runs the SAME test files on the resulting sky130 netlist, with the cell models of the chip \
+library (a netlist has no RTL names: a test may only use the pins of tb, such as uo_out, and \
+not internal signals). This catches what RTL simulation cannot: logic that behaves differently \
+once it is real gates, such as a missing reset or an uninitialized flip-flop. The summary's \
+first line says "Gate-level simulation" so it is never mistaken for an RTL run. A gate-level \
+run never changes the RTL results or the RTL wave files: its waves are kept apart in \
+build/waves/icarus-gl/ (inspect_waves reads them). It can take up to 25 minutes in the worst \
+case; a small design takes seconds to a minute. details.gl holds the netlist hash.
 """
 
 

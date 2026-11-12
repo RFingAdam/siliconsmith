@@ -45,7 +45,7 @@ def test_bad_requests(bad: dict[str, Any]) -> None:
 def test_emit_failure_skips_the_simulation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(emit, "emit", lambda req: {"ok": False, "stage": "lint"})
     monkeypatch.setattr(sim, "simulate", lambda *a: pytest.fail("must not simulate"))
-    assert sim.run(request()) == {"ok": False, "stage": "lint", "sim": None}
+    assert sim.run(request()) == {"ok": False, "stage": "lint", "sim": None, "gl": None}
 
 
 def test_emit_success_runs_the_simulation(monkeypatch: pytest.MonkeyPatch) -> None:

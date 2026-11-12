@@ -4,10 +4,11 @@
 """The validation ledger: `.siliconsmith/ledger.json` (PLAN.md section 5.7).
 
 The ledger stores facts only: the owner's approval of the spec, and one record per
-`emit_verilog`, `run_tests` or `synthesize` run. It never says whether a step "passes";
-`status.py` works that out from these facts and the current files. Only the host writes it (the
-container never sees `.siliconsmith`), and every write here is atomic. The caller holds
-`paths.project_lock`: the lock is not re-entrant, so nothing in this module takes it.
+`emit_verilog`, `run_tests` or `synthesize` run (a gate-level `run_tests` run is marked `gl` and
+carries both the `sim` and the `synth` digests, taken before the run). It never says whether a
+step "passes"; `status.py` works that out from these facts and the current files. Only the host
+writes it (the container never sees `.siliconsmith`), and every write here is atomic. The caller
+holds `paths.project_lock`: the lock is not re-entrant, so nothing in this module takes it.
 
 A digest is a sha256 over a sorted list of `(relative path, sha256 of the bytes)` for an explicit
 set of files, plus the image name and the Siliconsmith version. It never covers whole folders, so
@@ -97,6 +98,7 @@ class RunRecord(_Model):
     ok: bool
     stage: str
     filtered: bool = False
+    gl: bool = False  # a gate-level run_tests run (absent in ledgers written before M1-2)
     image: str
     image_id: str | None = None
     siliconsmith_version: str
@@ -317,6 +319,7 @@ def record_from_result(
         ok=result.ok,
         stage=stage,
         filtered=bool(details.get("filtered", False)),
+        gl=tool == "run_tests" and isinstance(details.get("gl"), dict),
         image=image,
         image_id=image_id,
         siliconsmith_version=__version__,

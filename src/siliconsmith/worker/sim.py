@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """The `test` verb: emit (re-run in full), then simulate with cocotb on Icarus or Verilator.
+With `gl` it synthesizes the design to sky130 gates first and simulates the netlist on Icarus.
 
 One container call. The emit pipeline in `worker/emit.py` runs first and its result is returned
 as it is; only when it is ok does the simulation start. The simulation uses cocotb's Python
@@ -14,6 +15,28 @@ The agent's test modules run inside the simulator process, a child of this one, 
 folder. Build folders live in `build/sim/` (and ccache in `build/.cache`), so a second run only
 rebuilds what changed. With `waves`, the wave file is copied to `build/waves/<simulator>/`.
 
+## Gate-level simulation (`gl`)
+
+Same container call: emit, then the shared synthesis of `worker/synth.py` (same script, same
+do-not-use cell lists, same early stop and netlist checks as `synthesize`), then Icarus on
+`test/tb.v` + the netlist + the sky130 cell models. The netlist stays in the run folder
+(`out/synth/tt_um_<name>.v`); `build/synth` belongs to `synthesize` and is never touched. The
+gate-level run has its own folders, so it never disturbs an RTL result: `build/sim/icarus-gl`
+(and `icarus-gl-waves`) and `build/waves/icarus-gl/tb.fst`.
+
+Tiny Tapeout's own gate-level test (the `GATES=yes` branch of the template `test/Makefile`, run
+by tt-gds-action) compiles `tb.v` + the post-layout netlist + `primitives.v` +
+`sky130_fd_sc_hd.v` with `-DGL_TEST -DFUNCTIONAL -DUSE_POWER_PINS -DSIM -DUNIT_DELAY=#1`. Ours
+differs on purpose, and only here:
+
+- The netlist is the Yosys netlist straight after synthesis, not the placed and routed one.
+  It has no power pins (`VPWR`/`VGND`), so `USE_POWER_PINS` and `GL_TEST` (which makes `tb.v`
+  connect the power pins) are NOT defined. With them, the module would not elaborate.
+- The sources are given to the runner as one list (cocotb's Python runner instead of `make`).
+
+The test modules, the `tb` top level, the seed handling and the result parsing are the RTL
+run's own.
+
 `cocotb_tools` is imported inside the function that needs it; everything else is stdlib.
 """
 
@@ -24,20 +47,29 @@ import os
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
-from siliconsmith.worker import emit, pyerror, results
+from siliconsmith.worker import emit, pyerror, results, synth
 from siliconsmith.worker import waves as wavefile
 from siliconsmith.worker.limits import (
     LOG_LINE_MAX,
     MAX_LOG_LINES,
+    MESSAGE_MAX,
     WAVES_PATH_MAX,
     clip,
 )
 
 WORK = emit.WORK
 SIMULATORS = ("icarus", "verilator")
+# The folder name of a gate-level run in build/sim and build/waves (next to `icarus`).
+GL_KEY = "icarus-gl"
+CELL_MODEL_DIR = "/opt/pdk/sky130A/libs.ref/sky130_fd_sc_hd/verilog"
+CELL_MODELS = ("primitives.v", "sky130_fd_sc_hd.v")
+# What `GATES=yes` defines in Tiny Tapeout's Makefile, minus GL_TEST and USE_POWER_PINS (see the
+# module docstring). Values are what cocotb's runner turns into `-DNAME=value`.
+GL_DEFINES = {"FUNCTIONAL": "1", "SIM": "1", "UNIT_DELAY": "#1"}
 MODULE_RE = re.compile(r"^test[A-Za-z0-9_]*$")
 MAX_FILTER_CHARS = 200
 MAX_WAVE_BYTES = 256 * 1024 * 1024
@@ -46,7 +78,7 @@ _ERROR_LINE = re.compile(r"error|fatal|cannot|not found|undefined|no such", re.I
 _TEST_FRAME = re.compile(r'^\s*File "test/[^"]*", line \d+')
 
 
-def _check(request: dict[str, Any]) -> tuple[str, str | None, bool]:
+def _check(request: dict[str, Any]) -> tuple[str, str | None, bool, bool]:
     simulator = request.get("simulator")
     if simulator not in SIMULATORS:
         raise ValueError(f"bad simulator {simulator!r}")
@@ -61,7 +93,12 @@ def _check(request: dict[str, Any]) -> tuple[str, str | None, bool]:
     waves = request.get("waves", False)
     if not isinstance(waves, bool):
         raise ValueError("waves must be true or false")
-    return str(simulator), test_filter, waves
+    gl = request.get("gl", False)
+    if not isinstance(gl, bool):
+        raise ValueError("gl must be true or false")
+    if gl and simulator != "icarus":
+        raise ValueError("gate-level simulation runs on icarus only")
+    return str(simulator), test_filter, waves, gl
 
 
 def discover_modules(test_dir: Path) -> list[str]:
@@ -89,13 +126,15 @@ def map_log_paths(text: str, out_dir: Path, name: str) -> str:
     return pyerror.map_paths(text)
 
 
-def log_lines(text: str, out_dir: Path, name: str) -> list[str]:
+def log_lines(text: str, out_dir: Path, name: str, netlist: Path | None = None) -> list[str]:
     """The lines worth showing for a failed build or a crashed simulation (clipped, at most 15).
 
     Lines that look like errors come first; if there are none, the last lines of the log. The
     last two traceback frames in the project's own test files (`File "test/x.py", line N`) are
     kept too, so a Python error in a test comes back with its file and line.
     """
+    if netlist is not None:
+        text = text.replace(str(netlist), "the gate-level netlist")
     mapped = [ln.rstrip() for ln in map_log_paths(text, out_dir, name).splitlines() if ln.strip()]
     errors = [i for i, ln in enumerate(mapped) if _ERROR_LINE.search(ln)]
     if not errors:
@@ -199,30 +238,41 @@ def keep_waves(simulator: str, source: Path) -> tuple[str | None, str | None]:
     return f"build/waves/{simulator}/tb{WAVE_EXTENSIONS[fmt]}", None
 
 
-def _prepare_dirs(simulator: str, waves: bool, run_dir: Path) -> tuple[Path, Path]:
+def _prepare_dirs(key: str, waves: bool, run_dir: Path) -> tuple[Path, Path]:
     sim_dir = run_dir / "sim"
     sim_dir.mkdir(parents=True, exist_ok=True)
-    build_dir = _mkdir_nofollow(WORK / "build", "sim", simulator + ("-waves" if waves else ""))
+    build_dir = _mkdir_nofollow(WORK / "build", "sim", key + ("-waves" if waves else ""))
     return sim_dir, build_dir
 
 
 def simulate(
-    name: str, simulator: str, run_dir: Path, test_filter: str | None, waves: bool
+    name: str,
+    simulator: str,
+    run_dir: Path,
+    test_filter: str | None,
+    waves: bool,
+    netlist: Path | None = None,
 ) -> dict[str, Any]:
-    """Build and run the cocotb tests; the result is the `sim` part of the verb's result."""
+    """Build and run the cocotb tests; the result is the `sim` part of the verb's result.
+
+    With `netlist` (a gate-level run, Icarus only) the design is that netlist plus the sky130
+    cell models instead of the emitted RTL, and the build, sim and wave folders are the
+    `icarus-gl` ones.
+    """
     test_dir = WORK / "test"
     out_dir = run_dir / "out"
+    key = GL_KEY if netlist is not None else simulator
     if not (test_dir / "tb.v").is_file():
         return _outcome("no_testbench", message="test/tb.v is missing (create_project writes it)")
     modules = discover_modules(test_dir)
     if not modules:
         return _outcome("no_modules", message="there is no test/test*.py file with tests in it")
     try:
-        sim_dir, build_dir = _prepare_dirs(simulator, waves, run_dir)
+        sim_dir, build_dir = _prepare_dirs(key, waves, run_dir)
     except OSError as exc:
         return _outcome(
             "build_failed",
-            log=[clip(f"build/sim/{simulator} cannot be used: {exc}", LOG_LINE_MAX)],
+            log=[clip(f"build/sim/{key} cannot be used: {exc}", LOG_LINE_MAX)],
             message="the build folder is not a plain folder",
         )
     build_log, test_log = sim_dir / "build.log", sim_dir / "test.log"
@@ -234,7 +284,21 @@ def simulate(
     build_args = ["--timing", "-Wno-fatal"] if simulator == "verilator" else []
     if simulator == "verilator" and waves:
         build_args.append("--trace-fst")
-    sources = [out_dir / "project.v", out_dir / f"{name}.v", test_dir / "tb.v"]
+    defines: dict[str, str] = {}
+    if netlist is None:
+        sources = [out_dir / "project.v", out_dir / f"{name}.v", test_dir / "tb.v"]
+    else:
+        models = [Path(CELL_MODEL_DIR) / model for model in CELL_MODELS]
+        missing = [m.name for m in models if not m.is_file()]
+        if missing:
+            return _outcome(
+                "build_failed",
+                message="the sky130 cell models are missing from the toolchain image",
+                log=[f"missing: {', '.join(missing)}"],
+            )
+        # Tiny Tapeout's order: testbench, cell models, netlist.
+        sources = [test_dir / "tb.v", *models, netlist]
+        defines = dict(GL_DEFINES)
     try:
         runner.build(
             sources=sources,
@@ -242,6 +306,7 @@ def simulate(
             build_dir=build_dir,
             timescale=("1ns", "1ps"),
             build_args=build_args,
+            defines=defines,
             waves=waves,
             always=simulator == "icarus",
             log_file=build_log,
@@ -249,7 +314,7 @@ def simulate(
     except (RuntimeError, SystemExit) as exc:
         return _outcome(
             "build_failed",
-            log=log_lines(_read_text(build_log), out_dir, name),
+            log=log_lines(_read_text(build_log), out_dir, name, netlist),
             message=clip(str(exc), 200),
         )
     exit_code: int | None = 0
@@ -284,7 +349,7 @@ def simulate(
         return _outcome(
             "no_results",
             exit_code=exit_code,
-            log=log_lines(_read_text(test_log), out_dir, name),
+            log=log_lines(_read_text(test_log), out_dir, name, netlist),
             message=clip(f"the simulator wrote no usable results.xml ({why})", 200),
         )
     kept: str | None = None
@@ -294,7 +359,7 @@ def simulate(
         if source is None:
             note = "the simulation wrote no wave file"
         else:
-            kept, note = keep_waves(simulator, source)
+            kept, note = keep_waves(key, source)
     return _outcome(
         "ran",
         tests=records,
@@ -305,15 +370,77 @@ def simulate(
     )
 
 
+def _gl_part(synthesis: dict[str, Any]) -> dict[str, Any]:
+    """The `gl` entry of the result: what was defined, and the synthesis outcome."""
+    return {
+        "defines": dict(GL_DEFINES),
+        "synth": synthesis,
+        "netlist_sha256": synthesis.get("netlist_sha256"),
+        "simulated": False,
+    }
+
+
+def _synthesis_blocks_simulation(synthesis: dict[str, Any]) -> bool:
+    """Synthesis did not give a netlist worth simulating: it stopped, or `synthesize` would fail
+    it for a netlist check or a cell Tiny Tapeout does not allow."""
+    return bool(synthesis["state"] != "ran" or synthesis["checks"] or synthesis["forbidden_cells"])
+
+
+def _run_gl(
+    request: dict[str, Any],
+    result: dict[str, Any],
+    started: float,
+    test_filter: str | None,
+    waves: bool,
+) -> dict[str, Any]:
+    name, frontend, _author, run_dir = emit._check_request(request)
+    deadline = started + max(synth._number(request, "timeout_s") - synth.RESERVE_S, 1.0)
+    synthesis = synth.synthesize(
+        name,
+        frontend,
+        run_dir,
+        synth._number(request, "clock_period_ns"),
+        synth._number(request, "stop_area_um2"),
+        deadline,
+    )
+    if isinstance(synthesis.get("message"), str):
+        synthesis["message"] = clip(synthesis["message"], MESSAGE_MAX)
+    gl = _gl_part(synthesis)
+    result["gl"] = gl
+    if _synthesis_blocks_simulation(synthesis):
+        return result
+    netlist = run_dir / "out" / synth.SYNTH_DIR / f"tt_um_{name}.v"
+    sim = simulate(name, "icarus", run_dir, test_filter, waves, netlist)
+    sim["simulator"] = "icarus"
+    result["sim"] = sim
+    gl["simulated"] = True
+    return result
+
+
 def run(request: dict[str, Any]) -> dict[str, Any]:
-    """The `test` verb. Returns the emit result plus a `sim` entry (None unless emit was ok)."""
-    simulator, test_filter, waves = _check(request)
+    """The `test` verb. Returns the emit result plus a `sim` entry (None unless emit was ok).
+
+    With `gl` the result also has a `gl` entry (None unless emit was ok) holding `defines`, the
+    `synth` outcome (same shape as the `synth` verb's `synth` entry), `netlist_sha256` and
+    `simulated`; `sim` stays None when synthesis stopped the run. A gate-level request carries
+    the `synth` verb's extra fields `clock_period_ns`, `stop_area_um2` and `timeout_s` (the time
+    for the synthesis part).
+    """
+    started = time.monotonic()
+    simulator, test_filter, waves, gl = _check(request)
     name, _frontend, _author, run_dir = emit._check_request(request)
-    clear_waves(simulator)  # whatever happens next, build/waves holds this run's trace or nothing
+    if gl:  # fail on a bad request before anything runs
+        for key in ("clock_period_ns", "stop_area_um2", "timeout_s"):
+            synth._number(request, key)
+    # Whatever happens next, build/waves holds this run's trace or nothing.
+    clear_waves(GL_KEY if gl else simulator)
     result = emit.emit(request)
     result["sim"] = None
+    result["gl"] = None
     if not result.get("ok"):
         return result
+    if gl:
+        return _run_gl(request, result, started, test_filter, waves)
     sim = simulate(name, simulator, run_dir, test_filter, waves)
     sim["simulator"] = simulator
     result["sim"] = sim
