@@ -7,8 +7,8 @@ Run once at image build time, with the image's own Python:
     python gen_sources.py <doc dir> <site-packages dir>
 
 It writes `<doc dir>/SOURCES.txt` and copies the license files that the installed Python
-packages carry into `<doc dir>/licenses/python/`. The Verilator and base image pins come in
-through the environment so the Dockerfile stays the only place that states them.
+packages carry into `<doc dir>/licenses/python/`. The base image pins are read from the
+Dockerfile (copied to /tmp/Dockerfile for this step), the only place that states them.
 """
 
 from __future__ import annotations
@@ -81,10 +81,20 @@ def pip_section() -> list[str]:
     return lines
 
 
-def verilator_section() -> list[str]:
+def base_images() -> dict[str, str]:
+    """Image references in the Dockerfile's FROM lines, keyed by the repository name."""
+    images = {}
+    for line in Path("/tmp/Dockerfile").read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == "FROM":
+            images[parts[1].split(":")[0]] = parts[1]
+    return images
+
+
+def verilator_section(images: dict[str, str]) -> list[str]:
     return [
         "Verilator 5.046 (copied unmodified from the official Docker image):",
-        "  image: " + os.environ.get("VERILATOR_IMAGE", "?"),
+        "  image: " + images.get("verilator/verilator", "?"),
         "  source: https://github.com/verilator/verilator/archive/refs/tags/v5.046.tar.gz",
         "  tag: https://github.com/verilator/verilator/tree/v5.046",
         "  Distributed here under its Artistic-2.0 option.",
@@ -116,12 +126,13 @@ def main() -> int:
     doc = Path(sys.argv[1])
     site = Path(sys.argv[2])
     doc.mkdir(parents=True, exist_ok=True)
+    images = base_images()
     blocks = [
         ["Siliconsmith toolchain image: where the source of everything in it comes from.", ""],
-        ["Base image: " + os.environ.get("UBUNTU_IMAGE", "?"), ""],
+        ["Base image: " + images.get("ubuntu", "?"), ""],
         apt_section(),
         [""],
-        verilator_section(),
+        verilator_section(images),
         [""],
         pip_section(),
         [""],

@@ -1,6 +1,6 @@
 # Third-party licenses
 
-Siliconsmith itself is Apache-2.0. The tools below are **not** part of this repository's source. They are invoked as external processes (or, where the license allows and the plan says so, used as unmodified Python dependencies). None of them may be vendored into this repo. Our toolchain image (published from M0-2) redistributes some of them unmodified; the package tables below and rule 3 cover that.
+Siliconsmith itself is Apache-2.0. The tools below are **not** part of this repository's source. They are invoked as external processes (or, where the license allows and the plan says so, used as unmodified Python dependencies). None of them may be vendored into this repo. Our toolchain image (`docker/Dockerfile`, M0-2) redistributes some of them unmodified; the package tables below and rule 3 cover that.
 
 Licenses were checked on **2026-11-11 (CT)** against each project's official license file or copyright notice, as linked. Items marked *(unverified)* still need a check. This is not legal advice.
 
@@ -34,7 +34,7 @@ Licenses were checked on **2026-11-11 (CT)** against each project's official lic
 
 ## Packages in the toolchain image
 
-These will be redistributed, unmodified, inside `ghcr.io/rfingadam/siliconsmith-toolchain` (published from M0-2). Versions are what the planned pins resolved to on 2026-11-11; `docker/requirements.lock` and the image's `SOURCES.txt` are authoritative once they exist. Tools already in the table above (Icarus, Verilator, cocotb, Amaranth, MyHDL) are not repeated.
+These are redistributed, unmodified, inside `ghcr.io/rfingadam/siliconsmith-toolchain`. Versions are the ones pinned in `docker/requirements.lock` (checked against the built image on 2026-11-11); the image's `SOURCES.txt` is authoritative. The image also contains the license texts of these components under `/usr/share/doc/siliconsmith-toolchain/licenses/` (copied from each installed wheel, plus the files in `docker/licenses/`). Tools already in the table above (Icarus, Verilator, cocotb, Amaranth, MyHDL) are not repeated.
 
 ### Python packages (image venv `/opt/venv`)
 
@@ -59,6 +59,7 @@ These will be redistributed, unmodified, inside `ghcr.io/rfingadam/siliconsmith-
 | click | 8.5.1 | BSD-3-Clause | [LICENSE.txt](https://github.com/pallets/click/blob/main/LICENSE.txt) | Pulled in by yowasp-yosys |
 | platformdirs | 4.14.5 | MIT | [LICENSE](https://github.com/tox-dev/platformdirs/blob/main/LICENSE) | Pulled in by yowasp-runtime |
 | PyYAML | 6.0.3 | MIT | [LICENSE](https://github.com/yaml/pyyaml/blob/main/LICENSE) | Listed in the image pins |
+| pip | 24.0 | MIT | [LICENSE.txt](https://github.com/pypa/pip/blob/24.0/LICENSE.txt) | Installed by `python3 -m venv` (Ubuntu's bundled wheel) and used once at build time to install the hash-locked packages |
 
 ### Ubuntu packages we install directly
 
@@ -74,7 +75,7 @@ Licenses are taken from each package's Debian copyright file (linked). Versions 
 | `python3`, `python3-venv`, `libpython3.12t64` | python3-defaults 3.12.3-0ubuntu2.1; python3.12 3.12.3-1ubuntu0.17 | PSF-2.0 | [python3.12](https://changelogs.ubuntu.com/changelogs/pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.17/copyright), [python3-defaults](https://changelogs.ubuntu.com/changelogs/pool/main/p/python3-defaults/python3-defaults_3.12.3-0ubuntu2.1/copyright) | Python for the worker; cocotb needs `libpython3.12.so` |
 | `zlib1g-dev` | zlib 1:1.3.dfsg-3.1ubuntu2.3 | Zlib | [copyright](https://changelogs.ubuntu.com/changelogs/pool/main/z/zlib/zlib_1.3.dfsg-3.1ubuntu2.3/copyright) | Verilator model builds (FST wave output uses zlib) |
 | `ca-certificates` | ca-certificates 20260816ubuntu0.24.04.2 | MPL-2.0 for the certificate data; GPL-2.0-or-later for the Debian scripts | [copyright](https://changelogs.ubuntu.com/changelogs/pool/main/c/ca-certificates/ca-certificates_20260816ubuntu0.24.04.2/copyright) | Root certificates for HTTPS |
-| `iverilog` | iverilog 12.0-2build2 | GPL-2.0-or-later | see the Icarus Verilog row above | Simulator |
+| `iverilog` | iverilog 12.0-2build2 | GPL-2.0-or-later (a few vpi files under MIT and others, see the Debian copyright file) | [copyright](https://changelogs.ubuntu.com/changelogs/pool/universe/i/iverilog/iverilog_12.0-2build2/copyright) and the Icarus Verilog row above | Simulator |
 
 apt also installs their dependencies (for example libc6-dev, libstdc++-13-dev, libgmp10, libmpfr6, libmpc3), and the `ubuntu:24.04` base contains GPL tools such as bash and coreutils. All of them are listed with source package and version in `SOURCES.txt` and covered by rule 3.
 

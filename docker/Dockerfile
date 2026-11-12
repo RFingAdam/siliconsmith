@@ -4,17 +4,12 @@
 # Siliconsmith toolchain image, simulation stage (M0). linux/amd64 only.
 # The build context is docker/ and nothing else: the image tag is a hash of this folder.
 
-# Both base images are pinned by digest. Dependabot bumps them (see .github/dependabot.yml).
+# Both base images are pinned by digest, and Dependabot bumps them (.github/dependabot.yml).
 # Verilator v5.046 comes from the official image because Ubuntu 24.04's apt Verilator (5.020) is
 # older than the 5.036 that cocotb 2.1 needs. We copy its files; we never run that image.
-ARG VERILATOR_IMAGE=verilator/verilator:v5.046@sha256:8003e282e9ff02eb446083eb5a3c512225a269f0a7b46a7e392c99468e890018
-ARG UBUNTU_IMAGE=ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
+FROM verilator/verilator:v5.046@sha256:8003e282e9ff02eb446083eb5a3c512225a269f0a7b46a7e392c99468e890018 AS verilator
 
-FROM ${VERILATOR_IMAGE} AS verilator
-
-FROM ${UBUNTU_IMAGE}
-ARG VERILATOR_IMAGE
-ARG UBUNTU_IMAGE
+FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
 
 # Ubuntu archive snapshot to install from. `apt-get update --snapshot` talks https to
 # snapshot.ubuntu.com, and the base image has no root certificates, so ca-certificates is
@@ -67,13 +62,13 @@ RUN mkdir -p /opt/siliconsmith-cache /tmp/warm-home \
  && rm -rf /tmp/warm-home
 
 # Source and license information for everything above (see OFFER.txt for the written offer).
-COPY gen_sources.py /tmp/gen_sources.py
+COPY gen_sources.py Dockerfile /tmp/
 COPY licenses /usr/share/doc/siliconsmith-toolchain/licenses
 COPY THIRD_PARTY_LICENSES.md OFFER.txt /usr/share/doc/siliconsmith-toolchain/
-RUN APT_SNAPSHOT="${APT_SNAPSHOT}" VERILATOR_IMAGE="${VERILATOR_IMAGE}" UBUNTU_IMAGE="${UBUNTU_IMAGE}" \
+RUN APT_SNAPSHOT="${APT_SNAPSHOT}" \
     /opt/venv/bin/python /tmp/gen_sources.py /usr/share/doc/siliconsmith-toolchain \
       /opt/venv/lib/python3.12/site-packages \
- && rm /tmp/gen_sources.py \
+ && rm /tmp/gen_sources.py /tmp/Dockerfile \
  && chmod -R a+rX /usr/share/doc/siliconsmith-toolchain
 
 LABEL org.opencontainers.image.source="https://github.com/RFingAdam/siliconsmith" \
