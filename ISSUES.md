@@ -19,9 +19,9 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - Replace the CI placeholder with the `ci.yml` `lint` and `unit` jobs (PLAN.md section 14); Dependabot for GitHub Actions.
 - Update `PLAN.md`, `ISSUES.md`, `CLAUDE.md` and `THIRD_PARTY_LICENSES.md` to the M0 design (container runner, pins, validation sequence, licensing), file the new issues and edit the changed ones on GitHub.
 **Acceptance criteria**
-- [ ] `pip install -e .[amaranth,myhdl]` works on a clean Ubuntu 24.04 runner. *Proof:* `lint` job, pip-compat step.
-- [ ] CI is green, and `reuse lint` passes. *Proof:* all `ci.yml` jobs; the pinned `reuse lint` step.
-- [ ] The repo contains no third-party tool source or binaries. *Proof:* `lint` job, no-binaries step.
+- [x] `pip install -e .[amaranth,myhdl]` works on a clean Ubuntu 24.04 runner. *Proof:* `lint` job, pip-compat step.
+- [x] CI is green, and `reuse lint` passes. *Proof:* all `ci.yml` jobs; the pinned `reuse lint` step.
+- [x] The repo contains no third-party tool source or binaries. *Proof:* `lint` job, no-binaries step.
 
 ## [M0-2] Toolchain Docker image (simulation stage)
 **Labels:** `track:digital` `milestone:M0` `docker`
@@ -47,8 +47,8 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - README config snippets: Claude Code (`.mcp.json` and `claude mcp add`), Cursor (`${workspaceFolder}`), Codex (`tool_timeout_sec`).
 **Acceptance criteria**
 - [ ] `create_project(frontend=amaranth|myhdl|verilog)` creates a project with a TT-compatible `tt_um_<name>` wrapper (ports: `ui_in[7:0]`, `uo_out[7:0]`, `uio_in/uio_out/uio_oe[7:0]`, `ena`, `clk`, `rst_n`) and a cocotb test stub. *Proof:* `test_scaffold[fe]` (ports compared with the TT template snapshot) and an integration test that checks the ports with Yosys.
-- [ ] Path traversal attempts are rejected. *Proof:* `test_paths_*` (`..`, absolute paths, symlinks, NUL bytes, writes outside the allow-list).
-- [ ] README has working config snippets for Claude Code and Cursor. *Proof:* `test_readme_snippets` (launches the exact command over stdio and lists the tools; checks the Cursor JSON against its schema).
+- [x] Path traversal attempts are rejected. *Proof:* `test_paths_*` (`..`, absolute paths, symlinks, NUL bytes, writes outside the allow-list).
+- [x] README has working config snippets for Claude Code and Cursor. *Proof:* `test_readme_snippets` (launches the exact command over stdio and lists the tools; checks the Cursor JSON against its schema).
 
 ## [M0-4] Front-end interface: Amaranth, MyHDL, Verilog passthrough
 **Labels:** `track:digital` `milestone:M0` `frontend`
