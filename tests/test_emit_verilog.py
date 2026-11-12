@@ -389,6 +389,8 @@ def test_over_long_worker_text_is_clipped_not_unreadable() -> None:
                 "col": 1,
                 "msg": "m" * 5000,
                 "detail": "d" * 5000,
+                "hdl_file": "h" * 999,
+                "hdl_function": "f" * 250,
             }
         ],
         "python_error": {

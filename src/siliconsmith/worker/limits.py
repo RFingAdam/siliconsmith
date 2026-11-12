@@ -47,6 +47,8 @@ def clamp_result(result: dict[str, Any]) -> dict[str, Any]:
                 "file": FILE_MAX,
                 "msg": FINDING_MSG_MAX,
                 "detail": FINDING_DETAIL_MAX,
+                "hdl_file": FILE_MAX,
+                "hdl_function": SYNTH_SIGNAL_MAX,
             },
         )
     error = result.get("python_error")

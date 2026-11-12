@@ -39,7 +39,7 @@ from siliconsmith.paths import (
 from siliconsmith.project import Project
 from siliconsmith.result import Artifact, ToolResult
 from siliconsmith.runners.base import WorkerOutcome
-from siliconsmith.runners.docker import ToolchainError, remove_run_dirs
+from siliconsmith.runners.docker import ToolchainError, remove_in_build, remove_run_dirs
 from siliconsmith.spec import Spec
 from siliconsmith.tools._common import get_project
 from siliconsmith.tools.emit_verilog import (
@@ -60,7 +60,8 @@ from siliconsmith.utilization import (
 from siliconsmith.worker import limits as lim
 
 # The whole container call (emit, then Yosys). The measured counter takes seconds, a 23,520-cell
-# design 400 s (PLAN.md section 6), and designs far over the tile's budget are stopped early.
+# design about 111 s with this script (PLAN.md section 6); designs far over the tile's budget
+# are stopped early.
 SYNTH_TIMEOUT_S = 900.0
 MAX_NETLIST_BYTES = 16 * 1024 * 1024
 MAX_STAT_BYTES = 4 * 1024 * 1024
@@ -189,8 +190,9 @@ def _too_big_hints(tiles: str) -> list[str]:
         "Make the design smaller: fewer bits, no wide multipliers or big arrays, share one "
         "piece of logic over several clock cycles. Then call synthesize again.",
         f"If the design really needs more room, ask the owner about a bigger tile than {tiles}: "
-        "bigger tiles cost more money, so the owner decides. In a headless run, write the "
-        "assumption to open_questions in spec.yaml instead of changing tiles.",
+        "bigger tiles cost more money, so the owner decides. In a headless run, never "
+        "change tiles yourself: keep the current tile and write the assumption to open_questions "
+        "with write_spec.",
     ]
 
 
@@ -472,6 +474,8 @@ def synthesize(ctx: ServerContext, project_name: str) -> ToolResult:
 def _synthesize_locked(
     ctx: ServerContext, project: Project, frontend: Frontend, spec: Spec, config: TTConfig
 ) -> ToolResult:
+    # build/synth only ever holds the netlist of the latest run that wrote one.
+    remove_in_build(project.dir / "build", "synth")
     author = read_author(project)
     early = precheck(project, frontend)
     if early is not None:
@@ -498,9 +502,11 @@ DESCRIPTION = """\
 Turn the design into real chip gates and say how big it is. Synthesis is the step where a \
 program (Yosys) replaces your RTL with the small ready-made logic gates and flip-flops of the \
 sky130 chip library, the same way Tiny Tapeout's own flow does. The tool first runs the same \
-checks as emit_verilog (a lint problem stops it, with file and line), then synthesizes at the \
-clock speed in spec.yaml. The summary gives the number of cells (flip-flops, which store bits, \
-and logic gates), the total cell area in um^2, the most used cell types, and the estimated \
+checks as emit_verilog (a lint problem stops it, with file and line), then synthesizes with \
+the clock from spec.yaml recorded as Tiny Tapeout does (this recipe optimizes for small area, \
+so the clock does not change the gates; timing is checked at layout). The summary gives the \
+number of cells (flip-flops, which store bits, and logic gates), the total cell area in \
+um^2, the most used cell types, and the estimated \
 utilization: how much of your tile's usable area the cells would fill. Utilization is an \
 ESTIMATE; real placement (layout, milestone M2) gives the real number, and it needs headroom \
 (above 90% is risky, above 100% will not fit). The tile size comes from `tiles` in spec.yaml \
@@ -510,7 +516,8 @@ owner decides). ok is false for a lint or Yosys error, a combinational loop, a s
 twice, an undriven output, a cell that Tiny Tapeout does not allow, a design that is too big, \
 or a time-out (900 s). A latch you wrote on purpose (always_latch) is reported as a warning \
 with file and line. A clock above 66 MHz also warns: Tiny Tapeout's pins cannot go that fast. \
-The netlist is saved in build/synth/. Usually takes seconds to a minute.
+The netlist is saved in build/synth/ (a convenience copy of the latest run that wrote one; the \
+ledger's netlist_sha256 records what was synthesized). Usually takes seconds to a minute.
 """
 
 

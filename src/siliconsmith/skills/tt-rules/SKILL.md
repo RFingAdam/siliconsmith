@@ -32,13 +32,13 @@ You write the core: a module named after the project, with a subset of the pins 
 
 Put the clock in `spec.yaml` as `clock_hz`; it is the only place the clock is written. The Tiny Tapeout IO limit is about 66 MHz (see https://tinytapeout.com/specs/clock/). A design clocked above that cannot be driven through the pins, even if the logic could run faster. 
 
-`synthesize` warns when `clock_hz` is above 66 MHz and passes the clock to the synthesis tool, which tries to build logic fast enough for it. Simulation does not check timing, and neither does synthesis; real timing checks come with layout in a later milestone.
+`synthesize` warns when `clock_hz` is above 66 MHz and records the clock period in the synthesis settings, as Tiny Tapeout's flow does. This synthesis strategy optimizes for area, so the clock does not change the gates. Simulation does not check timing, and neither does synthesis; real timing checks come with layout in a later milestone.
 
 ## Size
 
 A 1x1 tile is 161.00 x 111.52 um, roughly a thousand gates of logic in the standard cell library. Small counters, state machines and shift registers fit easily. Bigger tiles cost the owner more money.
 
-The size is `tiles` in `spec.yaml` (default `"1x1"`; a wrong value lists the allowed ones). Never choose a bigger tile on your own: ask the owner, or in a headless run keep the tile you need and write the assumption to `open_questions`.
+The size is `tiles` in `spec.yaml` (default `"1x1"`; a wrong value lists the allowed ones). Never change `tiles` yourself: ask the owner, or in a headless run keep the current tile and write the assumption to `open_questions` (for example "needs a bigger tile than 1x1; owner to decide").
 
 The tools copy `clock_hz` and `tiles` into `src/config.json` and `info.yaml` for you; you cannot edit those two files.
 

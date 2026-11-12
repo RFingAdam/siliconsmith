@@ -204,20 +204,30 @@ def remove_run_dirs(build: Path) -> None:
     here goes through file descriptors: `build` is opened with O_NOFOLLOW, a `.ss` that is not a
     real directory is only unlinked, and `rmtree` on a descriptor never follows links.
     """
+    remove_in_build(build, ".ss")
+
+
+def remove_in_build(build: Path, name: str) -> None:
+    """Delete `build/<name>` (a file, a folder or a symlink) without following any symlink.
+
+    Container code can replace the entry, or anything inside it, with a symlink. Everything here
+    goes through file descriptors: `build` is opened with O_NOFOLLOW, an entry that is not a real
+    directory is only unlinked, and `rmtree` on a descriptor never follows links.
+    """
     try:
         fd = os.open(build, _DIR_FLAGS)
     except OSError:
         return
     try:
         try:
-            mode = os.lstat(".ss", dir_fd=fd).st_mode
+            mode = os.lstat(name, dir_fd=fd).st_mode
         except OSError:
             return
         with contextlib.suppress(OSError):
             if stat.S_ISDIR(mode):
-                shutil.rmtree(".ss", ignore_errors=True, dir_fd=fd)
+                shutil.rmtree(name, ignore_errors=True, dir_fd=fd)
             else:
-                os.unlink(".ss", dir_fd=fd)
+                os.unlink(name, dir_fd=fd)
     finally:
         os.close(fd)
 

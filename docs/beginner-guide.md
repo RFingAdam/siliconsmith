@@ -45,7 +45,7 @@ The `synthesize` tool does this with Yosys, using the same recipe as Tiny Tapeou
 - **Area** in um2: the sum of the parts' areas.
 - **Utilization**: how full your tile would be, about the cell area divided by the area the placer may fill. A 1x1 tile holds about 9,900 um2 of cells. Under 90% is comfortable. It is an **estimate**: the real number comes from layout, in a later milestone.
 - **Warnings and problems**: an accidental **latch** or a **combinational loop** is reported with the file and line (for MyHDL, with your `hdl/` function too). A latch you wrote on purpose is allowed and shown as a warning. Cells that Tiny Tapeout's flow does not allow (**do-not-use cells**) are rejected.
-- **Too big**: if the design is far larger than the tile, the tool says so quickly, without doing the slow part. Make the design smaller, or ask the owner (you) whether a bigger tile is worth the money. The agent will not change the tile on its own.
+- **Too big**: if the design is far larger than the tile, the tool says so quickly, without doing the slow part. Make the design smaller, or ask the owner (you) whether a bigger tile is worth the money. The agent never changes the tile itself.
 
 Clocks above about 66 MHz get a warning, because Tiny Tapeout's pins cannot move data that fast. Synthesis does not check timing; that comes with layout.
 

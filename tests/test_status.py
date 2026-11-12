@@ -32,6 +32,7 @@ from siliconsmith.scaffold import create_project
 from siliconsmith.server import build_server
 from siliconsmith.status import DIGITAL_STEPS, compute_status, refresh_status
 from siliconsmith.tools.status import build_result
+from siliconsmith.tt_sync import sync_spec_files
 
 IMAGE = "example/toolchain:ctx-aaaa"
 SPEC = """\
@@ -51,6 +52,7 @@ STEP_KEYS = [s.key for s in DIGITAL_STEPS]
 def make_project(tmp_path: Path, frontend: str = "amaranth") -> Project:
     project, _ = create_project(tmp_path, "chip", frontend, "Ada Lovelace", "A chip.")
     (project.dir / "spec.yaml").write_text(SPEC)
+    assert sync_spec_files(project).ok  # as write_spec does after a valid save
     return project
 
 
@@ -250,6 +252,24 @@ def test_synthesis_stale_matrix(
     assert stale_set(project) == set()
     change(project)
     assert stale_set(project) == expected
+
+
+def test_hand_edited_clock_or_tiles_make_synthesis_stale(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    add_synth(project)
+    assert states(project)["synthesis"] == "pass"
+    spec = project.dir / "spec.yaml"
+    original = spec.read_text()
+    spec.write_text(original + "tiles: 2x2\n")
+    assert states(project)["synthesis"] == "stale"
+    spec.write_text(original)
+    assert states(project)["synthesis"] == "pass"
+    assert sync_spec_files(project).ok
+    add_synth(project)
+    spec.write_text(original.replace("clock_hz: 10000000", "clock_hz: 50000000"))
+    got = {s.key: s for s in compute_status(project, IMAGE).steps}
+    assert got["synthesis"].state == "stale"
+    assert "call synthesize" in got["synthesis"].evidence
 
 
 def test_synthesis_image_makes_it_stale(tmp_path: Path) -> None:

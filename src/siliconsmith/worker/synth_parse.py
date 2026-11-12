@@ -196,7 +196,8 @@ def parse_checks(texts: list[str], name: str, core_text: str = "") -> list[dict[
             kind = KINDS.get(str(item["code"]))
             if kind is None:
                 continue  # "ERROR: Found N problems" with no warning to explain it
-            signal = plain_signal(str(item.get("signal", "")))
+            # For a loop, lint reports the module name, which is not a signal.
+            signal = "" if kind == "comb_loop" else plain_signal(str(item.get("signal", "")))
             file = (
                 project_file(item["source_file"], name)
                 if item.get("source_file")

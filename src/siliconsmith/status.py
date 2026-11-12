@@ -34,6 +34,7 @@ from siliconsmith.ledger import (
 from siliconsmith.paths import atomic_write, project_lock
 from siliconsmith.project import Project
 from siliconsmith.spec import Spec, read_spec
+from siliconsmith.tt_sync import files_match_spec
 
 DOC_REL = "docs/verification.md"
 SIMULATORS = ("icarus", "verilator")
@@ -70,7 +71,8 @@ DIGITAL_STEPS: tuple[Step, ...] = (
     Step(
         "synthesis",
         "Synthesis",
-        "The design turns into real chip gates (sky130 cells) with no latch or wiring problems",
+        "The design turns into real chip gates (sky130 cells) with no accidental latch or wiring "
+        "problem",
     ),
     Step(
         "gate_sim",
@@ -279,6 +281,8 @@ def _synthesis(f: _Facts) -> tuple[State, str, str | None]:
     when = _when(run.at)
     if run.digests.synth is None or run.digests.synth != f.digests.synth:
         return "stale", "Design, src/config.json or info.yaml changed since synthesize", when
+    if f.spec is not None and not files_match_spec(f.project, f.spec):
+        return "stale", "spec.yaml clock or tiles changed; call synthesize", when
     if not run.ok:
         what = {
             "timeout": "ran out of time",

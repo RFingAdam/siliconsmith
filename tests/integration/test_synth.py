@@ -214,6 +214,9 @@ async def test_synth_explicit_latch_maps_to_a_latch_cell_and_warns(
 async def test_synth_oversize_design_stops_before_abc(server: Client, tmp_path: Path) -> None:
     async with server as client:
         project = await counter_project(client, tmp_path, "verilog")
+        first = await call(client, "synthesize", project="counter")
+        assert first["ok"] is True
+        assert (project / "build" / "synth" / "tt_um_counter.v").exists()
         put_core(project, "verilog", (SYNTH / "oversize.v").read_text())
         started = time.monotonic()
         result = await call(client, "synthesize", project="counter")
@@ -228,6 +231,7 @@ async def test_synth_oversize_design_stops_before_abc(server: Client, tmp_path: 
         assert details["utilization"]["verdict"] == "too_big"
         assert any("bigger tile" in h and "owner" in h for h in result["next_hints"])
         assert any("smaller" in h for h in result["next_hints"])
-        assert not (project / "build" / "synth").exists()  # no netlist: abc never ran
+        # no netlist: abc never ran, and the earlier counter netlist is gone, not left behind
+        assert not (project / "build" / "synth").exists()
         states = step_states(await call(client, "status", project="counter"))
         assert states["synthesis"] == "fail"

@@ -146,6 +146,7 @@ def test_combinational_loop_has_a_source_line() -> None:
     assert loop["kind"] == "comb_loop"
     assert loop["file"] == "src/counter.v"
     assert loop["line"] in (10, 11)  # the two assigns that feed each other
+    assert loop["signal"] == ""  # lint names the module here, which is not a signal
     assert "loop" in str(loop["message"])
 
 
@@ -171,8 +172,10 @@ def test_undriven_net_is_found_in_the_core_text() -> None:
 
 
 def test_undriven_output_is_named() -> None:
-    (found,) = checks("undrv_out_pre_synth_chk.txt")
+    (found,) = checks("undrv_out_pre_synth_chk.txt", core=text("undriven.v"))
     assert (found["kind"], found["signal"]) == ("undriven", "uo_out")
+    assert found["file"] == "src/counter.v"
+    assert found["line"] == 6  # the `output wire [7:0] uo_out` port declaration
 
 
 def test_clean_report_has_no_problems() -> None:

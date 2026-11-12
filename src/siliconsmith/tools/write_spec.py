@@ -42,9 +42,9 @@ Format (version 1; unknown keys are rejected):
     - "Assumed 10 MHz; please confirm."
 
 Tiles are the chip area rented on Tiny Tapeout, and bigger tiles cost the owner money: keep \
-"1x1" unless the design cannot fit, and ask the owner before choosing a bigger one (in a \
-headless run with nobody to ask, keep the tile you need but write the assumption to \
-open_questions). A bad tiles value lists the allowed ones.
+"1x1" unless the design cannot fit. Never change tiles yourself: ask the owner, or in a \
+headless run with nobody to ask, keep the current tile and write the assumption to \
+open_questions. A bad tiles value lists the allowed ones.
 
 After a valid save the tool copies the clock and tiles into src/config.json and info.yaml for \
 you (you cannot edit those files); a clock above 66 MHz is saved with a warning.

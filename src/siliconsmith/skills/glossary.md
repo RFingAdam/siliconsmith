@@ -72,7 +72,7 @@ Turning RTL into a netlist of standard cells (a gate-level circuit). It is the s
 
 ## Netlist
 
-A list of gates and the wires between them, the output of synthesis. Like a schematic as a text file. `synthesize` saves it in `build/synth/`.
+A list of gates and the wires between them, the output of synthesis. Like a schematic as a text file. `synthesize` saves it in `build/synth/` (the copy from the latest run that produced one).
 
 ## Gate-level simulation
 

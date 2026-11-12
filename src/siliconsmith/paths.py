@@ -366,7 +366,11 @@ def classify_write(name: str, frontend: str, rel: str) -> Category:
     if rel == "siliconsmith.toml":
         raise _never(rel, "it records the project name and front end and is written once")
     if rel == "info.yaml":
-        raise _never(rel, "it is written by create_project; Tiny Tapeout metadata is not editable")
+        raise _never(
+            rel,
+            "it is written by create_project; its clock_hz, tiles and pinout come from spec.yaml "
+            "via write_spec",
+        )
     if rel == "src/project.v":
         raise _never(rel, f"it is the generated tt_um_{name} wrapper, owned by Siliconsmith")
     # Casefolded and prefix-wide: a case-insensitive disk or a folder of that name would shadow it.

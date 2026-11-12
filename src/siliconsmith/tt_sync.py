@@ -157,6 +157,26 @@ def sync_spec_files(project: Project) -> SyncResult:
     return result
 
 
+def files_match_spec(project: Project, spec: Spec) -> bool:
+    """True when src/config.json and info.yaml already carry the spec's clock and tiles.
+
+    Read-only, for `status`. A file that cannot be read or patched counts as matching: the synth
+    digest already covers its content, and the next synthesize reports the real problem.
+    """
+    patches: list[tuple[str, Callable[[str], str]]] = [
+        (CONFIG_REL, lambda text: patch_config_json(text, spec.clock_hz)),
+        (INFO_REL, lambda text: patch_info_yaml(text, spec)),
+    ]
+    for rel, patch in patches:
+        try:
+            text = _read_text(project.dir, rel)
+            if patch(text) != text:
+                return False
+        except (SyncError, ToolError):
+            return True
+    return True
+
+
 def sync_for_synthesis(project: Project) -> Spec:
     """Sync, then return the valid spec; raise a `ToolError` an agent can act on if it cannot.
 
