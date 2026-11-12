@@ -59,10 +59,36 @@ def _reap_processes() -> None:
     does not signal the caller. Only done inside the container: on a developer machine this
     would kill the user's own processes.
     """
-    if not Path("/.dockerenv").exists() or Path("/work") != WORK:
+    if not in_sandbox():
         return
     with contextlib.suppress(OSError):
         os.kill(-1, signal.SIGKILL)
+
+
+def _read_text(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return handle.read(1 << 20)
+    except OSError:
+        return ""
+
+
+def in_sandbox(proc: str = "/proc") -> bool:
+    """True only inside the Siliconsmith container, never on a developer machine.
+
+    All of these must hold: `/work` is the work folder, PID 1 is Docker's `--init` process
+    (`docker-init`, which is tini), and the root filesystem is mounted read-only (`--read-only`).
+    A developer shell or a dev container fails at least one of them.
+    """
+    if Path("/work") != WORK:
+        return False
+    if _read_text(f"{proc}/1/comm").strip() not in {"docker-init", "tini"}:
+        return False
+    for line in _read_text(f"{proc}/self/mounts").splitlines():
+        fields = line.split()
+        if len(fields) >= 4 and fields[1] == "/":
+            return "ro" in fields[3].split(",")
+    return False
 
 
 def _elaborate(name: str, frontend: str, run_dir: Path) -> tuple[str | None, dict[str, Any] | None]:

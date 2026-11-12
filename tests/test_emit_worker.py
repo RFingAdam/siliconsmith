@@ -201,3 +201,35 @@ def test_reaping_is_off_outside_the_container(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(worker_emit, "WORK", Path("/nonexistent-work"))
     worker_emit._reap_processes()
     assert not called
+
+
+def test_sandbox_guard_is_false_on_this_machine() -> None:
+    # The test suite runs on the host (or a dev container), never under docker-init with a
+    # read-only root, so the reaper must stay off.
+    assert not worker_emit.in_sandbox()
+
+
+def _fake_proc(tmp_path: Path, comm: str, root_opts: str) -> str:
+    proc = tmp_path / "proc"
+    (proc / "1").mkdir(parents=True)
+    (proc / "self").mkdir()
+    (proc / "1" / "comm").write_text(comm + "\n")
+    (proc / "self" / "mounts").write_text(
+        f"overlay / overlay {root_opts},relatime 0 0\nproc /proc proc rw 0 0\n"
+    )
+    return str(proc)
+
+
+@pytest.mark.parametrize(
+    ("comm", "root_opts", "expected"),
+    [
+        ("docker-init", "ro", True),
+        ("docker-init", "rw", False),
+        ("systemd", "ro", False),
+        ("bash", "rw", False),
+    ],
+)
+def test_sandbox_guard_needs_init_and_readonly_root(
+    tmp_path: Path, comm: str, root_opts: str, expected: bool
+) -> None:
+    assert worker_emit.in_sandbox(_fake_proc(tmp_path, comm, root_opts)) is expected
