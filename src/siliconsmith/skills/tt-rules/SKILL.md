@@ -30,7 +30,9 @@ You write the core: a module named after the project, with a subset of the pins 
 
 ## Clock and speed
 
-Put the clock in `spec.yaml` as `clock_hz`; it is the only place the clock is written. The Tiny Tapeout IO limit is about 66 MHz (see https://tinytapeout.com/specs/clock/). A design clocked above that cannot be driven through the pins, even if the logic could run faster. Simulation does not check timing; timing checks come in a later milestone.
+Put the clock in `spec.yaml` as `clock_hz`; it is the only place the clock is written. The Tiny Tapeout IO limit is about 66 MHz (see https://tinytapeout.com/specs/clock/). A design clocked above that cannot be driven through the pins, even if the logic could run faster. 
+
+`synthesize` warns when `clock_hz` is above 66 MHz and passes the clock to the synthesis tool, which tries to build logic fast enough for it. Simulation does not check timing, and neither does synthesis; real timing checks come with layout in a later milestone.
 
 ## Size
 
@@ -39,6 +41,18 @@ A 1x1 tile is 161.00 x 111.52 um, roughly a thousand gates of logic in the stand
 The size is `tiles` in `spec.yaml` (default `"1x1"`; a wrong value lists the allowed ones). Never choose a bigger tile on your own: ask the owner, or in a headless run keep the tile you need and write the assumption to `open_questions`.
 
 The tools copy `clock_hz` and `tiles` into `src/config.json` and `info.yaml` for you; you cannot edit those two files.
+
+## Utilization
+
+Utilization says how full the tile would be.
+
+`synthesize` computes it as the total area of the synthesized cells divided by the area the placer is allowed to fill: the tile's usable area (the die minus Tiny Tapeout's edge margins) times the target density of 60% from `src/config.json`. For a 1x1 tile that is about 9,900 um2 of cells. It is an ESTIMATE: real placement (layout, a later milestone) gives the real number. Above 90% the tool warns; above 100% the design will not fit and `synthesize` reports it as too big.
+
+## Cells that are not allowed
+
+Tiny Tapeout's flow keeps some sky130 cells out of designs: cells that fail the factory's drawing rules, ones with awkward pins, clock buffers and delay cells the layout tool inserts itself, and the low-power (`lpflow_`) cells.
+
+`synthesize` gives the synthesis tool the same do-not-use lists and fails if one of those cells shows up in the netlist. You do not choose cells yourself; if one is reported, change the logic that needs it.
 
 ## Style rules that keep the design buildable
 

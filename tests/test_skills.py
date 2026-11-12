@@ -37,6 +37,8 @@ GLOSSARY_TERMS = (
     "Netlist",
     "Gate-level simulation",
     "Standard cell",
+    "Utilization",
+    "Do-not-use cell",
     "PDK",
     "sky130",
     "Place and route",
