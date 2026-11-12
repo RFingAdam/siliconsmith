@@ -9,7 +9,7 @@
 # older than the 5.036 that cocotb 2.1 needs. We copy its files; we never run that image.
 FROM verilator/verilator:v5.046@sha256:8003e282e9ff02eb446083eb5a3c512225a269f0a7b46a7e392c99468e890018 AS verilator
 
-FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
+FROM ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092
 
 # Ubuntu archive snapshot to install from. `apt-get update --snapshot` talks https to
 # snapshot.ubuntu.com, and the base image has no root certificates, so ca-certificates is
