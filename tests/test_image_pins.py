@@ -59,7 +59,7 @@ def test_lock_pins_match_the_plan() -> None:
     text = (REPO_ROOT / "docker" / "requirements.lock").read_text().lower()
     for pin in (
         "cocotb==2.1.0",
-        "pytest==8.4.2",
+        "pytest==9.2.0",
         "amaranth==0.5.10",
         "amaranth-yosys==",
         "myhdl==0.11.52",

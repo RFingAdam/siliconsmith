@@ -124,11 +124,11 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - Native Yosys decision: keep the M0 `yowasp-yosys` 0.62 (same version as LibreLane 3.0.14) for M1, recorded with measured times in PLAN.md section 6.
 - `run_tests` gets the `gl` option; the status table gets its three M1 rows (Synthesis, Gate-level simulation, Equivalence), still `not_available`.
 **Acceptance criteria**
-- [ ] The image holds the pinned sky130 files, and the build verifies the tarball sha256. *Proof:* Dockerfile `sha256sum -c`; integration test `test_pdk_files_present`.
-- [ ] `toolchain_info.pdk` is `{name: sky130A, open_pdks: 8afc8346…, libraries: [sky130_fd_sc_hd], corner: tt_025C_1v80}`. *Proof:* integration test `test_toolchain_info_pdk`.
-- [ ] `tt.lock` records the shuttle tag, the tt-support-tools commit, the LibreLane version and digest, and the sky130 hash per step, and the Dockerfile ARG equals `tt.lock`. *Proof:* unit test `test_tt_lock_matches_dockerfile`.
-- [ ] The native-Yosys decision is recorded with reasons. *Proof:* PLAN.md section 6 text in the PR.
-- [ ] `run_tests(gl=true)` with `simulator='verilator'` raises a ToolError saying gate-level simulation runs on Icarus only. *Proof:* unit test.
+- [x] The image holds the pinned sky130 files, and the build verifies the tarball sha256. *Proof:* Dockerfile `sha256sum -c`; integration test `test_pdk_files_present`.
+- [x] `toolchain_info.pdk` is `{name: sky130A, open_pdks: 8afc8346…, libraries: [sky130_fd_sc_hd], corner: tt_025C_1v80}`. *Proof:* integration test `test_toolchain_info_pdk`.
+- [x] `tt.lock` records the shuttle tag, the tt-support-tools commit, the LibreLane version and digest, and the sky130 hash per step, and the Dockerfile ARG equals `tt.lock`. *Proof:* unit test `test_tt_lock_matches_dockerfile`.
+- [x] The native-Yosys decision is recorded with reasons. *Proof:* PLAN.md section 6 text in the PR.
+- [x] `run_tests(gl=true)` with `simulator='verilator'` raises a ToolError saying gate-level simulation runs on Icarus only. *Proof:* unit test.
 
 ## [M1-1] `synthesize` tool on sky130
 **Labels:** `track:digital` `milestone:M1` `synth`
