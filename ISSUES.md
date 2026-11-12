@@ -33,9 +33,9 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - `image.yml` workflow and the `ci.yml` `integration` job (image tag `ctx-<h>`, pull or build, smoke test first, tests run as non-root with the exact runner arguments). The first push to `ghcr.io/rfingadam/siliconsmith-toolchain` comes from `image.yml`.
 - Image size line in the README.
 **Acceptance criteria**
-- [ ] `docker run --rm <image> sh -c 'iverilog -V && verilator --version && yosys -V'` succeeds in CI. *Proof:* `integration` smoke step and the `image.yml` smoke step.
-- [ ] `toolchain_info` returns JSON with every tool's version and the image id and digest. *Proof:* `test_toolchain_info_keys` (all values non-null, except `repo_digest` for a local build).
-- [ ] Image size is recorded in the README. *Proof:* the README line names the current `ctx-<h>` tag; `test_readme_image_tag_current`.
+- [x] `docker run --rm <image> sh -c 'iverilog -V && verilator --version && yosys -V'` succeeds in CI. *Proof:* `integration` smoke step and the `image.yml` smoke step.
+- [x] `toolchain_info` returns JSON with every tool's version and the image id and digest. *Proof:* `test_toolchain_info_keys` (all values non-null, except `repo_digest` for a local build).
+- [x] Image size is recorded in the README. *Proof:* the README line names the current `ctx-<h>` tag; `test_readme_image_tag_current`.
 
 ## [M0-3] MCP server core + project model
 **Labels:** `track:digital` `milestone:M0` `mcp`
@@ -93,9 +93,9 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 - `write_spec` MCP tool; `create_project` writes a valid stub.
 - `Covers:` parser: reads requirement ids from test docstrings with `ast`, without running the test file.
 **Acceptance criteria**
-- [ ] `write_spec` rejects a missing `clock_hz`, bad requirement ids, an out-of-range pin index, and unknown keys, each with the field path, in ≤20 lines. *Proof:* one unit test per case.
-- [ ] `spec.yaml` is the only source of `clock_hz`, pins and requirements, and `create_project` writes a valid stub. *Proof:* unit tests.
-- [ ] `Covers:` tags are parsed without executing the test file; an unknown R-id gives a warning; a skipped test does not count as coverage; `limit` round-trips. *Proof:* unit tests (the fixture test file raises an error if it is ever imported).
+- [x] `write_spec` rejects a missing `clock_hz`, bad requirement ids, an out-of-range pin index, and unknown keys, each with the field path, in ≤20 lines. *Proof:* one unit test per case.
+- [x] `spec.yaml` is the only source of `clock_hz`, pins and requirements, and `create_project` writes a valid stub. *Proof:* unit tests.
+- [x] `Covers:` tags are parsed without executing the test file; an unknown R-id gives a warning; a skipped test does not count as coverage; `limit` round-trips. *Proof:* unit tests (the fixture test file raises an error if it is ever imported).
 
 ## [M0-8] Validation ledger + status
 **Labels:** `track:digital` `milestone:M0` `mcp`
