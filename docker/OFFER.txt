@@ -15,7 +15,7 @@ https://github.com/RFingAdam/siliconsmith/issues, and name the image tag or dige
 provide the source for a charge no more than the cost of physically performing the distribution.
 
 This offer is valid for three years from the date the image was published, and for as long as we
-distribute spare parts or customer support for that image, whichever is longer. Anyone who has a
-copy of the image may use this offer.
+distribute spare parts or customer support for that image, whichever is longer. This offer is open to
+any third party, whether or not they have a copy of the image.
 
 We have not modified any of these programs.

@@ -13,8 +13,9 @@ FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca
 
 # Ubuntu archive snapshot to install from. `apt-get update --snapshot` talks https to
 # snapshot.ubuntu.com, and the base image has no root certificates, so ca-certificates is
-# installed first from the live archive (it only supplies trust roots). Everything else comes
-# from the snapshot, so rebuilding later gives the same packages.
+# installed first from the live archive. That step also pulls in openssl and a newer libssl3t64
+# from the live archive, and they stay. Everything else comes from the snapshot, so rebuilding
+# later gives the same packages apart from those three.
 ARG APT_SNAPSHOT=20261110T000000Z
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
@@ -26,10 +27,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Verilator: the commands, its data files and its pkg-config file. The debug builds
-# (verilator_bin_dbg and friends, about 100 MB) are left out.
+# (verilator_bin_dbg and friends, about 100 MB) are left out, and so is verilator_coverage,
+# which cannot run without its debug binary.
 COPY --from=verilator /usr/local/bin/verilator /usr/local/bin/verilator_bin \
-     /usr/local/bin/verilator_coverage /usr/local/bin/verilator_gantt \
-     /usr/local/bin/verilator_profcfunc /usr/local/bin/
+     /usr/local/bin/verilator_gantt /usr/local/bin/verilator_profcfunc /usr/local/bin/
 COPY --from=verilator /usr/local/share/verilator /usr/local/share/verilator
 COPY --from=verilator /usr/local/share/pkgconfig/verilator.pc /usr/local/share/pkgconfig/verilator.pc
 
@@ -71,8 +72,12 @@ RUN APT_SNAPSHOT="${APT_SNAPSHOT}" \
  && rm /tmp/gen_sources.py /tmp/Dockerfile \
  && chmod -R a+rX /usr/share/doc/siliconsmith-toolchain
 
+# The licenses label is a LicenseRef because the image mixes many licenses; the full list is in
+# /usr/share/doc/siliconsmith-toolchain/THIRD_PARTY_LICENSES.md. The version label is cleared
+# because the Ubuntu base image sets it to 24.04, which is not our version.
 LABEL org.opencontainers.image.source="https://github.com/RFingAdam/siliconsmith" \
-      org.opencontainers.image.licenses="Apache-2.0 AND GPL-2.0-or-later AND GPL-3.0-or-later AND LGPL-2.1-or-later AND Artistic-2.0 AND ISC AND MIT AND BSD-3-Clause" \
+      org.opencontainers.image.licenses="LicenseRef-siliconsmith-toolchain-mixed" \
+      org.opencontainers.image.version="" \
       org.opencontainers.image.description="Siliconsmith toolchain, simulation stage: Icarus Verilog, Verilator, Yosys, cocotb, Amaranth and MyHDL"
 
 WORKDIR /work

@@ -50,7 +50,9 @@ def apt_section() -> list[str]:
         "Ubuntu packages: binary package, version, source package, source version.",
         "Get the source with `apt-get source <source>=<source version>` (deb-src enabled) or from",
         "https://launchpad.net/ubuntu/+source/<source>/<source version>.",
-        f"Installed from the Ubuntu archive snapshot {os.environ.get('APT_SNAPSHOT', '?')}.",
+        f"Installed from the Ubuntu archive snapshot {os.environ.get('APT_SNAPSHOT', '?')},",
+        "except ca-certificates, openssl and libssl3t64, which came from the live archive",
+        "(they were installed first so that apt could reach the snapshot over https).",
         "",
     ]
     for binary, version, source, source_version in rows:
