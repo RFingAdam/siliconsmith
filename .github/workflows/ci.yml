@@ -1,0 +1,17 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: lint (placeholder)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Placeholder lint
+        run: |
+          echo "Lint placeholder — ruff, mypy, reuse, and tests land in digital M0."
+          exit 0

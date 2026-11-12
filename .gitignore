@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.env
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Tool / design artifacts (do not commit runs)
+*.vcd
+*.fst
+*.gds
+*.gds.gz
+*.oas
+*.lef
+*.def
+*.spice
+*.raw
+*.tr0
+*.sw0
+*.wdb
+*.lyrdb
+*.magicrc.bak
+/pdk/
+/pdks/
+/runs/
+/build-rtl/
+
+# Editors and agents
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~
+.claude/
+.cursor/
+
+# Secrets
+.secrets/
+*.pem
+credentials.json
+.credentials.json
