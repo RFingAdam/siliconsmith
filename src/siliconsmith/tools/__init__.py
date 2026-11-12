@@ -21,6 +21,8 @@ TOOL_MODULES: tuple[str, ...] = (
     "write_test",
     "write_spec",
     "emit_verilog",
+    "run_tests",
+    "inspect_waves",
 )
 
 

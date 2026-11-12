@@ -95,7 +95,7 @@ class _EmitResult(_Strict):
     error: _WorkerError | None = None
 
 
-def _read_author(project: Project) -> str:
+def read_author(project: Project) -> str:
     raw = safe_read(project.dir, "info.yaml", MAX_INFO_BYTES)
     try:
         info = yaml.safe_load(raw)
@@ -106,6 +106,9 @@ def _read_author(project: Project) -> str:
             "it is written by create_project and should not be edited"
         ) from exc
     return validate_text("author", str(author), 100)
+
+
+EmitResult = _EmitResult
 
 
 # -- results -------------------------------------------------------------------------------
@@ -150,7 +153,7 @@ def _python_failure(frontend: Frontend, project: Project, error: dict[str, Any])
     )
 
 
-def _precheck(project: Project, frontend: Frontend) -> ToolResult | None:
+def precheck(project: Project, frontend: Frontend) -> ToolResult | None:
     """Read the entry file; a Python file with a syntax error fails here without a container."""
     entry = frontend.entry(project.name)
     try:
@@ -196,7 +199,7 @@ def _unreadable(
     frontend: Frontend, project: Project, outcome: WorkerOutcome, why: str
 ) -> ToolResult:
     tail = pyerror.map_paths(outcome.stderr_tail.strip())[-1200:]
-    lines = [f"The emit step returned an unreadable result ({why})."]
+    lines = [f"The container call returned an unreadable result ({why})."]
     if outcome.exit_code != 0:
         lines.append(f"The container exited with code {outcome.exit_code}.")
     lines += tail.splitlines()[-6:]
@@ -347,7 +350,7 @@ def _success_or_lint(
     )
 
 
-def _handle_outcome(
+def handle_outcome(
     ctx: ServerContext,
     project: Project,
     frontend: Frontend,
@@ -375,7 +378,7 @@ def _handle_outcome(
     if result.error is not None or result.stage is None:
         detail = f"{result.error.kind}: {result.error.message}" if result.error else "no stage"
         raise ToolError(
-            f"the emit step failed inside the container ({detail}). Call toolchain_info to check "
+            f"the container call failed inside ({detail}). Call toolchain_info to check "
             "that the toolchain image matches this version of Siliconsmith; if it does, file "
             "an issue."
         )
@@ -422,8 +425,8 @@ def emit(ctx: ServerContext, project_name: str) -> ToolResult:
     project = get_project(ctx, project_name)
     frontend = get_frontend(project.frontend)
     with project_lock(project.dir):
-        author = _read_author(project)
-        early = _precheck(project, frontend)
+        author = read_author(project)
+        early = precheck(project, frontend)
         if early is not None:
             return early
         try:
@@ -436,7 +439,7 @@ def emit(ctx: ServerContext, project_name: str) -> ToolResult:
                 )
             except ToolchainError as exc:
                 raise ToolError(str(exc)) from exc
-            return _handle_outcome(ctx, project, frontend, author, outcome)
+            return handle_outcome(ctx, project, frontend, author, outcome)
         finally:
             remove_run_dirs(project.dir / "build")
 
