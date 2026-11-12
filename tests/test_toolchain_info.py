@@ -18,6 +18,12 @@ from siliconsmith.server import build_server
 
 pytestmark = pytest.mark.anyio
 
+
+@pytest.fixture(autouse=True)
+def _cache_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+
 IMAGE = "ghcr.io/example/toolchain:ctx-abc"
 VERSIONS = {
     "iverilog": "12.0",
@@ -92,7 +98,7 @@ async def test_reports_versions_and_image(tmp_path: Path) -> None:
     assert "local build" in out["summary"]
     verb, _, project_dir, _ = runner.calls[0]
     assert verb == "info"
-    assert not project_dir.exists()  # the scratch folder is gone afterwards
+    assert project_dir == tmp_path / "cache" / "siliconsmith" / "info-project"
 
 
 async def test_digest_shown_when_pulled(tmp_path: Path) -> None:
@@ -143,3 +149,38 @@ async def test_works_with_a_runner_that_has_no_host_status(tmp_path: Path) -> No
     out = await call(tmp_path, FakeRunner(ok_outcome()))
     assert out["ok"] is True
     assert out["details"]["versions"] == VERSIONS
+
+
+async def test_a_tool_without_a_version_means_not_ready(tmp_path: Path) -> None:
+    versions = {**VERSIONS, "yosys": None}
+    outcome = WorkerOutcome(0, {"ok": True, "verb": "info", "versions": versions}, "", "", False)
+    out = await call(tmp_path, HostRunner(good_status(), outcome))
+    assert out["ok"] is False
+    assert "NOT READY" in out["summary"] and "yosys" in out["summary"]
+    assert out["next_hints"]
+
+
+async def test_a_tool_missing_from_the_list_means_not_ready(tmp_path: Path) -> None:
+    versions = {k: v for k, v in VERSIONS.items() if k != "pywellen"}
+    outcome = WorkerOutcome(0, {"ok": True, "verb": "info", "versions": versions}, "", "", False)
+    out = await call(tmp_path, HostRunner(good_status(), outcome))
+    assert out["ok"] is False
+    assert "pywellen" in out["summary"]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"ok": False, "error": "boom"},
+        {"ok": True, "versions": [1, 2]},
+        {"ok": False, "error": {"message": 5}},
+        {"ok": "yes"},
+        {"ok": True, "versions": {"yosys": 5}},
+    ],
+)
+async def test_malformed_info_result_is_a_result_not_a_crash(
+    tmp_path: Path, result: dict[str, Any]
+) -> None:
+    out = await call(tmp_path, HostRunner(good_status(), WorkerOutcome(0, result, "", "", False)))
+    assert out["ok"] is False
+    assert "unreadable result" in out["summary"]

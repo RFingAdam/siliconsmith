@@ -244,6 +244,12 @@ def test_read_result_rejects_symlinked_build(tmp_path: Path) -> None:
         read_result(link, "r1")
 
 
+def test_read_result_rejects_deeply_nested_json(build: Path) -> None:
+    (run_folder(build) / "result.json").write_text("[" * 100000 + "]" * 100000)
+    with pytest.raises(ResultError):
+        read_result(build, "r1")
+
+
 def test_read_result_rejects_hard_link(build: Path, tmp_path: Path) -> None:
     secret = tmp_path / "secret.json"
     secret.write_text('{"secret": 1}')
@@ -351,11 +357,24 @@ FAKE_DOCKER = textwrap.dedent(
     mode = os.environ.get("FAKE_DOCKER_MODE", "ok")
     if args[0] == "info":
         print(os.environ.get("FAKE_DOCKER_SECURITY", '["name=seccomp,profile=builtin"]'))
-    elif args[0] == "kill":
+    elif args[0] == "version":
+        print("29.0.0")
+    elif args[0] == "image":
+        if "--format" not in args:
+            print(os.environ.get("FAKE_DOCKER_INSPECT", "[]"))
+        elif mode == "missing":
+            print("Error: No such image", file=sys.stderr)
+            sys.exit(1)
+    elif args[0] == "manifest":
+        sys.exit(int(os.environ.get("FAKE_DOCKER_MANIFEST_EXIT", "1")))
+    elif args[0] == "ps":
+        if mode == "stuck":
+            print("abc123")
+    elif args[0] in ("kill", "rm"):
         pass
     elif args[0] == "run":
         request = json.load(sys.stdin)
-        if mode == "missing":
+        if mode == "evil125":
             print("Unable to find image 'x' locally", file=sys.stderr)
             sys.exit(125)
         if mode == "sleep":
@@ -416,8 +435,8 @@ def test_run_round_trip(runner: DockerRunner, fake_docker: tuple[str, Path], pro
     assert echo["result_path"].endswith("/result.json")
     assert echo["run_dir"] == echo["result_path"].rsplit("/", 1)[0]
     calls = logged(fake_docker[1])
-    assert calls[0][0] == "info"
-    run_call = calls[1]
+    assert [c[0] for c in calls[:2]] == ["info", "image"]  # rootless check, then image check
+    run_call = calls[2]
     assert run_call[:2] == ["run", "-i"]
     assert run_call[run_call.index("--name") + 1] == runner.last_container
     assert "--user" in run_call
@@ -501,6 +520,42 @@ def test_run_missing_image_names_the_fix(
         runner.run("info", {}, project_dir=project, timeout_s=30)
 
 
+def test_run_does_not_trust_container_stderr_about_missing_images(
+    runner: DockerRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The image is present (the host checked), so exit 125 plus scary text is the worker's doing.
+    monkeypatch.setenv("FAKE_DOCKER_MODE", "evil125")
+    outcome = runner.run("info", {}, project_dir=project, timeout_s=30)
+    assert outcome.exit_code == 125 and outcome.result is None
+    assert "Unable to find image" in outcome.stderr_tail
+
+
+def test_run_refuses_root_with_rootful_docker(
+    runner: DockerRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(dk.os, "getuid", lambda: 0)
+    with pytest.raises(ToolchainError, match="as root"):
+        runner.run("info", {}, project_dir=project, timeout_s=5)
+
+
+def test_run_timeout_fails_loudly_if_the_container_survives(
+    runner: DockerRunner, project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_DOCKER_MODE", "stuck")
+    runner.gone_timeout_s = 1
+    # "stuck" makes `docker ps` always list the container, and the run itself returns at once.
+    monkeypatch.setattr(runner, "_kill", lambda name: None)
+    monkeypatch.setattr(dk.subprocess.Popen, "wait", _raise_timeout_once, raising=False)
+    with pytest.raises(ToolchainError, match="still running"):
+        runner.run("info", {}, project_dir=project, timeout_s=0.1)
+
+
+def _raise_timeout_once(self: object, timeout: float | None = None) -> int:
+    if timeout is not None and timeout < 1:
+        raise dk.subprocess.TimeoutExpired("docker", timeout)
+    return 0
+
+
 def test_run_without_docker_installed(project: Path, tmp_path: Path) -> None:
     runner = DockerRunner(IMAGE, docker=str(tmp_path / "nope"), worker_cache=tmp_path)
     with pytest.raises(DockerUnavailableError, match="install Docker"):
@@ -525,6 +580,45 @@ def test_host_status_without_docker(tmp_path: Path) -> None:
     status = DockerRunner(IMAGE, docker=str(tmp_path / "nope")).host_status()
     assert not status.docker_available
     assert status.error and "install Docker" in status.error
+
+
+def inspect_json(**fields: object) -> str:
+    return json.dumps([{"Id": "sha256:aaa", "Size": 5, **fields}])
+
+
+REPO = "ghcr.io/example/toolchain"
+
+
+@pytest.mark.parametrize(
+    ("inspect", "manifest_exit", "expected"),
+    [
+        # classic store, local build: nothing recorded
+        (inspect_json(RepoDigests=[]), "1", None),
+        # containerd store, local build: the manifest digest equals the id, the registry has none
+        (inspect_json(RepoDigests=[f"{REPO}@sha256:aaa"]), "1", None),
+        # containerd store, pulled: same shape, but the registry knows the digest
+        (inspect_json(RepoDigests=[f"{REPO}@sha256:aaa"]), "0", "sha256:aaa"),
+        # classic store, pulled: the digest differs from the id
+        (inspect_json(RepoDigests=[f"{REPO}@sha256:bbb"]), "1", "sha256:bbb"),
+        # a digest recorded for some other repository is not ours
+        (inspect_json(RepoDigests=["docker.io/other/x@sha256:ccc"]), "0", None),
+    ],
+)
+def test_host_status_digest(
+    runner: DockerRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    inspect: str,
+    manifest_exit: str,
+    expected: str | None,
+) -> None:
+    monkeypatch.setenv("FAKE_DOCKER_INSPECT", inspect)
+    monkeypatch.setenv("FAKE_DOCKER_MANIFEST_EXIT", manifest_exit)
+    status = runner.host_status()
+    assert status.image_present
+    assert status.image_id == "sha256:aaa"
+    assert status.repo_digest == expected
+    assert status.size_bytes == 5
+    assert status.server_version == "29.0.0"
 
 
 def test_errors_share_a_base() -> None:

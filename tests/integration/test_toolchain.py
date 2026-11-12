@@ -8,13 +8,15 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 import pytest
 from conftest import REPO_ROOT
 from mcp import Client
 
-from siliconsmith.runners.docker import DockerRunner
+from siliconsmith.runners.docker import DockerRunner, build_argv, readonly_entries
+from siliconsmith.runners.worker_cache import ensure_worker_cache
 from siliconsmith.server import build_server
 
 pytestmark = [pytest.mark.integration, pytest.mark.anyio]
@@ -53,7 +55,21 @@ async def test_toolchain_info_keys(image: str, runner: DockerRunner, tmp_path: P
     assert details["versions"]["cocotb"] == "2.1.0"
     assert details["versions"]["yosys"].startswith("0.62")
     assert details["versions"]["iverilog"].startswith("12.0")
-    assert "repo_digest" in details
+    # CI says whether it pulled the image from GHCR (then there must be a registry digest) or
+    # built it itself (then there must not). Unset means a developer run: no claim either way.
+    expect = os.environ.get("SILICONSMITH_EXPECT_REPO_DIGEST", "").lower()
+    if expect == "true":
+        listed = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{index .RepoDigests 0}}", image],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        assert details["repo_digest"] == listed.split("@", 1)[1]
+    elif expect == "false":
+        assert details["repo_digest"] is None
+    else:
+        assert "repo_digest" in details
 
 
 def selftest(runner: DockerRunner, project: Path, **request: object) -> dict[str, object]:
@@ -71,6 +87,9 @@ def test_sandbox_as_seen_from_inside(runner: DockerRunner, project: Path) -> Non
         assert result["gid"] == os.getgid()
         assert result["uid"] != 0
     assert result["root_writable"] is False
+    # The two checks that really depend on --read-only (a non-root user cannot write `/` anyway).
+    assert result["root_mounted_readonly"] is True
+    assert result["vartmp_writable"] is False
     assert result["src_writable"] is False
     assert result["hdl_writable"] is False
     assert result["test_writable"] is False
@@ -129,20 +148,22 @@ def test_timeout_kills_the_container(runner: DockerRunner, project: Path) -> Non
 
 
 def hardened(image: str, project: Path, *command: str, mount: Path | None = None) -> list[str]:
-    """Same limits as the runner, for running image content that is not a worker verb."""
-    argv = [
-        "docker", "run", "--rm", "--init", "--pull", "never", "--network", "none", "--read-only",
-        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-        "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=1g",
-        "-e", "HOME=/tmp/home", "-e", "XDG_CACHE_HOME=/work/build/.cache",
-        "-e", "AMARANTH_USE_YOSYS=builtin", "-e", "PYTHONDONTWRITEBYTECODE=1",
-        "--mount", f"type=bind,src={project}/build,dst=/work/build",
-    ]  # fmt: skip
-    if os.getuid() != 0:
-        argv += ["--user", f"{os.getuid()}:{os.getgid()}"]
+    """The runner's own `docker run` line (build_argv), with `command` in place of the worker."""
+    (project / "build").mkdir(exist_ok=True)
+    argv = build_argv(
+        container_name=f"ss-test-{uuid.uuid4().hex}",
+        image=image,
+        verb="unused",
+        project_dir=project,
+        readonly_entries=readonly_entries(project),
+        worker_cache=ensure_worker_cache(),
+        user=None if os.getuid() == 0 else (os.getuid(), os.getgid()),
+    )
+    assert argv[-5:-1] == [image, "python", "-m", "siliconsmith.worker"]
+    head = argv[:-5]
     if mount is not None:
-        argv += ["--mount", f"type=bind,src={mount},dst=/smoke,readonly"]
-    return [*argv, image, *command]
+        head += ["--mount", f"type=bind,src={mount},dst=/smoke,readonly"]
+    return [*head, image, *command]
 
 
 @pytest.mark.parametrize("simulator", ["icarus", "verilator"])
@@ -153,6 +174,7 @@ def test_cocotb_smoke(image: str, project: Path, simulator: str) -> None:
         hardened(image, project, "python", "/smoke/run_smoke.py", simulator, mount=fixture),
         capture_output=True,
         text=True,
+        stdin=subprocess.DEVNULL,
         timeout=600,
         check=False,
     )
@@ -174,6 +196,7 @@ def test_yosys_and_amaranth_work_under_the_sandbox_flags(image: str, project: Pa
             hardened(image, project, *command),
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
             timeout=300,
             check=False,
         )

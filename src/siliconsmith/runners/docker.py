@@ -19,6 +19,7 @@ import os
 import stat
 import subprocess
 import threading
+import time
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ from typing import IO, Any
 from siliconsmith.runners.base import WorkerOutcome
 from siliconsmith.runners.worker_cache import ensure_worker_cache
 
-DEFAULT_IMAGE = "ghcr.io/rfingadam/siliconsmith-toolchain:ctx-86b81dc64d6f"
+DEFAULT_IMAGE = "ghcr.io/rfingadam/siliconsmith-toolchain:ctx-c50c615fe7e6"
 IMAGE_ENV = "SILICONSMITH_IMAGE"
 
 MAX_RESULT_BYTES = 1024 * 1024
@@ -36,7 +37,6 @@ STDIO_TAIL_BYTES = 16 * 1024
 # Names under the project folder that are mounted read-only when they exist.
 PROJECT_READONLY_ENTRIES = ("hdl", "src", "test", "spec.yaml", "info.yaml")
 _FORBIDDEN_PATH_CHARS = {",": "a comma", ":": "a colon", "\n": "a newline", "\r": "a newline"}
-_DOCKER_ERROR_EXIT = 125
 
 
 class ToolchainError(RuntimeError):
@@ -234,7 +234,8 @@ def read_result(build: Path, run_id: str) -> dict[str, Any] | None:
         raise ResultError(f"result.json is larger than {MAX_RESULT_BYTES} bytes")
     try:
         parsed = json.loads(data)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
+        # RecursionError: a deeply nested file well under the size cap.
         raise ResultError("result.json is not valid JSON") from exc
     if not isinstance(parsed, dict):
         raise ResultError("result.json is not a JSON object")
@@ -300,6 +301,8 @@ class DockerRunner:
         self._worker_cache = worker_cache
         self._rootless: bool | None = None
         self.last_container: str | None = None
+        self._image_present = False
+        self.gone_timeout_s = 15.0
 
     # -- host-side checks -------------------------------------------------------------------
 
@@ -352,15 +355,7 @@ class DockerRunner:
             info = json.loads(inspect.stdout)[0]
         except (ValueError, IndexError, TypeError):
             return HostStatus(True, version, rootless, error="unreadable docker image inspect")
-        repo = self.image.rsplit(":", 1)[0] if ":" in self.image.rsplit("/", 1)[-1] else self.image
-        digest = next(
-            (
-                entry.split("@", 1)[1]
-                for entry in info.get("RepoDigests") or []
-                if entry.startswith(repo + "@")
-            ),
-            None,
-        )
+        digest = self._registry_digest(info)
         return HostStatus(
             True,
             version,
@@ -370,6 +365,31 @@ class DockerRunner:
             repo_digest=digest,
             size_bytes=info.get("Size"),
         )
+
+    def _registry_digest(self, info: Mapping[str, Any]) -> str | None:
+        """The digest this image has in a registry, or None for a local build.
+
+        With the classic image store, `RepoDigests` only lists digests that a pull or push
+        recorded. The containerd store (the default on new Docker installs) also lists the local
+        manifest digest of a build nobody pushed, and that digest equals the image id. In that
+        case ask the registry whether it knows the digest; offline or unknown means None.
+        """
+        name = self.image.rsplit("/", 1)[-1]
+        repo = self.image.rsplit(":", 1)[0] if ":" in name else self.image
+        entries = info.get("RepoDigests") or []
+        found = [
+            e.split("@", 1)[1] for e in entries if isinstance(e, str) and e.startswith(repo + "@")
+        ]
+        if not found:
+            return None
+        digest = found[0]
+        if digest != info.get("Id"):
+            return digest
+        try:
+            proc = self._docker("manifest", "inspect", f"{repo}@{digest}", timeout=20)
+        except ToolchainError:
+            return None
+        return digest if proc.returncode == 0 else None
 
     # -- the call itself --------------------------------------------------------------------
 
@@ -389,6 +409,13 @@ class DockerRunner:
         project_dir = Path(os.path.abspath(project_dir))
         check_mount_path(str(project_dir), "project path")
         rootless = self.is_rootless()
+        if not rootless and os.getuid() == 0:
+            raise ToolchainError(
+                "Siliconsmith is running as root with a rootful Docker daemon, which would let "
+                "container code leave root-owned files in your project; run it as a normal "
+                "user, or use rootless Docker"
+            )
+        self._ensure_image()
         build = prepare_build_dir(project_dir)
         run_id = uuid.uuid4().hex
         make_run_dir(build, run_id)
@@ -433,6 +460,7 @@ class DockerRunner:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
+            self._ensure_gone(name)
         out_reader.join(5)
         err_reader.join(5)
         stdout_tail, stderr_tail = out_reader.tail(), err_reader.tail()
@@ -441,8 +469,6 @@ class DockerRunner:
             result = read_result(build, run_id)
         except ResultError as exc:
             stderr_tail = f"[siliconsmith] result rejected: {exc}\n{stderr_tail}"
-        if proc.returncode == _DOCKER_ERROR_EXIT and result is None and not timed_out:
-            self._raise_docker_error(stderr_tail)
         return WorkerOutcome(
             exit_code=proc.returncode,
             result=result,
@@ -455,16 +481,38 @@ class DockerRunner:
         with contextlib.suppress(ToolchainError, OSError):
             self._docker("kill", name, timeout=30)
 
-    def _raise_docker_error(self, stderr: str) -> None:
-        lowered = stderr.lower()
-        if "unable to find image" in lowered or "no such image" in lowered:
+    def _ensure_image(self) -> None:
+        """Decide on the host, never from container output, that the image is here."""
+        if self._image_present:
+            return
+        proc = self._docker("image", "inspect", "--format", "{{.Id}}", self.image)
+        if proc.returncode != 0:
             raise ImageMissingError(
                 f"the toolchain image {self.image} is not on this machine; "
                 f"run `{pull_hint(self.image)}`"
             )
-        if "cannot connect to the docker daemon" in lowered:
-            raise DockerUnavailableError("the Docker daemon is not running; start Docker")
-        raise ToolchainError(f"docker could not start the container: {_first_line(stderr)}")
+        self._image_present = True
+
+    def _ensure_gone(self, name: str) -> None:
+        """After a timeout, make sure the container really is gone (remove it if it is not)."""
+        deadline = time.monotonic() + self.gone_timeout_s
+        removed = False
+        while True:
+            proc = self._docker("ps", "-a", "-q", "--filter", f"name=^/{name}$")
+            if proc.returncode != 0:
+                raise ToolchainError(f"cannot check whether container {name} stopped")
+            if not proc.stdout.strip():
+                return
+            if time.monotonic() > deadline:
+                raise ToolchainError(
+                    f"container {name} is still running after a timeout; remove it with "
+                    f"`docker rm -f {name}`"
+                )
+            if not removed:
+                with contextlib.suppress(ToolchainError):
+                    self._docker("rm", "-f", name, timeout=30)
+                removed = True
+            time.sleep(0.5)
 
 
 def _first_line(text: str) -> str:

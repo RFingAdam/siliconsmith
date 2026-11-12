@@ -66,7 +66,8 @@ jobs:
 
   publish:
     name: publish
-    if: github.event_name != 'pull_request'
+    # Only main publishes: a manually started run on another branch must not overwrite tags.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -97,7 +98,7 @@ jobs:
       - name: Set up Docker Buildx
         if: steps.exists.outputs.exists != 'true'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # Build and test first, push only if the tests pass. The push step below reuses the cache.
+      # Build and test first, then push the very image that passed the tests.
       - name: Build the image
         if: steps.exists.outputs.exists != 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -132,16 +133,12 @@ jobs:
       - name: Push the image
         id: push
         if: steps.exists.outputs.exists != 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: docker
-          platforms: linux/amd64
-          push: true
-          provenance: false
-          tags: |
-            ${{ env.IMAGE }}
-            ${{ env.DATE_IMAGE }}
-          cache-from: type=gha
+        run: |
+          docker tag "$IMAGE" "$DATE_IMAGE"
+          docker push "$IMAGE"
+          docker push "$DATE_IMAGE"
+          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+          echo "digest=${digest#*@}" >> "$GITHUB_OUTPUT"
       - name: Write the job summary
         if: steps.exists.outputs.exists != 'true'
         env:

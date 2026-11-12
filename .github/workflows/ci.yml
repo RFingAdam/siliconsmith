@@ -146,3 +146,5 @@ jobs:
         run: uv run pytest -m integration -v
         env:
           SILICONSMITH_IMAGE: ${{ env.IMAGE }}
+          # A pulled image must show a registry digest; a locally built one must not.
+          SILICONSMITH_EXPECT_REPO_DIGEST: ${{ steps.pull.outputs.pulled }}

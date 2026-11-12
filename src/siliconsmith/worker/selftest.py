@@ -35,6 +35,16 @@ def _interfaces() -> list[str]:
         return []
 
 
+def _root_mounted_readonly() -> bool:
+    """True if /proc/mounts lists `/` with the `ro` option (what `--read-only` does)."""
+    try:
+        lines = Path("/proc/mounts").read_text().splitlines()
+    except OSError:
+        return False
+    root = [line.split() for line in lines if len(line.split()) >= 4 and line.split()[1] == "/"]
+    return bool(root) and "ro" in root[-1][3].split(",")
+
+
 def run(request: dict[str, Any]) -> dict[str, Any]:
     sleep_s = float(request.get("sleep_s", 0) or 0)
     if sleep_s > 0:
@@ -43,6 +53,8 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
         "uid": os.getuid(),
         "gid": os.getgid(),
         "root_writable": _can_create("/"),
+        "root_mounted_readonly": _root_mounted_readonly(),
+        "vartmp_writable": _can_create("/var/tmp"),
         "src_writable": _can_create("/work/src"),
         "hdl_writable": _can_create("/work/hdl"),
         "test_writable": _can_create("/work/test"),
