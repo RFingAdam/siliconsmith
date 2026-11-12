@@ -10,9 +10,10 @@ import ast
 from mcp.server.mcpserver.exceptions import ToolError
 
 from siliconsmith.context import ServerContext
-from siliconsmith.paths import Category, atomic_write, classify_write, project_lock
+from siliconsmith.paths import Category, atomic_write, classify_write, project_lock, safe_read
 from siliconsmith.project import Project, load_project
 from siliconsmith.result import Artifact, ToolResult
+from siliconsmith.spec import MAX_SPEC_BYTES, SPEC_NAME, Spec, parse_spec
 
 MAX_WRITE_BYTES = 256 * 1024
 
@@ -29,6 +30,17 @@ def get_project(ctx: ServerContext, name: str) -> Project:
     return load_project(ctx.root, name)
 
 
+def read_spec_ids(project: Project) -> list[str] | None:
+    """Requirement ids of the project's valid spec.yaml, or None if it is missing or invalid."""
+    try:
+        with project_lock(project.dir):
+            text = safe_read(project.dir, SPEC_NAME, MAX_SPEC_BYTES).decode("utf-8")
+    except (ToolError, UnicodeDecodeError):
+        return None
+    parsed = parse_spec(text)
+    return parsed.requirement_ids() if isinstance(parsed, Spec) else None
+
+
 def write_text_file(
     ctx: ServerContext,
     *,
@@ -43,12 +55,6 @@ def write_text_file(
     category = classify_write(project.name, project.frontend, path)
     if category not in accepts:
         right = TOOL_FOR[category]
-        if category == "spec":
-            raise ToolError(
-                f"{path!r} is the project spec. No tool can write it yet: write_spec arrives "
-                "in a later milestone (M0-7). Until then do not use "
-                f"{tool} for it."
-            )
         raise ToolError(f"{path!r} is a {category} file; write it with {right}, not {tool}")
     try:
         data = content.encode("utf-8")

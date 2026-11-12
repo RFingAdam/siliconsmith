@@ -26,6 +26,7 @@ from siliconsmith.project import (
     render_config,
     validate_text,
 )
+from siliconsmith.spec import SPEC_NAME, Spec, pinout, render_spec, stub_spec
 from siliconsmith.wrapper import TT_PORTS, generate_wrapper
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -62,16 +63,19 @@ def _replace_once(text: str, old: str, new: str, what: str) -> str:
     return text.replace(old, new)
 
 
-def _info_yaml(name: str, frontend: str, author: str, description: str, title: str) -> str:
+def _info_yaml(name: str, frontend: str, author: str, description: str, spec: Spec) -> str:
     info: dict[str, Any] = yaml.safe_load(_tt_text("info.yaml"))
     project = info["project"]
-    project["title"] = title
+    project["title"] = spec.title
     project["author"] = author
     project["description"] = description
     project["language"] = LANGUAGE[frontend]
     project["top_module"] = f"tt_um_{name}"
     project["source_files"] = ["project.v", f"{name}.v"]
     project["tiles"] = "1x1"
+    # The clock and the pin meanings come from spec.yaml, the single source.
+    project["clock_hz"] = spec.clock_hz
+    info["pinout"] = pinout(spec)
     header = "# Tiny Tapeout project information (written by Siliconsmith).\n"
     return header + yaml.safe_dump(info, sort_keys=False, allow_unicode=True)
 
@@ -92,9 +96,11 @@ def build_files(
     name: str, frontend: str, author: str, description: str, title: str
 ) -> dict[str, str]:
     """Return every file of a new project as `{relative path: text}` (reads templates only)."""
+    spec = stub_spec(title, description)
     files: dict[str, str] = {
         CONFIG_NAME: render_config(name, frontend),
-        "info.yaml": _info_yaml(name, frontend, author, description, title),
+        SPEC_NAME: render_spec(spec),
+        "info.yaml": _info_yaml(name, frontend, author, description, spec),
     }
     if frontend == "verilog":
         files[f"src/{name}.v"] = _with_header(

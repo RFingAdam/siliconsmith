@@ -90,7 +90,10 @@ def validate_text(label: str, value: str, max_len: int) -> str:
         raise ToolError(f"{label} must not be empty")
     if len(text) > max_len:
         raise ToolError(f"{label} is {len(text)} characters; the limit is {max_len}")
-    if any(ord(ch) < 32 or ord(ch) == 127 or 0x80 <= ord(ch) < 0xA0 for ch in text):
+    if any(
+        ord(ch) < 32 or ord(ch) == 127 or 0x80 <= ord(ch) < 0xA0 or ch in "\u2028\u2029"
+        for ch in text
+    ):
         raise ToolError(f"{label} must be a single line without control characters")
     if "*/" in text:
         raise ToolError(f"{label} must not contain '*/'")

@@ -11,7 +11,8 @@ import pytest
 from mcp import Client
 
 from siliconsmith.result import MAX_SUMMARY_CHARS, MAX_SUMMARY_LINES
-from siliconsmith.server import build_server
+from siliconsmith.server import INSTRUCTIONS, build_server
+from siliconsmith.spec import Spec, parse_spec
 
 pytestmark = pytest.mark.anyio
 
@@ -43,8 +44,15 @@ def server_client(tmp_path: Path) -> Client:
 async def test_tools_listed_with_project_first(server_client: Client) -> None:
     async with server_client as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    assert set(tools) == {"create_project", "list_files", "read_file", "write_rtl", "write_test"}
-    for name in ("list_files", "read_file", "write_rtl", "write_test"):
+    assert set(tools) == {
+        "create_project",
+        "list_files",
+        "read_file",
+        "write_rtl",
+        "write_test",
+        "write_spec",
+    }
+    for name in ("list_files", "read_file", "write_rtl", "write_test", "write_spec"):
         assert next(iter(tools[name].input_schema["properties"])) == "project"
         assert tools[name].description
 
@@ -206,7 +214,9 @@ async def test_wrong_tool_names_the_right_one(server_client: Client) -> None:
         message = await fail(client, "write_test", project="adder", path="src/adder.v", content="x")
         assert "write_rtl" in message
         message = await fail(client, "write_rtl", project="adder", path="spec.yaml", content="x")
-        assert "write_spec" in message and "M0-7" in message
+        assert "write_spec" in message and "spec.yaml" in message
+        message = await fail(client, "write_test", project="adder", path="spec.yaml", content="x")
+        assert "write_spec" in message
 
 
 async def test_write_rejects_unsafe_and_forbidden_paths(
@@ -264,3 +274,120 @@ async def test_write_size_and_encoding_limits(server_client: Client) -> None:
         )
         ok = await call(client, "write_rtl", project="adder", path="src/adder.v", content="// ü\n")
         assert ok["ok"]
+
+
+# --- spec and Covers (M0-7) --------------------------------------------------------------------
+
+SPEC = """\
+# my spec
+title: Counter
+summary: Counts.
+clock_hz: 5000000
+reset: none
+pins:
+  ui:
+    0: enable
+requirements:
+  - id: R1
+    text: Counts up.
+  - id: R2
+    text: Holds when disabled.
+"""
+
+
+async def test_create_project_writes_a_valid_stub_spec(
+    tmp_path: Path, server_client: Client
+) -> None:
+    async with server_client as client:
+        data = await call(client, "create_project", name="adder", **ARGS)
+    assert "spec.yaml" in data["details"]["files"]
+    spec = parse_spec((tmp_path / "adder" / "spec.yaml").read_text())
+    assert isinstance(spec, Spec) and spec.requirement_ids() == ["R1"]
+
+
+async def test_write_spec_saves_valid_spec_exactly(tmp_path: Path, server_client: Client) -> None:
+    async with server_client as client:
+        await call(client, "create_project", name="adder", **ARGS)
+        data = await call(client, "write_spec", project="adder", content=SPEC)
+    assert data["ok"] and data["artifacts"] == [{"path": "spec.yaml", "kind": "spec"}]
+    assert data["details"]["requirement_ids"] == ["R1", "R2"]
+    assert "Counter" in data["summary"] and "5000000" in data["summary"]
+    assert "Covers:" in data["next_hints"][0]
+    assert (tmp_path / "adder" / "spec.yaml").read_text() == SPEC  # comments kept
+
+
+async def test_write_spec_invalid_is_not_written(tmp_path: Path, server_client: Client) -> None:
+    async with server_client as client:
+        await call(client, "create_project", name="adder", **ARGS)
+        before = (tmp_path / "adder" / "spec.yaml").read_bytes()
+        bad = SPEC.replace("clock_hz: 5000000\n", "").replace("id: R2", "id: two")
+        bad += "colour: red\n"
+        data = await call(client, "write_spec", project="adder", content=bad)
+        assert not data["ok"]
+        assert {e["path"] for e in data["details"]["errors"]} == {
+            "clock_hz",
+            "requirements[1].id",
+            "colour",
+        }
+        assert "clock_hz: required field is missing" in data["summary"]
+        assert "NOT saved" in data["summary"]
+        garbage = await call(client, "write_spec", project="adder", content="a: [")
+        assert not garbage["ok"] and garbage["details"]["errors"][0]["path"] == "yaml"
+    assert (tmp_path / "adder" / "spec.yaml").read_bytes() == before
+
+
+async def test_write_spec_unknown_project(server_client: Client) -> None:
+    async with server_client as client:
+        assert "unknown project" in await fail(client, "write_spec", project="nope", content="x")
+
+
+async def test_write_test_reports_covers_and_warnings(
+    tmp_path: Path, server_client: Client
+) -> None:
+    marker = tmp_path / "ran.txt"
+    code = (
+        f"open({str(marker)!r}, 'w').write('x')\n"
+        "import cocotb\n"
+        "@cocotb.test()\nasync def test_a(dut):\n    '''Covers: R1'''\n"
+        "@cocotb.test()\nasync def test_b(dut):\n    '''Covers: R1, R7'''\n"
+        "@cocotb.test()\nasync def test_c(dut):\n    pass\n"
+    )
+    async with server_client as client:
+        await call(client, "create_project", name="adder", **ARGS)
+        await call(client, "write_spec", project="adder", content=SPEC)
+        data = await call(client, "write_test", project="adder", path="test/test.py", content=code)
+    assert data["ok"]
+    assert data["details"]["covers"] == {"test_a": ["R1"], "test_b": ["R1", "R7"], "test_c": []}
+    warnings = data["details"]["covers_warnings"]
+    assert any("unknown requirement R7" in w for w in warnings)
+    assert any("test_c" in w and "no 'Covers:'" in w for w in warnings)
+    assert "test_a -> R1" in data["summary"] and "Warning:" in data["summary"]
+    assert not marker.exists()  # the test file was parsed, never run
+
+
+async def test_write_test_without_valid_spec_skips_id_check(
+    tmp_path: Path, server_client: Client
+) -> None:
+    code = "import cocotb\n@cocotb.test()\nasync def t(dut):\n    '''Covers: R9'''\n"
+    async with server_client as client:
+        await call(client, "create_project", name="adder", **ARGS)
+        (tmp_path / "adder" / "spec.yaml").write_text("not: valid\n")
+        data = await call(client, "write_test", project="adder", path="test/test.py", content=code)
+    assert data["ok"] and data["details"]["covers"] == {"t": ["R9"]}
+    assert data["details"]["covers_warnings"] == []
+    assert "not checked" in data["summary"]
+
+
+async def test_write_test_syntax_error_keeps_the_syntax_report(server_client: Client) -> None:
+    async with server_client as client:
+        await call(client, "create_project", name="adder", **ARGS)
+        data = await call(
+            client, "write_test", project="adder", path="test/test.py", content="def (:\n"
+        )
+    assert not data["ok"] and "SyntaxError" in data["summary"]
+
+
+def test_instructions_put_the_spec_first() -> None:
+    assert INSTRUCTIONS.index("write_spec") < INSTRUCTIONS.index("write_test")
+    assert INSTRUCTIONS.index("write_test") < INSTRUCTIONS.index("write_rtl")
+    assert len(INSTRUCTIONS.encode()) <= 4096
