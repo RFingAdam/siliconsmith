@@ -10,6 +10,7 @@ The loop is: spec, then tests, then the design, then check and simulate on two s
 Rules that always apply:
 
 - Write the spec and the tests before the design. Every requirement needs a test with `Covers: R<n>`.
+- Read `explain('cocotb2-tests')` before writing tests and the style skill for your front-end (`amaranth-style`, `myhdl-style`) before the design.
 - Never edit a test to make a wrong design pass, and never weaken a requirement silently.
 - Stop after 8 `run_tests` tries per simulator on the same failure and report. If a requirement is unclear, ask the user; in a headless run, write your assumption to `open_questions` with `write_spec` and continue.
 - Approving the spec is the owner's step, never yours.
