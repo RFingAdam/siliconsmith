@@ -12,7 +12,7 @@ pydantic before anything is shown.
 The result's `ok` is true only if the emit step was ok, at least one test passed (skipped tests
 do not count) and none failed or errored.
 
-`details` shape (stable; the ledger added in M0-8 records from it):
+`details` shape (stable; the validation ledger records from it, see `ledger.record_from_result`):
 
     sim            "icarus" | "verilator"
     stage          last stage reached: elaborate | ports | lint | build | sim
@@ -43,6 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from siliconsmith.context import ServerContext
 from siliconsmith.covers import CocotbTest, coverage, parse_covers
 from siliconsmith.frontends import Frontend, get_frontend
+from siliconsmith.ledger import record_run
 from siliconsmith.paths import MissingFileError, project_lock, safe_read
 from siliconsmith.project import Project
 from siliconsmith.result import Artifact, ToolResult, make_summary
@@ -396,30 +397,42 @@ def run(
     frontend = get_frontend(project.frontend)
     base = _base_details(simulator, test_filter)
     with project_lock(project.dir):
-        author = read_author(project)
-        early = precheck(project, frontend)
-        if early is not None:
-            base["stage"] = "elaborate"
-            return _retitle(early, base)
-        request = {
-            **frontend.worker_request(project.name, author),
-            "simulator": simulator,
-            "test_filter": test_filter,
-            "waves": bool(waves),
-        }
-        timeout_s = SIM_TIMEOUT_S
+        result = _run_locked(ctx, project, frontend, simulator, test_filter, waves, base)
+        # Every result is a fact about these files (a ToolError is not, and is not recorded).
+        return record_run(project, ctx.image, "run_tests", result)
+
+
+def _run_locked(
+    ctx: ServerContext,
+    project: Project,
+    frontend: Frontend,
+    simulator: Simulator,
+    test_filter: str | None,
+    waves: bool,
+    base: dict[str, Any],
+) -> ToolResult:
+    author = read_author(project)
+    early = precheck(project, frontend)
+    if early is not None:
+        base["stage"] = "elaborate"
+        return _retitle(early, base)
+    request = {
+        **frontend.worker_request(project.name, author),
+        "simulator": simulator,
+        "test_filter": test_filter,
+        "waves": bool(waves),
+    }
+    timeout_s = SIM_TIMEOUT_S
+    try:
         try:
-            try:
-                outcome = ctx.get_runner().run(
-                    "test", request, project_dir=project.dir, timeout_s=timeout_s
-                )
-            except ToolchainError as exc:
-                raise ToolError(str(exc)) from exc
-            return _handle(
-                ctx, project, frontend, author, outcome, simulator, test_filter, timeout_s
+            outcome = ctx.get_runner().run(
+                "test", request, project_dir=project.dir, timeout_s=timeout_s
             )
-        finally:
-            remove_run_dirs(project.dir / "build")
+        except ToolchainError as exc:
+            raise ToolError(str(exc)) from exc
+        return _handle(ctx, project, frontend, author, outcome, simulator, test_filter, timeout_s)
+    finally:
+        remove_run_dirs(project.dir / "build")
 
 
 def _handle(

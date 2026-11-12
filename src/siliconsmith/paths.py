@@ -216,12 +216,14 @@ def safe_read(project_dir: Path, rel: str, max_bytes: int, *, allow_hidden: bool
     return data
 
 
-def atomic_write(project_dir: Path, rel: str, data: bytes) -> None:
+def atomic_write(project_dir: Path, rel: str, data: bytes, *, allow_hidden: bool = False) -> None:
     """Write `data` to `rel` atomically, creating parent directories without following symlinks.
 
     Refuses if the existing target is a symlink, not a regular file, or has several hard links.
+    `allow_hidden` is for Siliconsmith's own files (`.siliconsmith/ledger.json`), never for a
+    path that came from an agent.
     """
-    parts = validate_relpath(rel)
+    parts = validate_relpath(rel, allow_hidden=allow_hidden)
     name = parts[-1]
     with _parent_dir(project_dir, parts, create=True) as dfd:
         with suppress(FileNotFoundError):

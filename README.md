@@ -22,7 +22,8 @@ The server runs on your machine and talks to the agent over standard input and o
 nothing is exposed on the network.
 
 Today the server offers `toolchain_info`, `create_project`, `list_files`, `read_file`,
-`write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests` and `inspect_waves`. Start
+`write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests`, `inspect_waves` and
+`status`. Start
 with `write_spec`: `spec.yaml` says the clock, the pins and the numbered requirements, and
 everything else follows from it. `emit_verilog` turns the design (Amaranth, MyHDL or Verilog)
 into a checked Verilog core plus the Tiny Tapeout wrapper and lints it with Verilator.
@@ -31,6 +32,21 @@ and lints first), and a failure comes back as the test name, the file and line, 
 and the expected and actual values. With `waves=True` it keeps a wave file, and `inspect_waves`
 shows how chosen signals changed as a short table. Emitting and testing need Docker and the
 toolchain image.
+
+`status` shows, in plain English, how far the design has got: is the spec valid, has the owner
+approved it, does the Verilog check out, do the tests pass on both simulators, and does every
+requirement have a passing test. Each step is `pass`, `fail`, `stale` (a file it depends on has
+changed since it ran, so run it again), `not run` or `not available` (it belongs to a later
+milestone). The same table is written to `docs/verification.md` and printed by
+`siliconsmith status <project folder>`. A test run with a `test_filter` never counts, because it
+did not run every test.
+
+Approving the spec is your step, not the agent's. Read `spec.yaml`, then run
+`siliconsmith approve <project folder>` in a terminal; it shows the requirements, asks you to
+type `approve`, and records your git `user.name` and the spec's hash in
+`.siliconsmith/ledger.json`. There is no tool for this and the command refuses to run without a
+terminal. That is an honest-use convention, not a security boundary: it keeps an honest agent
+from approving its own work, and the ledger shows who approved what.
 
 ### Install
 

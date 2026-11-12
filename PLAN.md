@@ -272,7 +272,7 @@ open_questions:  [...]
 **Derived status.** `status` works out each step's state when it is asked, from the ledger and the current files: `pass`, `fail`, `stale` (an input changed since the last run), `not_run`, or `not_available` (the step belongs to a later milestone). Each step has its own inputs:
 
 - approval ← `spec.yaml`;
-- check ← `hdl/**/*.py`, `src/<name>.v`, `info.yaml`, the toolchain image id and the Siliconsmith version (the version fixes the files the tool owns: the generated wrapper and TT's `test/tb.v` and `test/Makefile`);
+- check ← `hdl/**/*.py` (Amaranth, MyHDL) or `src/<name>.v` (Verilog), `info.yaml`, `test/tb.v` and `test/Makefile`, the toolchain image and the Siliconsmith version (the version fixes the files the tool owns: the generated wrapper and the TT template files). The image is identified by its name and tag, which is content-addressed (`ctx-<hash>`), so status never needs Docker; the ledger also records the image id when it is known;
 - simulation ← the check inputs plus `test/**/*.py`;
 - coverage ← the spec plus the latest unfiltered simulation runs.
 
@@ -292,6 +292,8 @@ These file patterns match the write allow-list (section 5.3), so every design or
 10. Silicon bring-up on the TT demo board (shown as `not_available` with its milestone).
 
 A run with a test filter, or with zero tests, never sets a simulation or coverage step.
+
+The check step (3) is set by the latest `emit_verilog` **or** `run_tests` run that reached the lint stage, because `run_tests` re-emits and lints in the same container call. A run that passed the lint stage and then failed in the simulator still counts as a clean check. Each ledger run also stores the `spec.yaml` hash, so that editing the spec makes the coverage step stale (coverage depends on the spec as well as on the simulation runs).
 
 **Approval is the owner's step.** `siliconsmith approve <dir>` is a command-line command only; there is no MCP tool for it. It asks for confirmation on a terminal and records the git `user.name` and the spec hash. This is an **honest-use convention, not a security boundary**: an agent with its own shell could run the command. The docs and the `chip-design-loop` skill say so, and the skill forbids agents from running it.
 
