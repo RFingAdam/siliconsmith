@@ -389,9 +389,12 @@ def run(
     simulator: Simulator,
     test_filter: str | None,
     waves: bool,
+    gl: bool = False,
 ) -> ToolResult:
     if simulator not in ("icarus", "verilator"):
         raise ToolError(f"unknown simulator {simulator!r}; choose icarus or verilator")
+    if gl:
+        _refuse_gate_level(simulator)
     test_filter = _check_filter(test_filter)
     project = get_project(ctx, project_name)
     frontend = get_frontend(project.frontend)
@@ -401,6 +404,19 @@ def run(
         result = _run_locked(ctx, project, frontend, simulator, test_filter, waves, base)
         # Every result is a fact about these files (a ToolError is not, and is not recorded).
         return record_run(project, ctx.image, "run_tests", result, before)
+
+
+def _refuse_gate_level(simulator: str) -> None:
+    """Temporary plumbing: `gl` is in the tool schema, but gate-level simulation is not built."""
+    if simulator != "icarus":
+        raise ToolError(
+            "gate-level simulation runs on icarus only, and is not available yet (milestone "
+            "M1-2, issue #8). Run run_tests without gl for the RTL simulation."
+        )
+    raise ToolError(
+        "gate-level simulation arrives with milestone M1-2 (issue #8); it is not available "
+        "yet. Run run_tests without gl for the RTL simulation."
+    )
 
 
 def _run_locked(
@@ -493,6 +509,10 @@ filtered run never counts as a full run. waves=True keeps a wave file under buil
 inspect_waves. details.tests lists every test with outcome and the requirement ids it covers; \
 details.coverage says which spec.yaml requirements have a passing test. The first Verilator run \
 takes about half a minute; later runs reuse the build.
+
+gl=True is for gate-level simulation: the same tests run on the synthesized sky130 netlist \
+instead of the RTL, on Icarus only. It is not available yet (milestone M1-2), so for now it \
+only returns an error.
 """
 
 
@@ -507,5 +527,6 @@ def register(server: MCPServer, ctx: ServerContext) -> None:
         simulator: Simulator,
         test_filter: str | None = None,
         waves: bool = False,
+        gl: bool = False,
     ) -> ToolResult:
-        return await asyncio.to_thread(run, ctx, project, simulator, test_filter, waves)
+        return await asyncio.to_thread(run, ctx, project, simulator, test_filter, waves, gl)

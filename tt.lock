@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-License-Identifier: Apache-2.0
+#
+# tt.lock: the exact Tiny Tapeout flow versions that Siliconsmith follows.
+#
+# Tiny Tapeout moves its shuttle tags over time, and its GitHub action checks out
+# tt-support-tools at `main` unless told otherwise. Recording everything here means a later
+# change on their side shows up as a deliberate edit to this file, not as a surprise.
+# Verified 2026-11-12 against TinyTapeout/tt-gds-action at tag ttsky26e.
+#
+# M1 (synthesis, gate-level simulation) uses only the sky130 hash for the harden/gl steps,
+# baked into the toolchain image (docker/Dockerfile ARG SKY130_OPEN_PDKS; a unit test keeps the
+# two equal). The rest of this file is used from M2 (layout) and M3 (Tiny Tapeout checks).
+
+shuttle:
+  tag: ttsky26e
+  # The tt-gds-action tag that runs hardening, precheck and gate-level tests for that shuttle.
+  gds_action_tag: ttsky26e
+  gds_action_commit: 395eedb3eeec3c2f4961c3b04ff2cf87f5525636  # date 2026-09-18
+
+tt_support_tools:
+  repo: https://github.com/TinyTapeout/tt-support-tools
+  # The action's `tools-ref` input defaults to `main`; this is main as recorded below.
+  commit: 9d13ff3e3e6202090740110438c6a10c1d62ca0f
+  commit_date: 2026-11-05
+
+librelane:
+  version: 3.0.14  # the version tt-gds-action installs at ttsky26d and ttsky26e
+  image: ghcr.io/librelane/librelane
+  # Multi-arch index digest (what `docker pull ghcr.io/librelane/librelane:3.0.14` resolves).
+  digest: sha256:f91b21d75f79871f9ccf37451020b5d2f7b3236881a997ff709c561e8280a30f
+  # The linux/amd64 image inside that index.
+  amd64_digest: sha256:23fc800d597d39015c537779ab9fc911519558d72737e125ba8efa04314baa25
+
+# Tiny Tapeout uses a different open_pdks (sky130 PDK) build at different steps.
+# The toolchain image uses the harden hash (LibreLane 3.0.14 and gate-level tests use it too).
+sky130_open_pdks:
+  harden: 8afc8346a57fe1ab7934ba5a6056ea8b43078e71
+  gl: 8afc8346a57fe1ab7934ba5a6056ea8b43078e71
+  precheck: 0536d02d875c8f67dd7cca3902ac457e62f20005

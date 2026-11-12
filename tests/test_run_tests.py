@@ -372,6 +372,20 @@ def test_bad_arguments(tmp_path: Path) -> None:
     assert runner.calls == []
 
 
+def test_gl_with_verilator_is_refused(tmp_path: Path) -> None:
+    ctx, _, runner = setup(tmp_path)
+    with pytest.raises(ToolError, match="gate-level simulation runs on icarus only"):
+        run(ctx, "chip", "verilator", None, False, gl=True)
+    assert runner.calls == []
+
+
+def test_gl_with_icarus_says_it_is_not_there_yet(tmp_path: Path) -> None:
+    ctx, _, runner = setup(tmp_path)
+    with pytest.raises(ToolError, match=r"arrives with milestone M1-2 \(issue #8\)"):
+        run(ctx, "chip", "icarus", None, False, gl=True)
+    assert runner.calls == []
+
+
 def test_summary_stays_within_limits_for_many_failures(tmp_path: Path) -> None:
     tests = [
         sim_test(f"test_{n}_" + "x" * 150, "fail", assertion="assert " + "a" * 250 + " == 1",
@@ -411,3 +425,11 @@ async def test_tools_are_registered_and_validate_arguments(tmp_path: Path) -> No
         assert bad.is_error
         missing = await client.call_tool("run_tests", {"project": "nosuch", "simulator": "icarus"})
         assert missing.is_error
+
+        gl_verilator = await client.call_tool(
+            "run_tests", {"project": "x", "simulator": "verilator", "gl": True}
+        )
+        assert gl_verilator.is_error and "icarus only" in str(gl_verilator.content)
+        schema = next(t for t in (await client.list_tools()).tools if t.name == "run_tests")
+        assert schema.input_schema["properties"]["gl"]["default"] is False
+        assert "gate-level" in (schema.description or "")

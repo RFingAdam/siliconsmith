@@ -42,12 +42,21 @@ class _InfoError(BaseModel):
     message: str = ""
 
 
+class _InfoPdk(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore")
+    name: str
+    open_pdks: str
+    libraries: list[str]
+    corner: str
+
+
 class _InfoResult(BaseModel):
     """The shape of the info verb's result. It comes from the container, so it is checked."""
 
     model_config = ConfigDict(strict=True, extra="ignore")
     ok: bool
     versions: dict[str, str | None] = {}
+    pdk: _InfoPdk | None = None
     error: _InfoError | None = None
 
 
@@ -78,7 +87,6 @@ def collect(ctx: ServerContext) -> ToolResult:
         "image_size_bytes": None,
         "versions": {},
         "pdk": None,
-        "pdk_note": "The PDK arrives in milestone M1; nothing to report yet.",
     }
     status = _host_status(runner)
     if status is not None:
@@ -144,7 +152,19 @@ def collect(ctx: ServerContext) -> ToolResult:
         mode = "rootless" if details["rootless"] else "rootful"
         lines.append(f"  docker {details['docker_server_version']}, {mode} mode")
     lines += [f"  {tool}: {versions.get(tool)}" for tool in TOOL_ORDER]
-    lines.append("  pdk: not installed yet (arrives in M1)")
+    if info.pdk is not None:
+        pdk = info.pdk.model_dump()
+        details["pdk"] = pdk
+        lines.append(
+            f"  pdk: {pdk['name']} (open_pdks {pdk['open_pdks'][:8]}), "
+            f"{', '.join(pdk['libraries'])}, corner {pdk['corner']}"
+        )
+    else:
+        details["pdk_note"] = (
+            "This image has no sky130 files (/opt/pdk/manifest.json is missing), so it is "
+            "older than milestone M1. Synthesis needs a newer image."
+        )
+        lines.append("  pdk: none in this image (older than M1)")
     if broken:
         lines.insert(1, f"NOT READY: no version from {', '.join(broken)}.")
         return ToolResult.from_lines(

@@ -126,14 +126,17 @@ def test_everything_passes_after_full_runs(tmp_path: Path) -> None:
         "sim_icarus": "pass",
         "sim_verilator": "pass",
         "coverage": "pass",
-        "synth_gl": "not_available",
+        "synthesis": "not_available",
+        "gate_sim": "not_available",
+        "equivalence": "not_available",
         "layout": "not_available",
         "tt_precheck": "not_available",
         "bring_up": "not_available",
     }
     by_key = {s.key: s for s in report.steps}
     assert by_key["sim_icarus"].evidence == "run_tests icarus: 2/2 passed"
-    assert by_key["synth_gl"].evidence == "Comes with milestone M1"
+    for key in ("synthesis", "gate_sim", "equivalence"):
+        assert by_key[key].evidence == "Comes with milestone M1"
     assert by_key["layout"].evidence == "Comes with milestone M2"
     assert by_key["tt_precheck"].evidence == "Comes with milestone M3"
     assert by_key["bring_up"].evidence == "Comes with milestone M3"
@@ -146,7 +149,7 @@ def test_new_project_is_not_run_everywhere(tmp_path: Path) -> None:
     assert got["spec_valid"] == "pass"
     for key in ("spec_approved", "check", "sim_icarus", "sim_verilator", "coverage"):
         assert got[key] == "not_run"
-    assert [got[k] for k in STEP_KEYS[6:]] == ["not_available"] * 4
+    assert [got[k] for k in STEP_KEYS[6:]] == ["not_available"] * 6
 
 
 def test_invalid_and_missing_spec(tmp_path: Path) -> None:
@@ -550,7 +553,7 @@ async def test_tool_summary_fits_in_the_worst_case(tmp_path: Path) -> None:
     add_run(project, sim="verilator", tests=long_names, ok=False)
     out = await call_status(tmp_path)
     assert "more lines in details" not in out["summary"]
-    assert len(out["summary"].splitlines()) == 12 and len(out["summary"]) < 2000
+    assert len(out["summary"].splitlines()) == 14 and len(out["summary"]) < 2000
 
 
 def test_document_content(tmp_path: Path) -> None:
