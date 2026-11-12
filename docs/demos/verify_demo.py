@@ -27,6 +27,7 @@ import json
 import re
 import shutil
 import sys
+import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -36,6 +37,7 @@ from typing import Any
 from mcp import Client
 
 from siliconsmith.runners.docker import DEFAULT_IMAGE
+from siliconsmith.scaffold import create_project as scaffold_project
 from siliconsmith.server import build_server
 
 DEMOS_DIR = Path(__file__).resolve().parent
@@ -53,9 +55,13 @@ EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 UUID_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
-READ_MEMORY_RE = re.compile(
-    r"(?i)\b(read|reading|load|loaded|loading)\b.*\b(CLAUDE\.md|AGENTS\.md)\b"
-)
+# Any mention at all: with project memory switched off, the log has no reason to name these files.
+MEMORY_FILE_RE = re.compile(r"(?i)CLAUDE\.local\.md|CLAUDE\.md|AGENTS\.md")
+REFERENCE_TEST_NAMES = ["test_counter_reference"]
+# What may stay in test/ when the reference test is used: the Tiny Tapeout test harness files that
+# no write tool can touch. Everything else (agent-written helpers, folders) is removed.
+HARNESS_FILES = frozenset({"Makefile", "requirements.txt", "tb.v"})
+STARTUP_HOOK_NAMES = ("sitecustomize.py", "usercustomize.py")
 LANGUAGES = {
     ".py": "python",
     ".v": "verilog",
@@ -174,7 +180,9 @@ def short_name(tool: str) -> str:
 # -- a. isolation checks -----------------------------------------------------------------------
 
 
-def isolation_checks(events: list[dict[str, Any]], debug_log: str | None) -> list[Check]:
+def isolation_checks(
+    events: list[dict[str, Any]], debug_log: str | None, meta: dict[str, Any] | None = None
+) -> list[Check]:
     checks: list[Check] = []
     init = init_event(events)
 
@@ -208,15 +216,28 @@ def isolation_checks(events: list[dict[str, Any]], debug_log: str | None) -> lis
         )
     )
 
-    plugins = init.get("plugins") or []
-    outside = [p.get("name") for p in plugins if p.get("path") != "builtin"]
-    checks.append(
-        Check(
-            "only built-in plugins",
-            not outside,
-            f"{len(plugins)} built-in plugins" if not outside else f"non-built-in: {outside}",
+    plugins = init.get("plugins")
+    outside = [p.get("name") for p in plugins or [] if p.get("path") != "builtin"]
+    memory_plugin = [
+        p
+        for p in plugins or []
+        if p.get("name") == "cc-plugin-agents-md" and p.get("path") == "builtin"
+    ]
+    if outside:
+        checks.append(Check("only built-in plugins", False, f"non-built-in: {outside}"))
+    elif not memory_plugin:
+        checks.append(
+            Check(
+                "only built-in plugins",
+                False,
+                "the init event does not list the built-in cc-plugin-agents-md plugin that the "
+                "settings override targets",
+            )
         )
-    )
+    else:
+        checks.append(
+            Check("only built-in plugins", True, f"{len(plugins or [])} built-in plugins")
+        )
 
     hooks = [
         e for e in events if "hook" in str(e.get("type", "")) or "hook" in str(e.get("subtype", ""))
@@ -236,22 +257,7 @@ def isolation_checks(events: list[dict[str, Any]], debug_log: str | None) -> lis
         Check("permission mode dontAsk", mode == "dontAsk", f"permissionMode is {mode!r}")
     )
 
-    if debug_log is None:
-        checks.append(Check("no project memory", False, "debug.log is missing"))
-    else:
-        reads = [
-            ln.strip()
-            for ln in debug_log.splitlines()
-            if READ_MEMORY_RE.search(ln) and "project memory is off" not in ln
-        ]
-        if "project memory is off" not in debug_log:
-            checks.append(
-                Check("no project memory", False, "debug.log lacks 'project memory is off'")
-            )
-        elif reads:
-            checks.append(Check("no project memory", False, f"memory file read: {reads[0][:120]}"))
-        else:
-            checks.append(Check("no project memory", True, "project memory is off"))
+    checks.append(memory_check(debug_log, meta))
 
     foreign = sorted(
         {
@@ -272,14 +278,52 @@ def isolation_checks(events: list[dict[str, Any]], debug_log: str | None) -> lis
     )
 
     final = result_event(events)
-    checks.append(
-        Check(
-            "session finished",
-            final is not None,
-            "result event found" if final else "no result event: the session did not finish",
+    if final is None:
+        checks.append(
+            Check("session finished", False, "no result event: the session did not finish")
         )
-    )
+    else:
+        subtype = final.get("subtype")
+        ended_well = subtype == "success" and not final.get("is_error")
+        checks.append(
+            Check(
+                "session finished",
+                ended_well,
+                "result subtype success"
+                if ended_well
+                else f"ended with subtype {subtype!r}, is_error={final.get('is_error')}",
+            )
+        )
     return checks
+
+
+def memory_check(debug_log: str | None, meta: dict[str, Any] | None) -> Check:
+    """No project memory: the runner's own record plus a debug.log with no mention of the files.
+
+    The runner records in meta.json that it checked every parent folder of the demo folder and
+    that it set CLAUDE_CODE_DISABLE_CLAUDE_MDS=1. A real debug.log has no line that says memory
+    is off, so its absence of any CLAUDE.md / AGENTS.md mention is the evidence from the session.
+    """
+    flags = (meta or {}).get("memory_isolation")
+    if not isinstance(flags, dict) or not (
+        flags.get("ancestors_clear") is True and flags.get("claude_mds_disabled") is True
+    ):
+        return Check(
+            "no project memory",
+            False,
+            "meta.json does not record that the runner checked the parent folders and set "
+            "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1",
+        )
+    if debug_log is None:
+        return Check("no project memory", False, "debug.log is missing")
+    mention = next((ln.strip() for ln in debug_log.splitlines() if MEMORY_FILE_RE.search(ln)), None)
+    if mention is not None:
+        return Check(
+            "no project memory", False, f"debug.log mentions a memory file: {mention[:120]}"
+        )
+    return Check(
+        "no project memory", True, "runner checks recorded; debug.log never names a memory file"
+    )
 
 
 # -- b. metrics --------------------------------------------------------------------------------
@@ -381,10 +425,15 @@ class Rerun:
     passed: int
     failed: int
     detail: str  # the tool's first summary line, or why it could not run
+    tests: list[str] = field(default_factory=list)  # names of the tests that ran
 
     @property
     def success(self) -> bool:
-        return self.ok and self.passed > 0 and self.failed == 0
+        good = self.ok and self.passed > 0 and self.failed == 0
+        if self.label == "reference":
+            # The frozen test must be the one that ran, and the only one.
+            return good and self.tests == REFERENCE_TEST_NAMES
+        return good
 
     def text(self) -> str:
         return f"{self.passed} passed, {self.failed} failed"
@@ -400,12 +449,134 @@ def copy_project(source: Path, scratch_root: Path) -> Path:
 
 
 def use_reference_test(project: Path, reference: Path = REFERENCE_TEST) -> None:
-    """Replace every test with the frozen reference test, as `test/test.py`."""
+    """Rebuild `test/` so the frozen reference test is the only agent-independent code in it.
+
+    The simulator puts `test/` first on its Python path, so any agent-written module there (a
+    `sitecustomize.py`, a helper, a folder) could change the result. Everything except the
+    harness files (HARNESS_FILES) is removed, then the reference is written as `test/test.py`.
+    """
     test_dir = project / "test"
     test_dir.mkdir(exist_ok=True)
-    for old in test_dir.glob("test*.py"):
-        old.unlink()
+    for entry in list(test_dir.iterdir()):
+        if entry.name in HARNESS_FILES and entry.is_file() and not entry.is_symlink():
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
     (test_dir / "test.py").write_text(reference.read_text())
+
+
+def find_startup_hooks(project: Path) -> list[str]:
+    """Files Python runs on its own at start-up (sitecustomize, usercustomize, *.pth)."""
+    return [
+        p.relative_to(project).as_posix()
+        for p in sorted(project.rglob("*"))
+        if (p.name in STARTUP_HOOK_NAMES or p.suffix == ".pth")
+        and "build" not in p.relative_to(project).parts
+    ]
+
+
+def last_writes(events: list[dict[str, Any]], project: str) -> dict[str, str]:
+    """The last content the agent wrote to each path of `project` with the write tools."""
+    results = tool_results(events)
+    last: dict[str, str] = {}
+    for block in tool_uses(events):
+        tool = short_name(str(block.get("name")))
+        args = block.get("input") if isinstance(block.get("input"), dict) else {}
+        got = results.get(str(block.get("id")))
+        if tool not in ("write_rtl", "write_test", "write_spec") or got is None:
+            continue
+        if args.get("project") != project or not isinstance(args.get("content"), str):
+            continue
+        # write_spec writes only a valid spec; the others write the file even if the result
+        # reports a syntax error, and a tool error (is_error) means nothing was written.
+        if tool == "write_spec":
+            if not result_ok(got):
+                continue
+            rel = "spec.yaml"
+        else:
+            if got.get("is_error") or not isinstance(args.get("path"), str):
+                continue
+            rel = args["path"]
+        last[rel] = args["content"]
+    return last
+
+
+def agent_writable_files(project: Path, frontend: str) -> list[str]:
+    """Files the write tools can create or change (generated files are not included)."""
+    rels = ["spec.yaml"]
+    if frontend == "verilog":
+        rels.append(f"src/{project.name}.v")
+    for sub in ("hdl", "test"):
+        base = project / sub
+        if base.is_dir():
+            rels += [
+                p.relative_to(project).as_posix()
+                for p in sorted(base.rglob("*.py"))
+                if "build" not in p.relative_to(project).parts
+            ]
+    return [r for r in rels if (project / r).is_file()]
+
+
+def replay_checks(events: list[dict[str, Any]], project: Path, meta: dict[str, Any]) -> list[Check]:
+    """Tie the project folder to the recorded session: nothing the session did not write."""
+    results = tool_results(events)
+    created = [
+        b.get("input") or {}
+        for b in tool_uses(events)
+        if short_name(str(b.get("name"))) == "create_project"
+        and str(b.get("id")) in results
+        and result_ok(results[str(b["id"])])
+    ]
+    mine = [c for c in created if c.get("name") == project.name]
+    if not mine:
+        return [
+            Check(
+                "project matches the session",
+                False,
+                f"the stream has no successful create_project call for {project.name!r}",
+            )
+        ]
+    call = mine[-1]
+    frontend = str(call.get("frontend") or meta.get("frontend") or "")
+    writes = last_writes(events, project.name)
+    problems: list[str] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="ss-scaffold-") as tmp:
+            fresh, _files = scaffold_project(
+                Path(tmp),
+                project.name,
+                frontend,
+                str(call.get("author", "")),
+                str(call.get("description", "")),
+                call.get("title"),
+            )
+            for rel in agent_writable_files(project, frontend):
+                disk = (project / rel).read_bytes()
+                if rel in writes:
+                    if disk != writes[rel].encode("utf-8"):
+                        problems.append(f"{rel} differs from what the session last wrote")
+                elif not (fresh.dir / rel).is_file() or (fresh.dir / rel).read_bytes() != disk:
+                    problems.append(f"{rel} was not written in the session and is not the starter")
+    except Exception as exc:
+        return [
+            Check("project matches the session", False, f"could not rebuild the starter: {exc}")
+        ]
+    problems += [
+        f"{rel} was written in the session but is missing from the project"
+        for rel in writes
+        if not (project / rel).is_file()
+    ]
+    if problems:
+        return [Check("project matches the session", False, "; ".join(problems[:4]))]
+    return [
+        Check(
+            "project matches the session",
+            True,
+            f"{len(writes)} written files match the stream; the rest are the starter",
+        )
+    ]
 
 
 async def run_sims(label: str, root: Path, name: str, image: str) -> list[Rerun]:
@@ -419,10 +590,11 @@ async def run_sims(label: str, root: Path, name: str, image: str) -> list[Rerun]
                 runs.append(Rerun(label, sim, False, 0, 0, str(exc)))
                 continue
             tests = out.get("details", {}).get("tests", [])
+            names = [str(t.get("name")) for t in tests]
             passed = sum(1 for t in tests if t.get("outcome") == "pass")
             failed = sum(1 for t in tests if t.get("outcome") in ("fail", "error"))
             first = out["summary"].splitlines()[0] if out["summary"] else ""
-            runs.append(Rerun(label, sim, bool(out.get("ok")), passed, failed, first))
+            runs.append(Rerun(label, sim, bool(out.get("ok")), passed, failed, first, names))
     return runs
 
 
@@ -451,10 +623,16 @@ def sanitize(text: str, demo_dir: Path) -> str:
 
 def leak_check(text: str) -> list[str]:
     """What a published transcript must not contain. An empty list means clean."""
+    # The wording of the reasons never repeats the needle, so a reason can itself be published.
     problems = []
-    for needle in ("/home/", "/tmp/ss-demo", "session_id", "system prompt"):
+    for needle, reason in (
+        ("/home/", "contains a home-directory path"),
+        ("/tmp/ss-demo", "contains a demo-folder path"),
+        ("session_id", "contains a session-id field"),
+        ("system prompt", "mentions the system-prompt text"),
+    ):
         if needle in text:
-            problems.append(f"contains {needle!r}")
+            problems.append(reason)
     if EMAIL_RE.search(text):
         problems.append("contains an e-mail address (something@domain)")
     for field_name in (
@@ -464,7 +642,7 @@ def leak_check(text: str) -> list[str]:
         '"claude_code_version"',
     ):
         if field_name in text:
-            problems.append(f"contains init field {field_name}")
+            problems.append(f"contains init field {field_name.strip(chr(34))}")
     if UUID_RE.search(text):
         problems.append("contains a uuid")
     return problems
@@ -608,22 +786,31 @@ def mark(ok: bool | None) -> str:
     return "n/a" if ok is None else ("pass" if ok else "FAIL")
 
 
+def exit_text(code: Any) -> str:
+    return "killed on timeout" if code is None else str(code)
+
+
+def transcript_cell(name: str) -> str:
+    return name if name.startswith("withheld") else f"[{name}]({name})"
+
+
 def metrics_table(rows: list[dict[str, Any]]) -> str:
     head = (
-        "| Date | Front-end | Model | Turns | run_tests calls | Cost (USD) | Minutes "
+        "| Date | Front-end | Model | Turns | Result | run_tests calls | Cost (USD) | Minutes "
         "| Agent: Icarus | Agent: Verilator | Reference: Icarus | Reference: Verilator "
         "| Status | Passed | Transcript |"
     )
-    lines = [head, "|" + " --- |" * 14]
+    lines = [head, "|" + " --- |" * 15]
     for r in rows:
         cost = r.get("cost_usd")
         lines.append(
-            "| {date} | {fe} | {model} | {turns} | {runs} | {cost} | {mins} | {ai} | {av} "
-            "| {ri} | {rv} | {status} | {passed} | [{t}]({t}) |".format(
+            "| {date} | {fe} | {model} | {turns} | {result} | {runs} | {cost} | {mins} | {ai} "
+            "| {av} | {ri} | {rv} | {status} | {passed} | {t} |".format(
                 date=r.get("date", ""),
                 fe=r.get("frontend", ""),
                 model=r.get("model", ""),
                 turns=r.get("num_turns", ""),
+                result=f"{r.get('result_subtype')} (exit {exit_text(r.get('claude_exit_code'))})",
                 runs=r.get("run_tests_calls", ""),
                 cost="" if cost is None else f"{cost:.2f}",
                 mins=r.get("duration_min", ""),
@@ -633,7 +820,7 @@ def metrics_table(rows: list[dict[str, Any]]) -> str:
                 rv=mark(r.get("reference_verilator")),
                 status=r.get("status_summary", ""),
                 passed="yes" if r.get("passed") else "no",
-                t=r.get("transcript", ""),
+                t=transcript_cell(str(r.get("transcript", ""))),
             )
         )
     return "\n".join(lines)
@@ -657,13 +844,29 @@ def record_attempt(
     reruns: list[Rerun],
     status_summary: str,
     passed: bool,
+    leaks: list[str] | None = None,
 ) -> str:
-    """Copy the transcript, append a row to metrics.json, regenerate the README table."""
+    """Copy the transcript, append a row to metrics.json, regenerate the README table.
+
+    If the leak check failed (`leaks` is not empty) the transcript is not copied; the row is still
+    added, with a note instead of a file name. Recording the same demo folder twice is refused.
+    Returns the transcript file name, or the note that replaced it.
+    """
+    path = demos_dir / "metrics.json"
+    existing = load_metrics(path)
+    demo_id = meta.get("demo_id")
+    if demo_id and any(r.get("demo_id") == demo_id for r in existing):
+        raise DemoError(
+            f"demo {demo_id} is already recorded in metrics.json; not recording it twice"
+        )
     day = str(meta.get("date", ""))[:10].replace("-", "") or datetime.now(UTC).strftime("%Y%m%d")
-    name = next_transcript_name(demos_dir, str(meta["frontend"]), day)
-    (demos_dir / name).write_text(transcript)
+    if leaks:
+        name = f"withheld: leak check failed ({'; '.join(leaks)})"
+    else:
+        name = next_transcript_name(demos_dir, str(meta["frontend"]), day)
     by = {(r.label, r.simulator): r.success for r in reruns}
     row = {
+        "demo_id": demo_id,
         "date": str(meta.get("date", ""))[:10],
         "frontend": meta.get("frontend"),
         "model": meta.get("model"),
@@ -671,6 +874,8 @@ def record_attempt(
         "tools_sha": meta.get("tools_sha"),
         "tools_dirty": meta.get("tools_dirty"),
         "num_turns": metrics.get("num_turns"),
+        "result_subtype": metrics.get("result_subtype"),
+        "claude_exit_code": meta.get("claude_exit_code"),
         "run_tests_calls": metrics.get("run_tests_calls"),
         "cost_usd": metrics.get("cost_usd"),
         "duration_min": metrics.get("duration_min"),
@@ -682,8 +887,13 @@ def record_attempt(
         "passed": passed,
         "transcript": name,
     }
-    path = demos_dir / "metrics.json"
-    rows = [*load_metrics(path), row]
+    # The row is public too: check its values before anything is written.
+    row_leaks = leak_check(json.dumps([str(v) for v in row.values()]))
+    if row_leaks:
+        raise DemoError(f"the metrics row would leak: {'; '.join(row_leaks)}; nothing recorded")
+    if not leaks:
+        (demos_dir / name).write_text(transcript)
+    rows = [*existing, row]
     path.write_text(json.dumps(rows, indent=2) + "\n")
     update_readme(demos_dir / "README.md", rows)
     return name
@@ -719,7 +929,7 @@ async def verify_async(demo: Path, image: str = DEFAULT_IMAGE) -> Report:
     debug = demo / "debug.log"
     report = Report(meta=meta)
     report.checks = isolation_checks(
-        events, debug.read_text(errors="replace") if debug.is_file() else None
+        events, debug.read_text(errors="replace") if debug.is_file() else None, meta
     )
     report.metrics = extract_metrics(events)
     report.checks.append(
@@ -735,13 +945,31 @@ async def verify_async(demo: Path, image: str = DEFAULT_IMAGE) -> Report:
     try:
         project = find_project(demo / "work")
         report.checks.append(Check("one project built", True, project.name))
-        # The snapshot comes first: it shows what the agent left, before any re-run.
-        snapshot = await status_snapshot(project.parent, project.name, image)
-        report.status_summary = snapshot.summary
-        scratch = demo / "verify"
-        report.reruns = await rerun_all(project, scratch, image)
     except DemoError as exc:
         report.checks.append(Check("one project built", False, str(exc)))
+    if project is not None:
+        hooks = find_startup_hooks(project)
+        report.checks.append(
+            Check(
+                "no Python start-up hooks",
+                not hooks,
+                "no sitecustomize, usercustomize or .pth file"
+                if not hooks
+                else f"found {hooks}: they run inside the simulator and could change results",
+            )
+        )
+        report.checks += replay_checks(events, project, meta)
+        # The snapshot comes first: it shows what the agent left, before any re-run.
+        try:
+            snapshot = await status_snapshot(project.parent, project.name, image)
+            report.status_summary = snapshot.summary
+            report.checks.append(Check("status snapshot", True, snapshot.summary))
+        except DemoError as exc:
+            report.checks.append(Check("status snapshot", False, str(exc)))
+        try:
+            report.reruns = await rerun_all(project, demo / "verify", image)
+        except DemoError as exc:
+            report.checks.append(Check("independent re-runs", False, str(exc)))
 
     report.transcript = sanitize(
         build_transcript(meta, events, project, snapshot, report.reruns, report.checks), demo
@@ -783,16 +1011,24 @@ def main(argv: list[str] | None = None) -> int:
     report = asyncio.run(verify_async(demo))
     print_report(report)
     if args.record:
-        name = record_attempt(
-            DEMOS_DIR,
-            report.transcript,
-            report.meta,
-            report.metrics,
-            report.reruns,
-            report.status_summary,
-            report.passed,
-        )
-        print(f"Recorded docs/demos/{name} and updated metrics.json and README.md")
+        try:
+            name = record_attempt(
+                DEMOS_DIR,
+                report.transcript,
+                report.meta,
+                report.metrics,
+                report.reruns,
+                report.status_summary,
+                report.passed,
+                report.leaks,
+            )
+        except DemoError as exc:
+            print(f"Not recorded: {exc}")
+            return 1
+        if report.leaks:
+            print(f"Transcript withheld; recorded the attempt in metrics.json only ({name})")
+        else:
+            print(f"Recorded docs/demos/{name} and updated metrics.json and README.md")
     return 0 if report.passed else 1
 
 

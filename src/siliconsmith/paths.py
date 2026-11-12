@@ -334,6 +334,11 @@ def _never(rel: str, why: str) -> ToolError:
     return _err(f"{rel!r} cannot be written by a tool: {why}")
 
 
+# Python runs these automatically at start-up, so a file with one of these names could change the
+# result of any test run, like conftest.py.
+STARTUP_HOOK_NAMES = ("sitecustomize.py", "usercustomize.py")
+
+
 def classify_write(name: str, frontend: str, rel: str) -> Category:
     """Classify a write target (PLAN.md section 5.3) or raise ToolError naming the right file.
 
@@ -354,6 +359,10 @@ def classify_write(name: str, frontend: str, rel: str) -> Category:
         raise _never(rel, "Makefiles are part of the Tiny Tapeout template and are never writable")
     if last == "conftest.py":
         raise _never(rel, "conftest.py can change how tests run, so it is not writable")
+    if last in STARTUP_HOOK_NAMES:
+        raise _never(
+            rel, f"{last} runs inside every Python process that sees it, so it is not writable"
+        )
     if rel == "siliconsmith.toml":
         raise _never(rel, "it records the project name and front end and is written once")
     if rel == "info.yaml":

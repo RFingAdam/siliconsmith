@@ -37,16 +37,27 @@ Siliconsmith's whole first milestone is built around. The prompt is exactly:
 `run_demo.py` starts `claude -p` with a clean environment (no API key, no shell setup), only the
 Siliconsmith MCP server, `--tools ""` plus a deny list, `--permission-mode dontAsk`, no user or
 local settings, and a demo folder under `/tmp` so no parent folder can hold an `AGENTS.md` or
-`CLAUDE.md` (the runner checks). `verify_demo.py` then reads the raw event stream and the debug
-log and checks that the agent really had only our tools, that the only MCP server was ours, that
-every plugin was built in, that no hook ran, that no project memory file was read, and that every
-tool call was ours. It also checks that the sanitized transcript does not leak a home directory,
-e-mail address, session id or the system prompt. The raw stream is never committed.
+`CLAUDE.md` (the runner checks every parent folder and records that in `meta.json`, together with
+the fact that it set `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`). `verify_demo.py` then reads the raw
+event stream and the debug log and checks that the agent really had only our tools, that the
+only MCP server was ours, that every plugin was built in (and the memory plugin was loaded), that
+no hook ran, that the debug log never names a memory file, that every tool call was ours, and
+that the session ended with result `success`.
+
+It also ties the project folder to the session: every file the agent could write (the design,
+`spec.yaml`, the tests) must be byte-for-byte the last thing the session wrote to it, or still be
+the untouched starter file, and no `sitecustomize.py`, `usercustomize.py` or `.pth` file may exist
+(Python runs those by itself inside the simulator). The reference re-run happens on a copy whose
+`test/` folder is rebuilt from scratch, so only the frozen reference test runs, and it must be
+the only test that ran. Last, the checks look in the sanitized transcript for a home path, an
+e-mail address, a session id, init fields or system-prompt text. If any are found, the transcript
+is not copied into this folder; the attempt is still listed below. The raw stream is never
+committed.
 
 ## How to re-run
 
 ```bash
-docker pull ghcr.io/rfingadam/siliconsmith-toolchain:ctx-ab445ef2bfa2   # once
+# once: pull the toolchain image named in the "Toolchain image" section of the top-level README
 uv run python docs/demos/run_demo.py --frontend verilog                 # or amaranth, myhdl
 ```
 

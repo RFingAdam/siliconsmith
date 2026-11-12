@@ -41,12 +41,17 @@ def debug() -> str:
     return (FIXTURE / "debug.log").read_text()
 
 
+GOOD_META = {"memory_isolation": {"ancestors_clear": True, "claude_mds_disabled": True}}
+
+
 def by_name(checks: list[Any]) -> dict[str, Any]:
     return {c.name: c for c in checks}
 
 
-def failed(events: list[dict[str, Any]], debug: str | None) -> set[str]:
-    return {c.name for c in vd.isolation_checks(events, debug) if not c.passed}
+def failed(
+    events: list[dict[str, Any]], debug: str | None, meta: dict[str, Any] | None = GOOD_META
+) -> set[str]:
+    return {c.name for c in vd.isolation_checks(events, debug, meta) if not c.passed}
 
 
 def init_of(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -101,13 +106,31 @@ def test_permission_mode_must_be_dont_ask(events: list[dict[str, Any]], debug: s
     assert failed(events, debug) == {"permission mode dontAsk"}
 
 
-def test_missing_memory_marker_fails(events: list[dict[str, Any]]) -> None:
-    assert failed(events, "[DEBUG] nothing here\n") == {"no project memory"}
+def test_plugins_must_include_the_memory_plugin(events: list[dict[str, Any]], debug: str) -> None:
+    init_of(events)["plugins"] = []
+    assert failed(events, debug) == {"only built-in plugins"}
+    del init_of(events)["plugins"]
+    assert failed(events, debug) == {"only built-in plugins"}
+
+
+def test_a_real_debug_log_without_a_marker_line_passes(events: list[dict[str, Any]]) -> None:
+    # Real runs never log "project memory is off"; the runner record is the evidence.
+    assert failed(events, "[DEBUG] nothing here\n") == set()
+
+
+def test_memory_check_needs_the_runner_record(events: list[dict[str, Any]], debug: str) -> None:
+    assert failed(events, debug, None) == {"no project memory"}
+    assert failed(events, debug, {}) == {"no project memory"}
+    off = {"memory_isolation": {"ancestors_clear": True, "claude_mds_disabled": False}}
+    assert failed(events, debug, off) == {"no project memory"}
     assert failed(events, None) == {"no project memory"}
 
 
-def test_reading_a_memory_file_fails(events: list[dict[str, Any]], debug: str) -> None:
-    assert failed(events, debug + "[DEBUG] Loaded CLAUDE.md from /x\n") == {"no project memory"}
+@pytest.mark.parametrize("name", ["CLAUDE.md", "AGENTS.md", "CLAUDE.local.md", "claude.md"])
+def test_any_mention_of_a_memory_file_fails(
+    events: list[dict[str, Any]], debug: str, name: str
+) -> None:
+    assert failed(events, debug + f"[DEBUG] something about {name} here\n") == {"no project memory"}
 
 
 def test_foreign_tool_use_fails(events: list[dict[str, Any]], debug: str) -> None:
@@ -123,6 +146,18 @@ def test_foreign_tool_use_fails(events: list[dict[str, Any]], debug: str) -> Non
 
 def test_missing_result_event_fails(events: list[dict[str, Any]], debug: str) -> None:
     assert failed([e for e in events if e["type"] != "result"], debug) == {"session finished"}
+
+
+@pytest.mark.parametrize(
+    ("subtype", "is_error"),
+    [("error_max_turns", True), ("error_during_execution", True), ("success", True)],
+)
+def test_a_session_that_did_not_succeed_fails(
+    events: list[dict[str, Any]], debug: str, subtype: str, is_error: bool
+) -> None:
+    final = next(e for e in events if e["type"] == "result")
+    final["subtype"], final["is_error"] = subtype, is_error
+    assert failed(events, debug) == {"session finished"}
 
 
 # -- metrics -------------------------------------------------------------------------------
@@ -190,16 +225,120 @@ def test_reference_copy_replaces_every_test(tmp_path: Path) -> None:
     (project / "test").mkdir(parents=True)
     (project / "test" / "test.py").write_text("agent")
     (project / "test" / "test_extra.py").write_text("agent")
-    (project / "test" / "helper.py").write_text("keep")
+    (project / "test" / "helper.py").write_text("agent")
+    (project / "test" / "sitecustomize.py").write_text("agent")
+    (project / "test" / "tb.v").write_text("harness")
+    (project / "test" / "sub").mkdir()
+    (project / "test" / "sub" / "x.py").write_text("agent")
     (project / "build").mkdir()
     (project / "build" / "x").write_text("x")
     copy_root = tmp_path / "scratch"
     copied = vd.copy_project(project, copy_root)
     assert copied == copy_root / "p" and not (copied / "build").exists()
     vd.use_reference_test(copied)
-    assert sorted(p.name for p in (copied / "test").iterdir()) == ["helper.py", "test.py"]
+    assert sorted(p.name for p in (copied / "test").iterdir()) == ["tb.v", "test.py"]
     assert "test_counter_reference" in (copied / "test" / "test.py").read_text()
     assert (project / "test" / "test.py").read_text() == "agent"  # the original is untouched
+
+
+def test_startup_hooks_are_found(tmp_path: Path) -> None:
+    (tmp_path / "test").mkdir()
+    assert vd.find_startup_hooks(tmp_path) == []
+    (tmp_path / "test" / "sitecustomize.py").write_text("")
+    (tmp_path / "hdl").mkdir()
+    (tmp_path / "hdl" / "x.pth").write_text("")
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "usercustomize.py").write_text("")  # tool output, not scanned
+    assert vd.find_startup_hooks(tmp_path) == ["hdl/x.pth", "test/sitecustomize.py"]
+
+
+def test_reference_rerun_must_run_exactly_the_reference_test() -> None:
+    ok = vd.Rerun("reference", "icarus", True, 1, 0, "", ["test_counter_reference"])
+    assert ok.success
+    assert not vd.Rerun("reference", "icarus", True, 1, 0, "", ["test_other"]).success
+    assert not vd.Rerun(
+        "reference", "icarus", True, 2, 0, "", ["test_counter_reference", "t2"]
+    ).success
+    assert vd.Rerun("agent", "icarus", True, 4, 0, "", ["a", "b"]).success
+
+
+# -- the project matches the session (replay) ----------------------------------------------
+
+
+@pytest.fixture
+def replay_project(tmp_path: Path) -> Path:
+    """The project the fixture stream describes: created, then src/counter.v written."""
+    from siliconsmith.scaffold import create_project
+
+    project, _ = create_project(tmp_path, "counter", "verilog", "A", "d", None)
+    (project.dir / "src" / "counter.v").write_text("module counter(input clk);\nendmodule\n")
+    return project.dir
+
+
+def replay(events: list[dict[str, Any]], project: Path) -> Any:
+    (check,) = vd.replay_checks(events, project, {"frontend": "verilog"})
+    return check
+
+
+def test_replay_accepts_a_project_the_session_wrote(
+    events: list[dict[str, Any]], replay_project: Path
+) -> None:
+    assert replay(events, replay_project).passed
+
+
+def test_replay_rejects_a_hand_edited_file(
+    events: list[dict[str, Any]], replay_project: Path
+) -> None:
+    (replay_project / "src" / "counter.v").write_text(
+        "module counter(input clk); // edited\nendmodule\n"
+    )
+    check = replay(events, replay_project)
+    assert not check.passed and "src/counter.v" in check.reason
+
+
+@pytest.mark.parametrize("rel", ["test/helper.py", "spec.yaml", "test/test.py"])
+def test_replay_rejects_files_the_session_never_wrote(
+    events: list[dict[str, Any]], replay_project: Path, rel: str
+) -> None:
+    (replay_project / rel).write_text("# not from the session\n")
+    check = replay(events, replay_project)
+    assert not check.passed and rel in check.reason
+
+
+def test_replay_needs_the_project_to_be_the_created_one(
+    events: list[dict[str, Any]], replay_project: Path
+) -> None:
+    renamed = replay_project.parent / "other"
+    replay_project.rename(renamed)
+    assert not replay(events, renamed).passed
+
+
+def test_replay_ignores_a_write_the_tool_refused(
+    events: list[dict[str, Any]], replay_project: Path
+) -> None:
+    refused = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "bad",
+                    "name": "mcp__siliconsmith__write_test",
+                    "input": {"project": "counter", "path": "test/test.py", "content": "x"},
+                }
+            ]
+        },
+    }
+    answer = {
+        "type": "user",
+        "message": {
+            "content": [
+                {"type": "tool_result", "tool_use_id": "bad", "is_error": True, "content": "no"}
+            ]
+        },
+    }
+    events[2:2] = [refused, answer]
+    assert replay(events, replay_project).passed
 
 
 # -- transcript, sanitizer, leak check -----------------------------------------------------
@@ -264,14 +403,14 @@ def test_record_appends_rows_and_regenerates_the_table(tmp_path: Path) -> None:
     meta = {"frontend": "verilog", "date": "2026-11-12T09:00:00Z", "model": "m"}
     metrics = {"num_turns": 9, "run_tests_calls": 2, "cost_usd": 0.42, "duration_min": 5.0}
     reruns = [
-        vd.Rerun(lab, sim, True, 4, 0, "")
+        vd.Rerun(lab, sim, True, 1, 0, "", ["test_counter_reference"])
         for lab in ("agent", "reference")
         for sim in vd.SIMULATORS
     ]
     first = vd.record_attempt(
         demos, "# t\n", meta, metrics, reruns, "spec valid; approval open", True
     )
-    reruns[3] = vd.Rerun("reference", "verilator", False, 0, 1, "")
+    reruns[3] = vd.Rerun("reference", "verilator", False, 0, 1, "", ["test_counter_reference"])
     second = vd.record_attempt(demos, "# t\n", meta, metrics, reruns, "x", False)
     assert (first, second) == ("verilog-20261112-1.md", "verilog-20261112-2.md")
     rows = json.loads((demos / "metrics.json").read_text())
@@ -279,6 +418,7 @@ def test_record_appends_rows_and_regenerates_the_table(tmp_path: Path) -> None:
     assert rows[1]["reference_verilator"] is False and rows[0]["agent_icarus"] is True
     readme = (demos / "README.md").read_text()
     assert readme.count("verilog-20261112-") == 4  # label and link, two rows
+    assert rows[0]["result_subtype"] is None and "(exit " in readme
     assert readme.startswith("intro") and readme.rstrip().endswith("outro")
     # Regenerating from the same rows changes nothing.
     vd.update_readme(demos / "README.md", rows)
@@ -289,3 +429,34 @@ def test_readme_without_markers_is_an_error(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("no markers")
     with pytest.raises(vd.DemoError):
         vd.update_readme(tmp_path / "README.md", [])
+
+
+def test_a_failed_leak_check_withholds_the_transcript(tmp_path: Path) -> None:
+    demos = make_demos_dir(tmp_path)
+    meta = {"frontend": "verilog", "date": "2026-11-12T09:00:00Z", "model": "m"}
+    leaks = vd.leak_check("see /home/x and session_id")
+    name = vd.record_attempt(demos, "SECRET /home/x\n", meta, {}, [], "s", False, leaks)
+    assert name.startswith("withheld: leak check failed")
+    assert not list(demos.glob("verilog-*.md"))  # nothing copied
+    (row,) = json.loads((demos / "metrics.json").read_text())
+    assert row["passed"] is False and row["transcript"] == name
+    assert "/home/" not in (demos / "README.md").read_text() + (demos / "metrics.json").read_text()
+    assert "withheld" in (demos / "README.md").read_text()
+
+
+def test_a_leaking_metrics_row_is_refused(tmp_path: Path) -> None:
+    demos = make_demos_dir(tmp_path)
+    meta = {"frontend": "verilog", "date": "2026-11-12T09:00:00Z", "model": "/home/x/model"}
+    with pytest.raises(vd.DemoError, match="would leak"):
+        vd.record_attempt(demos, "# t\n", meta, {}, [], "s", True)
+    assert not (demos / "metrics.json").exists() and not list(demos.glob("verilog-*.md"))
+
+
+def test_the_same_demo_is_not_recorded_twice(tmp_path: Path) -> None:
+    demos = make_demos_dir(tmp_path)
+    meta = {"frontend": "verilog", "date": "2026-11-12T09:00:00Z", "model": "m", "demo_id": "d1"}
+    vd.record_attempt(demos, "# t\n", meta, {}, [], "s", True)
+    with pytest.raises(vd.DemoError, match="already recorded"):
+        vd.record_attempt(demos, "# t\n", meta, {}, [], "s", True)
+    vd.record_attempt(demos, "# t\n", {**meta, "demo_id": "d2"}, {}, [], "s", True)
+    assert len(json.loads((demos / "metrics.json").read_text())) == 2

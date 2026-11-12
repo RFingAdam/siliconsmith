@@ -173,6 +173,54 @@ def clean_env() -> dict[str, str]:
     }
 
 
+def update_meta(demo: Path, **fields: Any) -> None:
+    path = demo / "meta.json"
+    meta = json.loads(path.read_text())
+    meta.update(fields)
+    path.write_text(json.dumps(meta, indent=2) + "\n")
+
+
+def stop_group(proc: subprocess.Popen[bytes], grace_s: float = 10) -> None:
+    """Ask the process group to stop (so the MCP server can stop its containers), then kill it."""
+    for sig, wait in ((signal.SIGTERM, grace_s), (signal.SIGKILL, None)):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            break
+        try:
+            proc.wait(timeout=wait)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    proc.wait()
+
+
+def kill_leftover_containers(work: Path) -> list[str]:
+    """Kill simulator containers that still have this demo's folder mounted.
+
+    Only containers started by the Siliconsmith runner (named ss-...) whose mounts come from
+    under `work` are touched, so another session's containers are left alone.
+    """
+    listed = subprocess.run(
+        ["docker", "ps", "-q", "--filter", "name=^/ss-"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    killed: list[str] = []
+    for cid in listed.stdout.split():
+        info = subprocess.run(
+            ["docker", "inspect", "--format", "{{range .Mounts}}{{.Source}}\n{{end}}", cid],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if any(line.startswith(str(work)) for line in info.stdout.splitlines()):
+            subprocess.run(["docker", "kill", cid], capture_output=True, check=False)
+            killed.append(cid)
+    return killed
+
+
 def run_session(demo: Path, model: str, max_turns: int, timeout_min: float) -> int | None:
     """Run claude; return its exit code, or None if it had to be killed after the timeout."""
     with (
@@ -192,9 +240,14 @@ def run_session(demo: Path, model: str, max_turns: int, timeout_min: float) -> i
         try:
             return proc.wait(timeout=timeout_min * 60)
         except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
+            stop_group(proc)
             return None
+        except KeyboardInterrupt:
+            # claude runs in its own session, so Ctrl-C does not reach it by itself.
+            stop_group(proc)
+            raise
+        finally:
+            kill_leftover_containers(demo / "work")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -210,11 +263,22 @@ def main(argv: list[str] | None = None) -> int:
     demo = Path(tempfile.mkdtemp(prefix=f"ss-demo-{args.frontend}.", dir="/tmp")).resolve()
     check_no_memory_files(demo)
     write_inputs(demo, args.frontend, args.model, args.max_turns)
+    update_meta(
+        demo,
+        demo_id=demo.name,
+        # verify_demo.py requires these: the runner checked every parent folder (above) and the
+        # session environment switches Claude Code's memory files off.
+        memory_isolation={
+            "ancestors_clear": True,
+            "claude_mds_disabled": clean_env().get("CLAUDE_CODE_DISABLE_CLAUDE_MDS") == "1",
+        },
+    )
     print(f"Demo folder: {demo}")
     print(
         f"Running {args.model} on the {args.frontend} front-end (up to {args.timeout_min} min)..."
     )
     code = run_session(demo, args.model, args.max_turns, args.timeout_min)
+    update_meta(demo, claude_exit_code=code)
     if code is None:
         print("The session hit the time limit and was killed.")
     else:
