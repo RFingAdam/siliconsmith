@@ -149,6 +149,29 @@ async def test_gl_mismatch(server: Client, tmp_path: Path) -> None:
         assert states["sim_icarus"] == "pass"
 
 
+async def test_gl_mismatch_when_the_test_never_drives_reset(server: Client, tmp_path: Path) -> None:
+    """No rst_n in the test: nothing to wait for, so the first difference is still reported."""
+    async with server as client:
+        await counter_project(client, tmp_path, "verilog", design="verilog_initial_value.v")
+        wrote = await call(
+            client,
+            "write_test",
+            project="counter",
+            path="test/test.py",
+            content=(FIXTURES / "test_no_reset_driven.py").read_text(),
+        )
+        assert wrote["ok"] is True, wrote["summary"]
+        rtl = await call(client, "run_tests", project="counter", simulator="icarus")
+        assert rtl["ok"] is True, rtl["summary"]
+        gl = await call(client, "run_tests", project="counter", simulator="icarus", gl=True)
+        assert gl["ok"] is False, gl["summary"]
+        diff = gl["details"]["gl"]["diff"]
+        assert diff["state"] == "differs", gl["summary"]
+        assert diff["cycle"] == 1 and diff["rtl_failed"] is False
+        assert diff["signals"][0] == {"signal": "uo_out", "rtl": "00000000", "gl": "xxxxxxxx"}
+        assert "First difference on the pins: uo_out at clock cycle 1" in gl["summary"]
+
+
 async def test_gl_correct_design_failing_on_an_internal_name_is_not_a_reset_bug(
     server: Client, tmp_path: Path
 ) -> None:
