@@ -100,6 +100,15 @@ class _EmitResult(_Strict):
     error: _WorkerError | None = None
 
 
+def _finding_dict(item: _Finding) -> dict[str, Any]:
+    """A finding for `details`; the MyHDL fields are only there when they say something."""
+    data = item.model_dump()
+    if not item.hdl_file:
+        for key in ("hdl_file", "hdl_line", "hdl_function"):
+            del data[key]
+    return data
+
+
 def read_author(project: Project) -> str:
     raw = safe_read(project.dir, "info.yaml", MAX_INFO_BYTES)
     try:
@@ -325,7 +334,7 @@ def _success_or_lint(
         "top": f"tt_um_{name}",
         "ports": {n: p.model_dump() for n, p in result.ports.items()},
         "wrapper_ports": {n: p.model_dump() for n, p in result.wrapper_ports.items()},
-        "lint": [f.model_dump() for f in result.lint],
+        "lint": [_finding_dict(f) for f in result.lint],
         "lint_total": result.lint_total,
     }
     source_note = (
@@ -427,7 +436,7 @@ def _core_syntax_failure(project: Project, frontend: Frontend, result: _EmitResu
         ["Stage: lint (the Verilog core does not parse).", *(_finding_line(f) for f in shown)],
         stage="lint",
         hints=_hints_for_lint(frontend, project, result.lint),
-        lint=[f.model_dump() for f in result.lint],
+        lint=[_finding_dict(f) for f in result.lint],
         lint_total=result.lint_total,
     )
 
