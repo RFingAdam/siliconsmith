@@ -1,10 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
+# SPDX-FileCopyrightText: 2020-2024 Efabless Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 """The Yosys script that turns the emitted Verilog into sky130 cells.
 
 This is the one script builder for every M1 step that needs a netlist: `synthesize`, gate-level
 simulation (M1-2) and the equivalence check (M1-3) all call it, so they always see the same flow.
+
+Adapted from LibreLane (Apache-2.0, Copyright 2020-2024 Efabless Corporation; its file also
+adapts Yosys's `synth.cc` and `opt.cc`, ISC licensed). No LibreLane or Yosys code is vendored: the
+pass order and the ABC script text are transcribed here.
 
 Source: LibreLane 3.0.14, `librelane/scripts/pyosys/synthesize.py` (functions `librelane_proc`,
 `librelane_opt`, `librelane_synth` and `synthesize`), `librelane/scripts/pyosys/ys_common.py`

@@ -159,41 +159,31 @@ def line_of(text: str, needle: str) -> int:
     return next(i for i, ln in enumerate(text.splitlines(), start=1) if needle in ln)
 
 
-async def test_synth_latch_verilog(server: Client, tmp_path: Path) -> None:
+@pytest.mark.parametrize("fe", ["verilog", "myhdl"])
+async def test_synth_latch(server: Client, tmp_path: Path, fe: str) -> None:
+    """An accidental latch stops synthesize at the lint step, with file and line."""
     async with server as client:
-        project = await counter_project(client, tmp_path, "verilog")
-        source = (SYNTH / "latch_comb.v").read_text()
-        put_core(project, "verilog", source)
+        project = await make_project(client, tmp_path, fe)
+        source = (SYNTH / ("latch_comb.v" if fe == "verilog" else "myhdl_latch.py")).read_text()
+        put_core(project, fe, source)
         result = await call(client, "synthesize", project="counter")
         assert result["ok"] is False
         assert result["details"]["stage"] == "lint"
-        (finding,) = result["details"]["lint"]
-        assert finding["code"] == "LATCH" and finding["file"] == "src/counter.v"
-        assert finding["line"] == line_of(source, "always @*")
-        assert f"src/counter.v:{finding['line']}" in result["summary"]
         assert result["summary"].startswith("synthesize stopped before synthesis")
-        assert not (project / "build" / "synth").exists()
-
-
-async def test_synth_latch_myhdl_names_the_generated_line_and_the_hdl_function(
-    server: Client, tmp_path: Path
-) -> None:
-    async with server as client:
-        project = await make_project(client, tmp_path, "myhdl")
-        source = (SYNTH / "myhdl_latch.py").read_text()
-        put_core(project, "myhdl", source)
-        result = await call(client, "synthesize", project="counter")
-        assert result["ok"] is False
         (finding,) = result["details"]["lint"]
         assert finding["code"] == "LATCH" and finding["file"] == "src/counter.v"
+        assert f"src/counter.v:{finding['line']}" in result["summary"]
+        assert not (project / "build" / "synth").exists()
+        if fe == "verilog":
+            assert finding["line"] == line_of(source, "always @*")
+            return
+        # MyHDL: the generated line and the hdl/ function and line.
         generated = (project / "src" / "counter.v").read_text().splitlines()
         assert generated[finding["line"] - 1].lstrip().startswith("always @")
         assert finding["hdl_file"] == "hdl/counter.py"
         assert finding["hdl_function"] == "remember"
         assert finding["hdl_line"] == line_of(source, "held.next = count")
-        text = result["summary"]
-        assert f"src/counter.v:{finding['line']}" in text
-        assert f"hdl/counter.py:{finding['hdl_line']}, function remember" in text
+        assert f"hdl/counter.py:{finding['hdl_line']}, function remember" in result["summary"]
         assert any("hdl/counter.py" in h for h in result["next_hints"])
 
 

@@ -21,13 +21,19 @@ host copies the netlist and statistics out of the run folder into `build/synth/`
 
 ## Early stop: calibration
 
-The per-gate areas in `synth_parse.GENERIC_AREA_UM2` and the flip-flop price are the sky130
-areas of the cells `abc` typically picks. The estimate is made before `abc`, so it is a rough
-guide, and the stop factor (`STOP_FACTOR`, applied by the host to the cell budget) is generous.
-Measured in the pinned image (Yosys 0.62, YoWASP, 2 CPUs), estimate versus the final netlist
-area: see PLAN.md section 6 for the table; the calibration run found the estimate between
-0.6 and 1.3 times the real area, so a factor of 3 never stops a design that fits (utilization
-at most 1.0) and still catches the far-too-big ones early.
+The per-gate areas in `synth_parse.GENERIC_AREA_UM2` and the flip-flop price (30 um2, with its
+enable or reset logic) are the sky130 areas of the cells `abc` typically picks. The estimate is
+made before `abc`, so it is a rough guide, and the stop factor (`utilization.PRE_ABC_STOP_FACTOR`
+= 3, applied by the host to the cell budget) is generous.
+
+Measured in the pinned image (Yosys 0.62 YoWASP, 2 CPUs, 2026-11-12), estimate divided by the
+final area after `abc`: counter 0.88, 256-bit shift register 0.96, 256-entry ROM 1.08, registered
+16x16 / 24x24 / 32x32 / 48x48 / 64x64 multipliers 0.98 / 0.96 / 0.96 / 0.97 / 0.97. A design that
+fits a tile (utilization up to 1.0) is therefore never stopped, whatever its kind.
+
+Timings: the front half takes 1.0 s for the counter and 10.7 s for the 64x64 oversize fixture
+(22,441 cells after `abc`, 225,000 um2); the `abc` half takes 3.8 s and 100 s. The oversize
+fixture is stopped after the front half: 9.9 s of Yosys time, 11.7 s for the whole tool call.
 
 Stdlib only at module level.
 """
