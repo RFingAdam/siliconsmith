@@ -128,9 +128,10 @@ async def test_gl_mismatch(server: Client, tmp_path: Path) -> None:
         diff = gl["details"]["gl"]["diff"]
         assert diff["state"] == "differs" and diff["rtl_failed"] is False
         assert diff["signals"][0] == {"signal": "uo_out", "rtl": "00000000", "gl": "xxxxxxxx"}
-        # Reset is held for three rising edges (10, 20, 30 ns) and released at 35 ns, so the
-        # first edge that is compared is cycle 4 at 40 ns.
-        assert (diff["cycle"], diff["time_ns"]) == (4, 40.0)
+        # cocotb's ClockCycles counts the clock's start at 0 ns as one of the three cycles, so
+        # reset is released at the falling edge at 25 ns: the first edge that is compared is
+        # cycle 3 at 30 ns (cycles 1 and 2 are still in reset and are not compared).
+        assert (diff["cycle"], diff["time_ns"]) == (3, 30.0)
 
         # The gate-level waves are kept for the failure and pointed at; the RTL ones are untouched.
         assert gl["details"]["waves"] == GL_WAVES and (project / GL_WAVES).is_file()
