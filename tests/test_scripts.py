@@ -134,6 +134,21 @@ def test_wheel_missing_detection(tmp_path: Path, git_repo: Path, load_script: An
     assert mod.missing_from_wheel(expected, wheel) == ["siliconsmith/skills/a/SKILL.md"]
 
 
+def test_wheel_requires_every_skill_and_the_glossary(
+    tmp_path: Path, git_repo: Path, load_script: Any
+) -> None:
+    mod = load_script("check_wheel")
+    _add(git_repo, "src/siliconsmith/__init__.py", "")
+    expected = mod.expected_files(git_repo)
+    for name in ("chip-design-loop", "tt-rules", "amaranth-style", "myhdl-style", "cocotb2-tests"):
+        assert f"siliconsmith/skills/{name}/SKILL.md" in expected
+    assert "siliconsmith/skills/glossary.md" in expected
+    wheel = tmp_path / "w.whl"
+    with zipfile.ZipFile(wheel, "w") as zf:
+        zf.writestr("siliconsmith/__init__.py", "")
+    assert len(mod.missing_from_wheel(expected, wheel)) == 6
+
+
 def test_wheel_builds_and_is_complete(load_script: Any) -> None:
     assert load_script("check_wheel").main() == 0
 

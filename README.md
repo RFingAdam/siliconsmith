@@ -22,7 +22,10 @@ The server runs on your machine and talks to the agent over standard input and o
 nothing is exposed on the network.
 
 Today the server offers `toolchain_info`, `create_project`, `list_files`, `read_file`,
-`write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests` and `inspect_waves`. Start
+`write_spec`, `write_rtl`, `write_test`, `emit_verilog`, `run_tests`, `inspect_waves` and
+`explain`. `explain` answers from the packaged skills and a plain-English glossary: ask it for
+`explain('chip-design-loop')` first. New to digital design? Read the
+[beginner guide](docs/beginner-guide.md). Start
 with `write_spec`: `spec.yaml` says the clock, the pins and the numbered requirements, and
 everything else follows from it. `emit_verilog` turns the design (Amaranth, MyHDL or Verilog)
 into a checked Verilog core plus the Tiny Tapeout wrapper and lints it with Verilator.
