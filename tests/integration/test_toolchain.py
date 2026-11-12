@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -41,8 +42,8 @@ async def test_toolchain_info_keys(image: str, runner: DockerRunner, tmp_path: P
     assert out is not None
     assert out["ok"] is True, out["summary"]
     details = out["details"]
-    # repo_digest is null for a local build; pdk is null until M1.
-    optional = {"repo_digest", "pdk"}
+    # repo_digest is null for a local build.
+    optional = {"repo_digest"}
     for key, value in details.items():
         if key not in optional:
             assert value not in (None, "", {}), f"{key} is empty"
@@ -69,6 +70,52 @@ async def test_toolchain_info_keys(image: str, runner: DockerRunner, tmp_path: P
         assert details["repo_digest"] is None
     else:
         assert "repo_digest" in details
+
+
+PDK_OPEN_PDKS = "8afc8346a57fe1ab7934ba5a6056ea8b43078e71"
+
+
+async def test_toolchain_info_pdk(image: str, runner: DockerRunner, tmp_path: Path) -> None:
+    async with Client(build_server(tmp_path, None, runner=runner, image=image)) as client:
+        result = await client.call_tool("toolchain_info", {})
+    out = result.structured_content
+    assert out is not None
+    assert out["details"]["pdk"] == {
+        "name": "sky130A",
+        "open_pdks": PDK_OPEN_PDKS,
+        "libraries": ["sky130_fd_sc_hd"],
+        "corner": "tt_025C_1v80",
+    }
+    assert "pdk_note" not in out["details"]
+
+
+def test_pdk_files_present(image: str) -> None:
+    """Every file in /opt/pdk/manifest.json exists and matches its sha256; nothing else is there."""
+    script = (
+        'cd /opt/pdk && sha256sum -c --quiet <(python3 -c "import json;'
+        "[print(h+'  '+f) for f,h in json.load(open('manifest.json'))['files'].items()]\") "
+        "&& find . -type f ! -name manifest.json | wc -l && cat manifest.json"
+    )
+    proc = subprocess.run(
+        ["docker", "run", "--rm", "--network=none", "--entrypoint", "bash", image, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    count, _, manifest_text = proc.stdout.partition("\n")
+    manifest = json.loads(manifest_text)
+    assert manifest["open_pdks"] == PDK_OPEN_PDKS
+    assert int(count) == len(manifest["files"]) == 10
+    assert all(len(h) == 64 for h in manifest["files"].values())
+    for needed in (
+        "sky130A/libs.ref/sky130_fd_sc_hd/lib/sky130_fd_sc_hd__tt_025C_1v80.lib",
+        "sky130A/libs.ref/sky130_fd_sc_hd/verilog/sky130_fd_sc_hd.v",
+        "sky130A/libs.ref/sky130_fd_sc_hd/verilog/primitives.v",
+        "sky130A/libs.tech/openlane/sky130_fd_sc_hd/no_synth.cells",
+        "sky130A/libs.tech/openlane/sky130_fd_sc_hd/latch_map.v",
+    ):
+        assert needed in manifest["files"]
 
 
 def selftest(runner: DockerRunner, project: Path, **request: object) -> dict[str, object]:

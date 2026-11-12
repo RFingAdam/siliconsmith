@@ -6,11 +6,14 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import platform
 import re
 import subprocess
+from pathlib import Path
 from typing import Any
 
+PDK_MANIFEST = Path("/opt/pdk/manifest.json")
 _TOOL_COMMANDS: dict[str, list[str]] = {
     "iverilog": ["iverilog", "-V"],
     "verilator": ["verilator", "--version"],
@@ -53,6 +56,24 @@ def _dist_version(name: str) -> str | None:
         return None
 
 
+def pdk_info(manifest: Path = PDK_MANIFEST) -> dict[str, Any] | None:
+    """What the image says it holds (name, open_pdks hash, libraries, corner), or None.
+
+    None means the manifest is missing or unreadable, which is what an image from before M1
+    looks like.
+    """
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        return {
+            "name": str(data["name"]),
+            "open_pdks": str(data["open_pdks"]),
+            "libraries": [str(lib) for lib in data["libraries"]],
+            "corner": str(data["corner"]),
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def collect() -> dict[str, Any]:
     versions: dict[str, Any] = {
         tool: _short(tool, _first_line(command)) for tool, command in _TOOL_COMMANDS.items()
@@ -60,4 +81,4 @@ def collect() -> dict[str, Any]:
     for key, dist in _DISTRIBUTIONS.items():
         versions[key] = _dist_version(dist)
     versions["python"] = platform.python_version()
-    return {"versions": versions}
+    return {"versions": versions, "pdk": pdk_info()}

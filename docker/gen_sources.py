@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Write the source and license information that ships inside the toolchain image.
 
-Run once at image build time, with the image's own Python:
+Run once at image build time, with the image's own Python (after /opt/pdk is in place):
 
     python gen_sources.py <doc dir> <site-packages dir>
 
@@ -14,6 +14,7 @@ Dockerfile (copied to /tmp/Dockerfile for this step), the only place that states
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import os
 import shutil
 import subprocess
@@ -106,6 +107,26 @@ def verilator_section(images: dict[str, str]) -> list[str]:
     ]
 
 
+def pdk_section() -> list[str]:
+    """The sky130 files under /opt/pdk, described from the manifest the build wrote."""
+    manifest = json.loads(Path("/opt/pdk/manifest.json").read_text(encoding="utf-8"))
+    open_pdks = manifest["open_pdks"]
+    base = f"https://github.com/fossi-foundation/ciel-releases/releases/download/sky130-{open_pdks}"
+    lines = [
+        f"SkyWater sky130 PDK, open_pdks {open_pdks} (Apache-2.0), under /opt/pdk:",
+        "  Downloaded at build time from the fossi-foundation/ciel-releases GitHub release",
+        f"  sky130-{open_pdks} and checked against the sha256 in docker/Dockerfile:",
+        f"    {base}/common.tar.zst",
+        f"    {base}/sky130_fd_sc_hd.tar.zst",
+        "  Only the files below were kept; /opt/pdk/manifest.json lists each file's sha256.",
+        "  Upstream sources: https://github.com/google/skywater-pdk-libs-sky130_fd_sc_hd",
+        "    and https://github.com/fossi-foundation/open-pdks",
+        "  License text: licenses/sky130-fd-sc-hd-LICENSE (Apache-2.0).",
+    ]
+    lines.extend(f"    {name}" for name in sorted(manifest["files"]))
+    return lines
+
+
 def copy_python_licenses(site: Path, target: Path) -> None:
     for dist in importlib.metadata.distributions():
         name = dist.metadata["Name"].lower().replace("_", "-")
@@ -138,6 +159,8 @@ def main() -> int:
         apt_section(),
         [""],
         verilator_section(images),
+        [""],
+        pdk_section(),
         [""],
         pip_section(),
         [""],

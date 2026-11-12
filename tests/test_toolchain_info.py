@@ -93,12 +93,31 @@ async def test_reports_versions_and_image(tmp_path: Path) -> None:
     assert details["repo_digest"] is None
     assert details["rootless"] is False
     assert details["pdk"] is None
-    assert "M1" in details["pdk_note"]
+    assert "older than milestone M1" in details["pdk_note"]
+    assert "pdk: none in this image" in out["summary"]
     assert "verilator: 5.046" in out["summary"]
     assert "local build" in out["summary"]
     verb, _, project_dir, _ = runner.calls[0]
     assert verb == "info"
     assert project_dir == tmp_path / "cache" / "siliconsmith" / "info-project"
+
+
+PDK = {
+    "name": "sky130A",
+    "open_pdks": "8afc8346a57fe1ab7934ba5a6056ea8b43078e71",
+    "libraries": ["sky130_fd_sc_hd"],
+    "corner": "tt_025C_1v80",
+}
+
+
+async def test_reports_the_pdk_from_the_image_manifest(tmp_path: Path) -> None:
+    result = {"ok": True, "verb": "info", "versions": VERSIONS, "pdk": PDK}
+    out = await call(tmp_path, HostRunner(good_status(), WorkerOutcome(0, result, "", "", False)))
+    assert out["ok"] is True
+    assert out["details"]["pdk"] == PDK
+    assert "pdk_note" not in out["details"]
+    assert "pdk: sky130A (open_pdks 8afc8346)" in out["summary"]
+    assert "sky130_fd_sc_hd" in out["summary"]
 
 
 async def test_digest_shown_when_pulled(tmp_path: Path) -> None:
