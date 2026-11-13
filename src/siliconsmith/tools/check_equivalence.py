@@ -623,14 +623,16 @@ short trace, where cycle 1 is power-up with rst_n low) or "Not proven: ... This 
 different from not equivalent: it says why, for example latches, a falling-edge or derived \
 clock, tri-state logic (z) and flip-flops with both an asynchronous set and reset are not \
 supported, or the proof ran out of time. What is proven: the gates implement the RTL as \
-Yosys reads it, with comments, attributes and macros out of the way (synthesis did not \
-change your logic). A simulator can read some constructs \
-differently from Yosys. The tool refuses the common ones as not proven and names \
+Yosys reads it, with comments, attributes and \
+macros out of the way (synthesis did not change your logic). A simulator can read some \
+constructs differently from Yosys. The tool refuses the common ones as not proven and names \
 them: macros and `include, bit/int types, unique/priority, casex, ===, x or z literals, delays \
-(#), a lint_off of a race warning, and in hand-written Verilog an incomplete always @(a or b) \
-or a function without automatic. It does NOT detect an out-of-range index or a division by \
-zero (x in a simulator, some value in the gates) or anything that depends on simulation event \
-order: run gate-level simulation (run_tests with gl=True) as well.\n\
+(#), characters outside plain ASCII, a lint_off of a race warning, every level-sensitive \
+always @(a or b) in Verilog or Amaranth (write always @(*)), a MyHDL @always(level signal) or \
+@instance that waits on a level (use @always_comb), and a function without automatic. It does \
+NOT detect an out-of-range index or a division by zero (x in a simulator, some value in the \
+gates) or anything that depends on simulation event order: run gate-level simulation \
+(run_tests with gl=True) as well.\n\
 What it checks: every output value the RTL defines must match for every power-up state of \
 the chip's flip-flops (an x or default-don't-care in the RTL means any value is accepted); \
 registers that nothing resets are only compared for a consistent power-up (the RTL simulation \

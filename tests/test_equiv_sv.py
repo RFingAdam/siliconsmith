@@ -526,3 +526,144 @@ def test_the_recorded_demo_designs_are_not_refused(front_end: str) -> None:
     for block in blocks:
         hand = {"demo.v"} if front_end == "verilog" else set()
         assert sv.refusal([("demo.v", block)], hand) is None
+
+
+# -- plain ASCII outside comments: the same lexer boundaries as Yosys, Icarus, Verilator --------
+
+
+ODD_CHARS = {
+    "NBSP": "\u00a0",
+    "NEL": "\u0085",
+    "LINE SEPARATOR": "\u2028",
+    "PARAGRAPH SEPARATOR": "\u2029",
+    "VT": "\x0b",
+    "FF": "\x0c",
+    "FS": "\x1c",
+    "DEL": "\x7f",
+    "NUL": "\x00",
+    "e acute": "\u00e9",
+    "U+FFFD": "\ufffd",
+}
+
+
+@pytest.mark.parametrize("char", list(ODD_CHARS.values()), ids=list(ODD_CHARS))
+def test_a_character_outside_plain_ascii_is_refused_outside_comments(char: str) -> None:
+    for text in (
+        f"module m;\n  wire a{char}b;\nendmodule\n",  # in code
+        f'module m;\n  initial $display("a{char}b");\nendmodule\n',  # in a string
+        f"module m;\n  wire \\id{char}x ;\nendmodule\n",  # in an escaped identifier
+        f"module m;\n  (* keep = 1{char} *) wire a;\nendmodule\n",  # in an attribute
+    ):
+        found = sv.refusal([("d.v", text)])
+        assert found is not None and "outside plain ASCII" in found.what, text
+        assert found.line == 2 or found.line == 1
+
+
+@pytest.mark.parametrize("char", list(ODD_CHARS.values()), ids=list(ODD_CHARS))
+def test_the_same_characters_are_fine_inside_comments(char: str) -> None:
+    ok(f"module m; // a{char}b \u2265 1 \u00b5m\n  /* x{char}y\n  z{char} */ wire a;\nendmodule\n")
+    text = f"wire a; // a{char}b\nwire b; /* {char} */\n"
+    clean = sv.clean(text)
+    assert clean.startswith("wire a;") and "wire b;" in clean
+    assert char not in clean and len(clean) == len(text)
+
+
+@pytest.mark.parametrize("char", ["\u00a0", "\u0085", "\u2028"])
+def test_the_reviewers_escaped_identifier_tricks_are_refused(char: str) -> None:
+    """cases10/nbspoff2, lsoff, nbspdel: after `\\h<char>` the tools still read the identifier, so
+    the `/*` that follows starts no comment for them (it does for a lexer that ends at the char)."""
+    hidden_off = (
+        f"module m;\n  reg \\h{char}/* , \\e*/ ;\n  always @* begin\n"
+        f"    \\h{char}/* = 1'b0; \\e*/ = 1'b0;\n"
+        "    // synopsys translate_off\n    o = ~ui_in;\n    // synopsys translate_on\n"
+        "  end\nendmodule\n"
+    )
+    hidden_delay = (
+        f"module m;\n  always @(posedge clk) begin\n"
+        f"    \\h{char}/* <= 1'b0; #7; \\e*/ <= 1'b0;\n  end\nendmodule\n"
+    )
+    for text in (hidden_off, hidden_delay):
+        found = sv.refusal([("d.v", text)])
+        assert found is not None and "outside plain ASCII" in found.what
+
+
+def test_an_escaped_identifier_ends_at_space_tab_cr_or_lf_only() -> None:
+    # the `/*` right after `\\a` is part of the identifier, the one after a blank starts a comment
+    assert sv.clean("\\a/* b; /* c */ d;\n") == "\\a/* b;         d;\n"
+    for blank in (" ", "\t", "\r", "\n"):
+        assert sv.clean(f"\\a{blank}/* c */ d;\n") == f"\\a{blank}        d;\n"
+
+
+# -- z and ? only as the label of a casez item ---------------------------------------
+
+
+def casez(body: str, header: str = "casez (ui_in[7:6])") -> str:
+    head = "module m;\nreg [7:0] y;\nalways @* begin\n  y = 8'd0;\n"
+    return f"{head}  {header}\n{body}\n  endcase\nend\nendmodule\n"
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        "    2'b0?: y = 1;\n    2'b1?: y = 2;",
+        "    2'b0?, 2'b1?: y = 1;\n    default: y = 0;",
+        "    2'b?1,\n    2'bz0 : y = 1;",
+        "    2'b1?: begin y = 1; end\n    2'b?1: y = 2;",
+        "    2'b1?: y = 1;\n    2'b0?: if (ui_in[0]) y = 2; else y = 3;\n    2'bzz: y = 4;",
+        "    2'b1?: case (ui_in[0]) 1'b0: y = 1; default: y = 2; endcase\n    2'b0?: y = 3;",
+        "    'z: y = 1;",
+    ],
+)
+def test_wildcards_are_accepted_as_casez_item_labels(items: str) -> None:
+    ok(casez(items))
+
+
+def test_a_casez_inside_a_plain_case_still_takes_wildcards() -> None:
+    ok(
+        "module m; always @* case (a)\n  1'b0: y = 0;\n  1'b1: casez (b)\n    2'b1?: y = 1;\n"
+        "    default: y = 2;\n  endcase\nendcase endmodule\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "items", "header"),
+    [
+        ("zcasezC", "    1'b?: if (ui_in[0] == 1'bz) y = 8'd1;", "casez (ui_in[7])"),
+        ("zcasezA", "    1'b?: if (ui_in[1:0] == 2'bzz) y = 8'd1;", "casez (ui_in[7])"),
+        ("zcasezB", "    1'b?: if ((ui_in[1:0] & 2'bz1) == 2'b01) y = 8'd1;", "casez (ui_in[7])"),
+        ("zcasezD", "    1'b?: if (ui_in[1:0] == 2'b??) y = 8'd1;", "casez (ui_in[7])"),
+        (
+            "nestz",
+            "    1'b?: case (ui_in[1:0])\n 2'b1z: y = 8'd1;\n default: y = 8'd0;\n endcase",
+            "casez (ui_in[7])",
+        ),
+        (
+            "nestq",
+            "    1'b?: case (ui_in[1:0])\n 2'b1?: y = 8'd1;\n default: y = 8'd0;\n endcase",
+            "casez (ui_in[7])",
+        ),
+        ("in the header", "    1'b0: y = 1;", "casez (ui_in[1:0] == 2'b1?)"),
+        ("in a concatenation", "    1'b0: y = {1'b1, 1'bz};", "casez (ui_in[7])"),
+        ("in a ternary", "    1'b0: y = ui_in[0] ? 8'bz : 8'd1;", "casez (ui_in[7])"),
+        ("in a statement", "    1'b0: y = 8'bzzzz_0000;", "casez (ui_in[7])"),
+        ("in a bit select", "    1'b0: y[1'bz] = 1;", "casez (ui_in[7])"),
+        ("in a parenthesis", "    (1'b?): y = 1;", "casez (ui_in[7])"),
+        ("in a delay-free expression", "    1'b0: y = (a == 2'b1?) ? 1 : 2;", "casez (ui_in[7])"),
+        ("after an operator", "    1'b0: y = 1; | 1'b?: y = 2;", "casez (ui_in[7])"),
+        ("a label with no colon", "    1'b?;", "casez (ui_in[7])"),
+    ],
+)
+def test_a_wildcard_anywhere_else_is_refused(name: str, items: str, header: str) -> None:
+    found = sv.refusal([("d.v", casez(items, header))])
+    assert found is not None, name
+    assert "z or ?" in found.what or "x or z" in found.what, (name, found)
+
+
+def test_a_plain_case_never_takes_wildcards() -> None:
+    refused("always @* case (a)\n 2'b1?: y = 1;\n default: y = 0;\nendcase", "z or ?")
+
+
+def test_wildcard_equality_and_inside_are_refused() -> None:
+    refused("always @* if (a ==? b) y = 1; else y = 2;", "==?")  # cases9/wildeq
+    refused("always @* if (a !=? b) y = 1; else y = 2;", "!=?")
+    refused("always @* if (a inside {2'd1, 2'd2}) y = 1; else y = 2;", "inside")  # cases9/insideop

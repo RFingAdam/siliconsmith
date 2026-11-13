@@ -264,9 +264,9 @@ RTL_SEEDS = [
     # RTL that reads one way in simulation and another in synthesis
     ("synthdef", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("xoff", "verilog", "not_equivalent", None),  # translate_off is ignored, as in a simulator
-    # Round 3: the RTL is compared as a SIMULATOR reads it. Hot comments and attributes that make
-    # synthesis build other gates (each confirmed by the reviewer in Icarus: the outputs differ
-    # from cycle 2 on) are not neutralized in the gates, so the check reports the difference.
+    # Round 3: the proof reads the RTL with comments and attributes blanked out, the netlist was
+    # synthesized from the original text. Hot comments and attributes that make synthesis build
+    # other gates (the reviewer saw the outputs differ in Icarus from cycle 2 on) are reported.
     ("fchot", "verilog", "not_equivalent", None),
     ("fccomblo", "verilog", "not_proven", "guard_sim_synth_differ"),  # lint_off hides the warning
     ("fcfunclo", "verilog", "not_proven", "guard_sim_synth_differ"),  # lint_off hides the warning
@@ -286,6 +286,12 @@ RTL_SEEDS = [
     ("lpnosync", "verilog", "not_proven", "guard_sim_synth_differ"),  # a macro builds an attribute
     ("eqx", "verilog", "not_proven", "guard_sim_synth_differ"),  # r === 1'bx
     ("enumreg", "verilog", "not_proven", "guard_sim_synth_differ"),  # an enum is a two-state int
+    # Round 5: characters that the tools read differently (a no-break space after an escaped
+    # identifier hides a translate_off region or a delay from a lexer that treats it as a blank)
+    ("nbspoff2", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("nbspdel", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # MyHDL `@always(b0)`: written as `always @(b0)`, a level list that misses `cnt`
+    ("mysens2", "myhdl", "not_proven", "guard_sim_synth_differ"),
     # `unique case`: synthesis assumes what a simulator does not
     ("uniquecase", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
@@ -408,5 +414,5 @@ async def test_the_refusals_do_not_fire_on_emitted_rtl(
         project = await design_project(client, tmp_path, design, fe)
         await call(client, "emit_verilog", project=design)
         files = [(f, (project / "src" / f).read_text()) for f in ("project.v", f"{design}.v")]
-        hand = {f"{design}.v"} if fe == "verilog" else set()
+        hand = {f"{design}.v"} if fe != "myhdl" else set()
         assert equiv_sv.refusal(files, hand) is None, (design, fe)

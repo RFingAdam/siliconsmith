@@ -487,6 +487,82 @@ def test_the_proof_reads_the_cleaned_files_and_the_originals_stay_untouched(
     assert (rtl / "chip.v").read_text() == original
 
 
+def test_the_proof_reads_bytes_not_decoded_text(tmp_path: Path) -> None:
+    """Comments may hold any bytes (even invalid UTF-8): they are blanked. Nothing is replaced
+    and no line ending is translated, so the proof reads what the synthesis read."""
+    rtl, netlist = inputs(tmp_path)
+    original = (
+        b"wire a; // caf\xe9 \xff\xfe \xe2\x89\xa5 1\r\nwire b;\r\n/* \xc2\xb5m \x80 */ wire c;\r\n"
+    )
+    (rtl / "chip.v").write_bytes(original)
+    fake = FakeYosys("counter_good", equiv=(1, "counter_good", "equiv.log"))
+    equiv.check(rtl, "chip", netlist, tmp_path / "scratch", yosys=fake)
+    seen = (tmp_path / "scratch" / "chip.v").read_bytes()
+    assert len(seen) == len(original) and max(seen) < 0x80  # nothing replaced, comments blanked
+    assert seen.startswith(b"wire a;") and seen.count(b"\n") == original.count(b"\n")
+    assert b"\nwire b;\r\n" in seen and seen.endswith(b" wire c;\r\n")  # CR LF kept as written
+    assert seen.count(b"\r") == 2 and original.count(b"\r") == 3  # a CR inside a comment is blank
+    assert (rtl / "chip.v").read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "outside",
+    [
+        b"wire a\xc2\xa0b;\n",
+        b"wire a\xff;\n",
+        b'initial $display("\xc3\xa9");\n',
+        b"wire a\x0bb;\n",
+    ],
+)
+def test_a_byte_outside_plain_ascii_in_code_is_not_proven(tmp_path: Path, outside: bytes) -> None:
+    rtl, netlist = inputs(tmp_path)
+    (rtl / "chip.v").write_bytes(outside)
+    fake = FakeYosys("")
+    got = equiv.check(rtl, "chip", netlist, tmp_path / "scratch", yosys=fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
+    assert "outside plain ASCII" in got["message"] and fake.calls == []
+
+
+def test_the_event_list_rule_is_for_the_cores_that_do_not_list_signals_themselves(
+    tmp_path: Path,
+) -> None:
+    text = b"always @(a or b) y = a & b;\n"
+    rtl, netlist = inputs(tmp_path)
+    (rtl / "chip.v").write_bytes(text)
+    strict = equiv.check(rtl, "chip", netlist, tmp_path / "s1", yosys=FakeYosys(""))
+    assert strict["reason"] == "guard_sim_synth_differ" and "event control" in strict["message"]
+    fake = FakeYosys("counter_good", equiv=(1, "counter_good", "equiv.log"))
+    lax = equiv.check(rtl, "chip", netlist, tmp_path / "s2", yosys=fake, strict_core=False)
+    assert lax["reason"] != "guard_sim_synth_differ" and fake.tags == ["equiv"]
+
+
+def test_a_source_refusal_is_a_not_proven_with_the_sentence_it_was_given(tmp_path: Path) -> None:
+    rtl, netlist = inputs(tmp_path)
+    fake = FakeYosys("")
+    got = equiv.check(
+        rtl, "chip", netlist, tmp_path / "s", yosys=fake, source_refusal="the MyHDL source says no."
+    )
+    assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
+    assert "the MyHDL source says no." in got["message"] and fake.calls == []
+
+
+def test_the_myhdl_refusal_names_file_function_and_line(tmp_path: Path) -> None:
+    (tmp_path / "hdl").mkdir()
+    (tmp_path / "hdl" / "d.py").write_text(
+        "from myhdl import *\n\n@block\ndef top(a, y):\n    @always(a)\n    def pick():\n"
+        "        y.next = 1\n    return pick\n"
+    )
+    said = equiv._myhdl_refusal("myhdl", tmp_path)
+    assert said is not None and "hdl/d.py" in said and "function pick" in said
+    assert "line 5" in said and "@always_comb" in said
+    assert equiv._myhdl_refusal("verilog", tmp_path) is None
+    (tmp_path / "hdl" / "d.py").write_text(
+        "from myhdl import *\n\n@block\ndef top(a, y):\n    @always_comb\n    def pick():\n"
+        "        y.next = a\n    return pick\n"
+    )
+    assert equiv._myhdl_refusal("myhdl", tmp_path) is None
+
+
 def test_an_include_in_the_rtl_is_not_proven(tmp_path: Path) -> None:
     rtl, netlist = inputs(tmp_path)
     (rtl / "chip.v").write_text('`include "hidden.vh"\n')

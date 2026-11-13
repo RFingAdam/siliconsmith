@@ -70,7 +70,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from siliconsmith.worker import emit, equiv_parse, equiv_script, equiv_sv, synth
+from siliconsmith.worker import emit, equiv_parse, equiv_script, equiv_sv, myhdl_map, synth
 from siliconsmith.worker.limits import (
     EQUIV_DETAIL_LINE_MAX,
     EQUIV_SIGNAL_MAX,
@@ -405,6 +405,21 @@ def _unreadable_cex(r: _Run, got: dict[str, Any], where: str) -> dict[str, Any]:
     )
 
 
+def _myhdl_refusal(frontend: str, work: Path = Path("/work")) -> str | None:
+    """For a MyHDL project: a plain sentence if a process in `hdl/` waits for a level signal."""
+    if frontend != "myhdl":
+        return None
+    found = myhdl_map.level_sensitive(myhdl_map.read_functions(work))
+    if found is None:
+        return None
+    return (
+        f"the MyHDL source ({found['file']}, function {found['function']}, line {found['line']}) "
+        f"uses {found['what']}, a process that waits for a level signal: a simulator only reruns "
+        "it when that signal changes, the gates do not care. Use `@always_comb` for combinational "
+        "logic, or `@always_seq` / `@always(clk.posedge)` for clocked logic."
+    )
+
+
 def check(
     rtl_dir: Path,
     name: str,
@@ -416,13 +431,17 @@ def check(
     budget_s: float = BUDGET_S,
     deadline_s: float = DEADLINE_S,
     yosys: YosysRunner = run_yosys,
-    hand_written_core: bool = True,
+    strict_core: bool = True,
+    source_refusal: str | None = None,
 ) -> dict[str, Any]:
     """Check the RTL in `rtl_dir` (`project.v`, `<name>.v`) against the netlist FILE `netlist`.
 
-    `hand_written_core`: a person wrote `<name>.v` (a Verilog project); the few refusals that
-    only make sense for hand-written Verilog (`always @(a or b)`, a function without `automatic`)
-    are then applied to it. MyHDL and Amaranth write their own core file.
+    `strict_core`: judge `<name>.v` by the two rules that only make sense for a core that does not
+    list level signals itself (every level-sensitive `always @(a or b)` and every function or
+    task without `automatic` is refused). True for Verilog (hand-written) and Amaranth (its
+    combinational logic is `@*`); False for MyHDL, whose `@always_comb` is written as
+    `always @(a, b)`: its level-sensitive processes are judged in the `hdl/` Python source by the
+    caller, who passes what it found as `source_refusal` (a plain sentence, or None).
 
     The inputs are copied into `scratch` first; every Yosys call runs there. Returns the verdict
     dict described at the top of this module. It never raises: an unexpected failure inside the
@@ -441,7 +460,8 @@ def check(
             deadline_s,
             yosys,
             t0,
-            hand_written_core,
+            strict_core,
+            source_refusal,
         )
     except Exception as exc:
         failed = _Run(scratch, yosys, Clock(budget_s, deadline_s), t0)
@@ -463,7 +483,8 @@ def _check(
     deadline_s: float,
     yosys: YosysRunner,
     t0: float,
-    hand_written_core: bool,
+    strict_core: bool,
+    source_refusal: str | None,
 ) -> dict[str, Any]:
     scratch.mkdir(parents=True, exist_ok=True)
     r = _Run(scratch, yosys, Clock(budget_s, deadline_s), t0)
@@ -475,7 +496,7 @@ def _check(
         shutil.copyfile(netlist, scratch / "netlist.v")
         data = (scratch / "netlist.v").read_bytes()
         r.out["netlist_sha256"] = hashlib.sha256(data).hexdigest()
-        text = data.decode("utf-8", errors="replace")
+        text = data.decode("latin-1")
     except OSError as exc:
         return r.verdict("error", "bad_input", f"The files to check could not be read ({exc}).")
 
@@ -501,12 +522,21 @@ def _check(
     # blanked out and no macros left (hot comments, `(* nosync *)` would change what Yosys
     # builds). Constructs where a simulator and Yosys read the RTL differently, and that the
     # check can spot, are refused; the rest is left to gate-level simulation.
+    # Bytes, not text: a file is read as latin-1 (one character per byte, nothing replaced, no
+    # newline translation) and written back the same way, so the proof reads the bytes that the
+    # synthesis read, minus the comments and attributes.
+    if source_refusal is not None:
+        return r.verdict(
+            "not_proven",
+            "guard_sim_synth_differ",
+            f"Could not prove equivalence: {source_refusal}",
+        )
     try:
         sources = [
-            (fname, (scratch / fname).read_text(encoding="utf-8", errors="replace"))
+            (fname, (scratch / fname).read_bytes().decode("latin-1"))
             for fname in ("project.v", f"{name}.v")
         ]
-        found = equiv_sv.refusal(sources, {f"{name}.v"} if hand_written_core else set())
+        found = equiv_sv.refusal(sources, {f"{name}.v"} if strict_core else set())
         if found is not None:
             return r.verdict(
                 "not_proven",
@@ -514,7 +544,7 @@ def _check(
                 f"Could not prove equivalence: {equiv_sv.plain_message(found)}",
             )
         for fname, text in sources:  # the proof reads these cleaned copies
-            (scratch / fname).write_text(equiv_sv.clean(text), encoding="utf-8")
+            (scratch / fname).write_bytes(equiv_sv.clean(text).encode("latin-1"))
     except OSError as exc:
         return r.verdict("error", "bad_input", f"The files to check could not be read ({exc}).")
 
@@ -857,7 +887,8 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
         netlist,
         out_dir / EQUIV_DIR,
         deadline_s=deadline_s,
-        hand_written_core=frontend == "verilog",
+        strict_core=frontend != "myhdl",
+        source_refusal=_myhdl_refusal(frontend) if frontend == "myhdl" else None,
     )
     return result
 
