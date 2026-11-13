@@ -1,9 +1,14 @@
 # Contributing to Siliconsmith
 
+If you are an AI agent, or you are implementing a milestone, read [CLAUDE.md](CLAUDE.md) and
+[PLAN.md](PLAN.md) first, then work milestone by milestone against the issues in
+[ISSUES.md](ISSUES.md) and on the GitHub tracker.
+
+To report a security problem, follow [SECURITY.md](SECURITY.md) instead of opening an issue.
+
 ## Dev setup
 
-You need Python 3.11 or newer and [uv](https://docs.astral.sh/uv/). Docker is only needed for the
-integration tests that arrive in later M0 pull requests.
+You need Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
 
 ```sh
 git clone https://github.com/RFingAdam/siliconsmith
@@ -14,6 +19,7 @@ uv sync
 Run these before you push. CI runs the same commands.
 
 ```sh
+uv sync --locked
 uv run ruff check
 uv run ruff format --check
 uv run mypy
@@ -28,15 +34,57 @@ uv run pytest -m "not integration"
 `uv run ruff format` rewrites files to the project style. `uv sync --locked` fails if `uv.lock`
 is out of date; run `uv lock` after you change dependencies in `pyproject.toml`.
 
+`check_trailers.py` treats a local run like a branch of this repository, so it rejects
+`Signed-off-by` lines. On a fork, tell it so:
+`HEAD_REPO=<you>/siliconsmith BASE_REPO=RFingAdam/siliconsmith uv run python scripts/check_trailers.py origin/main`.
+
+### Integration tests
+
+The integration tests run the real tools in the toolchain container, so they need Docker and the
+toolchain image named in the README's "Toolchain image" section:
+
+```sh
+docker pull ghcr.io/rfingadam/siliconsmith-toolchain:<tag from the README>
+uv run pytest -m integration
+```
+
+Set `SILICONSMITH_IMAGE` to test against an image with another name.
+
+### What CI runs
+
+- **lint** (Python 3.12): the command list above except pytest, plus a pip-compat check that runs
+  `pip install -e '.[amaranth,myhdl]'` in a fresh virtual environment and checks that the
+  commands start and the packages import. The trailer check runs on pull requests only.
+- **unit** (Python 3.11 and 3.14): `uv run pytest -m "not integration"`.
+- **integration**: pulls the toolchain image (or builds it when the pull fails, for example
+  because a new tag is not published yet) and runs `uv run pytest -m integration`.
+- **image** (a separate workflow, only when `docker/` or `image.yml` changes): builds and smoke-tests
+  the image on pull requests, and publishes it to GHCR on `main`.
+
+### Files that must stay in sync
+
+- **The image tag.** It is a hash of the files under `docker/`, so any change there gives a new
+  tag. `uv run python -m siliconsmith._imagetag` prints the hash. Update `DEFAULT_IMAGE` in
+  `src/siliconsmith/runners/docker.py` and every copy of the tag in `README.md`.
+  `tests/test_image_pins.py` checks `DEFAULT_IMAGE` and every copy of the tag in the README.
+- **The glossary.** `docs/glossary.md` must be byte-identical to
+  `src/siliconsmith/skills/glossary.md`, which `explain` serves (`tests/test_skills.py`).
+- **Third-party licenses.** `docker/THIRD_PARTY_LICENSES.md` must be a copy of
+  `THIRD_PARTY_LICENSES.md` (`tests/test_image_pins.py`).
+- **The README snippets.** The agent configuration snippets in `README.md` are launched by
+  `tests/test_readme_snippets.py`. Keep each `<!-- snippet: name -->` marker on the line right
+  before its code block.
+
 ## License rules
 
 - The project is Apache-2.0. Every new source file gets an SPDX header:
   `# SPDX-FileCopyrightText: <year> <name>` and `# SPDX-License-Identifier: Apache-2.0`.
-  `reuse lint` checks this.
+  `reuse lint` checks this. Markdown files are covered by `REUSE.toml`.
 - Open-source tools only. No commercial EDA, even as an option.
-- GPL and LGPL tools are allowed only as external processes (a subprocess or `docker run`).
-  Never import or link them into this code. In particular, never import the KLayout Python
-  module.
+- GPL tools are allowed only as external processes (a subprocess or `docker run`). Never import
+  or link them into this code. In particular, never import the KLayout Python module.
+- LGPL code (MyHDL) may be used as an unmodified dependency or external binary, as
+  `THIRD_PARTY_LICENSES.md` rule 2 says. Keep MyHDL an optional extra.
 - Never vendor tool source code or binaries into this repository. CI fails on binary files and on
   files over 1 MB.
 - Never copy code from a repository that has no license.
@@ -49,11 +97,12 @@ Contributions from outside contributors (pull requests from a fork) must be sign
 `git commit -s`. This adds a `Signed-off-by:` line and means you agree to the
 [Developer Certificate of Origin 1.1](https://developercertificate.org/).
 
-On branches in this repository (the owner's and AI agents'), commits and PR descriptions must not
-contain `Co-authored-by`, `Signed-off-by` or "Generated with" lines. CI scans them. The check
-looks at lines that start like a trailer, so ordinary sentences that mention these words are fine.
-On fork PRs CI accepts `Signed-off-by` and still rejects the other two. Dependabot PRs are exempt
-from the scan, because Dependabot always adds its own `Signed-off-by` line.
+CI scans the commit messages and the description of every pull request. It always rejects
+`Co-authored-by` lines, "Generated with" or "Generated by" footers, and any `...-by:` trailer that
+names an AI tool. On branches in this repository (the owner's and AI agents'), it also rejects
+`Signed-off-by` lines; on fork PRs it accepts them. The check looks only at lines that start like
+a trailer, so ordinary sentences that mention these words are fine. Dependabot PRs are exempt from
+the scan, because Dependabot always adds its own `Signed-off-by` line.
 
 ## Pull requests
 

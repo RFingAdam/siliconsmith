@@ -100,7 +100,7 @@ def test_claude_mcp_add_matches_mcp_json() -> None:
 
 
 async def test_cursor_json_structure_and_launch(tmp_path: Path) -> None:
-    # Cursor's mcp.json format (docs.cursor.com/context/mcp): {"mcpServers": {name: {command,
+    # Cursor's mcp.json format (cursor.com/docs/context/mcp): {"mcpServers": {name: {command,
     # args, env?}}}, with ${workspaceFolder} expanded by Cursor before it starts the server.
     config = json.loads(snippet("cursor-mcp-json"))
     assert set(config) == {"mcpServers"}
