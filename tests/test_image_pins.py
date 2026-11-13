@@ -38,6 +38,13 @@ def test_readme_image_tag_current() -> None:
     assert re.search(r"\b\d+ MB\b", section.group(1)), "the section must state the image size"
 
 
+def test_every_readme_image_tag_is_current() -> None:
+    # The quick start repeats the tag outside the Toolchain image section; keep every copy current.
+    readme = (REPO_ROOT / "README.md").read_text()
+    tags = set(re.findall(r"siliconsmith-toolchain:(ctx-\w+)", readme))
+    assert tags == {current_tag()}, f"README.md names {sorted(tags)}, want {current_tag()}"
+
+
 def test_docker_copy_of_third_party_licenses_is_identical() -> None:
     root = (REPO_ROOT / "THIRD_PARTY_LICENSES.md").read_bytes()
     assert (REPO_ROOT / "docker" / "THIRD_PARTY_LICENSES.md").read_bytes() == root, (

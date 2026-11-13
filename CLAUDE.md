@@ -6,7 +6,7 @@ You are implementing Siliconsmith. Read this file and `PLAN.md` before you write
 
 Siliconsmith is an Apache-2.0 MCP server plus a skill pack and a pinned Docker toolchain. It lets an AI coding agent design small chips with open-source tools only. There are three tracks (digital, analog/RF, acoustic filters) that share one MCP server, one toolchain image, and one agent loop. Details, architecture, and acceptance criteria are in `PLAN.md`. Issues are in `ISSUES.md` and on GitHub.
 
-The repo started as a plan-only starter. Digital milestone M0 is implemented, one pull request per issue; M1 is next once M0 is closed.
+The repo started as a plan-only starter. It is built one pull request per issue, milestone by milestone; the README's Status section and `ISSUES.md` say which milestones are done.
 
 ## Order of work
 
