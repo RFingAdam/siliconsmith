@@ -163,6 +163,12 @@ def has_inits(log: str) -> bool:
     return bool(block and re.search(r"\S/\S", block.group(1)))
 
 
+def has_memories(log: str) -> bool:
+    """True if the RTL has a memory (`$mem*` cells listed between the markers)."""
+    block = re.search(rf"^{es.MEMS_BEGIN}\n(.*?)^{es.MEMS_END}", log, re.M | re.S)
+    return bool(block and re.search(r"\S/\S", block.group(1)))
+
+
 def parse_stage1(log: str) -> dict[str, Any] | None:
     """`equiv_status`: counts, unproven points and the output signals that were paired."""
     m = re.search(r"Of those cells (\d+) are proven and (\d+) are unproven", log)

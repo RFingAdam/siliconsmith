@@ -323,9 +323,9 @@ _GUARD_HINTS = {
         "check_equivalence again. Gate-level simulation (run_tests with gl=True) still checks it."
     ),
     "guard_sim_synth_differ": (
-        "Remove the construct the message names (an `ifdef, a delay, a two-state type such as "
-        "`bit`, `unique`/`priority`, $readmem): a simulator and the synthesis read it "
-        "differently. Then call check_equivalence again."
+        "Remove the construct the message names (a macro, a delay, a type such as `bit`, "
+        "`unique`/`priority`, `casex`, an x or z literal, ...): a simulator and the synthesis "
+        "read it differently. Then call check_equivalence again."
     ),
     "guard_include": (
         "Put the code of an `include file into the design file (src/<name>.v), then call "
@@ -348,9 +348,7 @@ _GUARD_HINTS = {
     ),
     "initial_values": (
         "Reset those registers with rst_n instead of giving them an initial value (`reg x = 0`, "
-        "`initial`, Amaranth reset_less or init=...), then call check_equivalence again. "
-        "A memory's contents cannot be set by rst_n: do not rely on its starting contents, "
-        "write them after reset."
+        "`initial`, Amaranth reset_less or init=...), then call check_equivalence again."
     ),
     "state_check_unusable": (
         "Reset every register with rst_n and remove the initial values (`reg x = 0`, `initial`, "
@@ -624,12 +622,15 @@ short trace, where cycle 1 is power-up with rst_n low) or "Not proven: ... This 
 (the tool could not decide: ok is false and Status shows Equivalence as fail). Not proven is \
 different from not equivalent: it says why, for example latches, a falling-edge or derived \
 clock, tri-state logic (z) and flip-flops with both an asynchronous set and reset are not \
-supported, or the proof ran out of time. The gates are compared with the RTL as a simulator \
-reads it (comments and (* attributes *) are ignored, so a `synopsys full_case` or `translate_off` \
-comment that changes the gates shows up as not equivalent). What a simulator and the synthesis \
-read differently and the tool cannot neutralize is refused as not proven, naming the construct: \
-`include, `ifdef on a macro the files did not define, delays (#), two-state types (bit, int), \
-unique/priority, $readmem.\n\
+supported, or the proof ran out of time. What is proven: the gates implement the RTL as \
+Yosys reads it, with comments, attributes and macros out of the way (synthesis did not \
+change your logic). A simulator can read some constructs \
+differently from Yosys. The tool refuses the common ones as not proven and names \
+them: macros and `include, bit/int types, unique/priority, casex, ===, x or z literals, delays \
+(#), a lint_off of a race warning, and in hand-written Verilog an incomplete always @(a or b) \
+or a function without automatic. It does NOT detect an out-of-range index or a division by \
+zero (x in a simulator, some value in the gates) or anything that depends on simulation event \
+order: run gate-level simulation (run_tests with gl=True) as well.\n\
 What it checks: every output value the RTL defines must match for every power-up state of \
 the chip's flip-flops (an x or default-don't-care in the RTL means any value is accepted); \
 registers that nothing resets are only compared for a consistent power-up (the RTL simulation \

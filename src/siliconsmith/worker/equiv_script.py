@@ -69,6 +69,8 @@ M_OK = "GUARD-OK"
 GATE_RTLIL = "gate_read.il"  # the netlist as Yosys read it (the host looks for x/z in it)
 INITS_BEGIN = "INITS-BEGIN"
 INITS_END = "INITS-END"
+MEMS_BEGIN = "MEMS-BEGIN"  # the RTL's memories, listed before the `memory` passes
+MEMS_END = "MEMS-END"
 BASE_PREFIX = "BASE-"
 
 GUARD_CLOCK = (
@@ -114,10 +116,11 @@ GUARD_EXPOSE = (
 
 
 def _read_rtl(name: str) -> list[str]:
-    """Read the RTL the way the production synthesis does (same defines, same flags)."""
-    defines = " ".join(f"-D{d}" for d in synth_script.DEFINES)
+    """Read the RTL the proof compares with: the cleaned copies (`equiv_sv.clean`: no comment, no
+    attribute), with the same parser flags as the production synthesis but no defines, and
+    `-nosynthesis` (no implicit SYNTHESIS macro; the text has no macro left to test it)."""
     return [
-        f"read_verilog -defer -noautowire -sv {defines} project.v {name}.v",
+        f"read_verilog -defer -noautowire -sv -nosynthesis project.v {name}.v",
         f"hierarchy -check -top tt_um_{name}",
     ]
 
@@ -138,6 +141,9 @@ def gold(name: str, mode: str, expose: bool = False) -> str:
     if mode == "proof":
         s += [*PRODUCTION_FSM_PASSES, "opt_clean"]
         s += [
+            f"log {MEMS_BEGIN}",
+            "select -list t:$mem*",
+            f"log {MEMS_END}",
             "memory",
             "opt_clean",
             # $pmux as the gates synthesis uses (OR of the selected cases). It only differs when

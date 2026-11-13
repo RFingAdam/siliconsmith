@@ -16,6 +16,15 @@ The Yosys scripts are in `equiv_script.py`, the log readers in `equiv_parse.py`;
 their meaning are described in the first. This module runs them in order, enforces the time limits
 and turns what they find into one verdict.
 
+## What is promised
+
+PROVEN: the netlist implements the RTL as Yosys reads it, once comments, attributes and macros are
+out of the way (synthesis did not change the logic; an `x` in the RTL is a don't-care). BEST
+EFFORT: `equiv_sv.refusal` refuses (`not_proven`, reason `guard_sim_synth_differ`) the common
+constructs that a simulator and Yosys read differently. NOT detected: an out-of-range index or a
+division by zero, and anything that depends on simulation event order; gate-level simulation
+(`run_tests` with `gl=true`) is the check against simulation behaviour.
+
 ## Verdict
 
 `check` returns one dict (every text field is clipped, see `worker/limits.py`):
@@ -276,7 +285,10 @@ def _stage1(r: _Run, name: str, seq: int) -> dict[str, Any]:
         (r.scratch / f).unlink(missing_ok=True)
     script = equiv_script.stage1(name, "netlist.v", seq)
     code, log = r.yosys(r.scratch, script, "equiv", r.clock.left())
-    common = {"rtl_has_init": equiv_parse.has_inits(log)}
+    common = {
+        "rtl_has_init": equiv_parse.has_inits(log),
+        "rtl_has_memory": equiv_parse.has_memories(log),
+    }
     if code is None and (r.scratch / "equiv.json").exists():  # the proof itself ran out of time
         bad = _netlist_xz(r)
         return (
@@ -404,8 +416,13 @@ def check(
     budget_s: float = BUDGET_S,
     deadline_s: float = DEADLINE_S,
     yosys: YosysRunner = run_yosys,
+    hand_written_core: bool = True,
 ) -> dict[str, Any]:
     """Check the RTL in `rtl_dir` (`project.v`, `<name>.v`) against the netlist FILE `netlist`.
+
+    `hand_written_core`: a person wrote `<name>.v` (a Verilog project); the few refusals that
+    only make sense for hand-written Verilog (`always @(a or b)`, a function without `automatic`)
+    are then applied to it. MyHDL and Amaranth write their own core file.
 
     The inputs are copied into `scratch` first; every Yosys call runs there. Returns the verdict
     dict described at the top of this module. It never raises: an unexpected failure inside the
@@ -413,7 +430,19 @@ def check(
     """
     t0 = time.monotonic()
     try:
-        return _check(rtl_dir, name, netlist, scratch, seq, depth, budget_s, deadline_s, yosys, t0)
+        return _check(
+            rtl_dir,
+            name,
+            netlist,
+            scratch,
+            seq,
+            depth,
+            budget_s,
+            deadline_s,
+            yosys,
+            t0,
+            hand_written_core,
+        )
     except Exception as exc:
         failed = _Run(scratch, yosys, Clock(budget_s, deadline_s), t0)
         return failed.verdict(
@@ -434,6 +463,7 @@ def _check(
     deadline_s: float,
     yosys: YosysRunner,
     t0: float,
+    hand_written_core: bool,
 ) -> dict[str, Any]:
     scratch.mkdir(parents=True, exist_ok=True)
     r = _Run(scratch, yosys, Clock(budget_s, deadline_s), t0)
@@ -467,15 +497,16 @@ def _check(
             "cells only.",
         )
 
-    # The RTL side is the design as a SIMULATOR reads it: comments and attributes blanked out
-    # (hot comments, `(* nosync *)`, ... would otherwise change what the proof model is). What
-    # that cannot neutralize (`ifdef SYNTHESIS, delays, two-state types, ...) is refused.
+    # What the proof compares with: the RTL as Yosys reads it, with comments and attributes
+    # blanked out and no macros left (hot comments, `(* nosync *)` would change what Yosys
+    # builds). Constructs where a simulator and Yosys read the RTL differently, and that the
+    # check can spot, are refused; the rest is left to gate-level simulation.
     try:
         sources = [
             (fname, (scratch / fname).read_text(encoding="utf-8", errors="replace"))
             for fname in ("project.v", f"{name}.v")
         ]
-        found = equiv_sv.refusal(sources)
+        found = equiv_sv.refusal(sources, {f"{name}.v"} if hand_written_core else set())
         if found is not None:
             return r.verdict(
                 "not_proven",
@@ -516,7 +547,7 @@ def _check(
 
     # stage 2: does the RTL rely on initial values?
     if s1["rtl_has_init"]:
-        done = _initial_values(r, name, rtl, cycles)
+        done = _initial_values(r, name, rtl, cycles, s1.get("rtl_has_memory", False))
         if done is not None:
             return done
 
@@ -531,7 +562,9 @@ MEMORY_HINT = (
 )
 
 
-def _initial_values(r: _Run, name: str, rtl: str, cycles: int) -> dict[str, Any] | None:
+def _initial_values(
+    r: _Run, name: str, rtl: str, cycles: int, has_memory: bool
+) -> dict[str, Any] | None:
     """Stage 2. None when the RTL's initial values change nothing after the reset cycle (the
     check goes on), else the verdict. Never skipped: every way this stage can end without a
     proof is `not_proven` or `error`, never a pass."""
@@ -571,7 +604,7 @@ def _initial_values(r: _Run, name: str, rtl: str, cycles: int) -> dict[str, Any]
             "The RTL relies on initial values (`reg x = ...`, `initial`, Amaranth "
             "reset_less or init, memory contents) that a chip does not have: at "
             f"{_when(fm['cycle'])} {out} depend on them. Reset those registers with rst_n "
-            f"instead.{MEMORY_HINT}",
+            f"instead.{MEMORY_HINT if has_memory else ''}",
         )
     if d.get("stopped") or stopped:
         r.out["time_limit_hit"] = True
@@ -594,7 +627,7 @@ def _initial_values(r: _Run, name: str, rtl: str, cycles: int) -> dict[str, Any]
         "Could not prove equivalence: the RTL gives initial values to registers that reset does "
         f"not set{which}. A chip has no initial values, and no output differed in the first "
         f"{d['covered']} cycles from reset, so the check cannot say whether the gates match. "
-        f"Reset those registers with rst_n.{MEMORY_HINT}{limit}",
+        f"Reset those registers with rst_n.{MEMORY_HINT if has_memory else ''}{limit}",
         cycles_covered=d["covered"],
     )
 
@@ -818,7 +851,14 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
         return result
     out_dir = run_dir / "out"
     netlist = out_dir / synth.SYNTH_DIR / f"tt_um_{name}.v"
-    result["equiv"] = check(out_dir, name, netlist, out_dir / EQUIV_DIR, deadline_s=deadline_s)
+    result["equiv"] = check(
+        out_dir,
+        name,
+        netlist,
+        out_dir / EQUIV_DIR,
+        deadline_s=deadline_s,
+        hand_written_core=frontend == "verilog",
+    )
     return result
 
 

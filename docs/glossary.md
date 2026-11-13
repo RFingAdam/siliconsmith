@@ -84,7 +84,7 @@ A signal value that is neither 0 nor 1 in a simulation, written `x`. A flip-flop
 
 ## Equivalence check
 
-A proof that the gates (the netlist) do the same as your RTL, for every input rather than the ones a test tries (`check_equivalence`). Every output value the RTL defines must match, for every power-up state of the flip-flops. It compares the two only with each other: a bug in the RTL itself, such as a wrong reset, is on both sides and not found. "Not proven" is never a pass.
+A proof that the gates (the netlist) do the same as your RTL, for every input rather than the ones a test tries (`check_equivalence`). Every output value the RTL defines must match, for every power-up state of the flip-flops. It proves synthesis did not change your logic, as Yosys reads the RTL. A bug in the RTL itself, such as a wrong reset, is on both sides and not found; neither is what a simulator reads differently (gate-level simulation covers that). "Not proven" is never a pass.
 
 ## Formal proof
 

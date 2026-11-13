@@ -41,6 +41,7 @@ from integration.test_ledger import step_states
 from integration.test_sim import counter_project
 from siliconsmith.runners.docker import DockerRunner
 from siliconsmith.server import build_server
+from siliconsmith.worker import equiv_sv
 
 pytestmark = [pytest.mark.integration, pytest.mark.anyio]
 
@@ -267,8 +268,8 @@ RTL_SEEDS = [
     # synthesis build other gates (each confirmed by the reviewer in Icarus: the outputs differ
     # from cycle 2 on) are not neutralized in the gates, so the check reports the difference.
     ("fchot", "verilog", "not_equivalent", None),
-    ("fccomblo", "verilog", "not_equivalent", None),
-    ("fcfunclo", "verilog", "not_equivalent", None),
+    ("fccomblo", "verilog", "not_proven", "guard_sim_synth_differ"),  # lint_off hides the warning
+    ("fcfunclo", "verilog", "not_proven", "guard_sim_synth_differ"),  # lint_off hides the warning
     ("xoffglued", "verilog", "not_equivalent", None),
     ("nosync", "verilog", "not_equivalent", None),
     # what a simulator and the synthesis read differently and cannot be neutralized is refused
@@ -277,7 +278,14 @@ RTL_SEEDS = [
     ("uqdodgelo", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("bitreg", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("delay", "verilog", "not_proven", "guard_sim_synth_differ"),
-    ("nolatchlo", "verilog", "not_proven", "guard_clocking"),  # a latch the attribute hid
+    ("nolatchlo", "verilog", "not_proven", "guard_sim_synth_differ"),  # lint_off LATCH
+    # Round 4: constructs a simulator reads differently from Yosys, refused with the construct named
+    ("sensn", "verilog", "not_proven", "guard_sim_synth_differ"),  # always @(ui_in[0])
+    ("fstaticn", "verilog", "not_proven", "guard_sim_synth_differ"),  # function without automatic
+    ("racen", "verilog", "not_proven", "guard_sim_synth_differ"),  # lint_off BLKSEQ hides a race
+    ("lpnosync", "verilog", "not_proven", "guard_sim_synth_differ"),  # a macro builds an attribute
+    ("eqx", "verilog", "not_proven", "guard_sim_synth_differ"),  # r === 1'bx
+    ("enumreg", "verilog", "not_proven", "guard_sim_synth_differ"),  # an enum is a two-state int
     # `unique case`: synthesis assumes what a simulator does not
     ("uniquecase", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
@@ -379,3 +387,26 @@ async def test_equiv_the_expose_guard_runs_and_fails_closed(
         got = json.loads(proc.stdout.strip().splitlines()[-1])
         assert got["real"][0] == 0 and got["real"][1] == "equal" and got["real"][2] is True
         assert got["broken"][0] != 0 and got["broken"][1] == "unusable"
+
+
+# Designs that must NOT be refused by the sim/synth guard, on every front-end they have: the
+# Verilog that the tool emits (and the hand-written core of a Verilog project) is read exactly
+# as the check reads it. A rule that fires on normal front-end output is a bug.
+PRECISION = ["ammem", "arcnt", "carst", "deepinit", "fallingedge", "initz", "seqdet", "shiftpar"]
+
+
+PRECISION_CASES = [
+    (d, fe) for d in PRECISION for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
+]
+
+
+@pytest.mark.parametrize(("design", "fe"), PRECISION_CASES)
+async def test_the_refusals_do_not_fire_on_emitted_rtl(
+    server: Client, tmp_path: Path, design: str, fe: str
+) -> None:
+    async with server as client:
+        project = await design_project(client, tmp_path, design, fe)
+        await call(client, "emit_verilog", project=design)
+        files = [(f, (project / "src" / f).read_text()) for f in ("project.v", f"{design}.v")]
+        hand = {f"{design}.v"} if fe == "verilog" else set()
+        assert equiv_sv.refusal(files, hand) is None, (design, fe)

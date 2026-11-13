@@ -279,15 +279,23 @@ def test_a_register_the_state_check_cannot_see_has_its_own_reason(tmp_path: Path
     assert got["cycles_covered"] == 32 and fake.tags == ["equiv", "initstate", "initdep"]
 
 
-def test_the_initial_value_messages_say_a_memory_is_not_reset_by_rst_n(tmp_path: Path) -> None:
+@pytest.mark.parametrize("memory", [True, False])
+def test_the_memory_hint_is_only_given_when_the_design_has_a_memory(
+    tmp_path: Path, memory: bool
+) -> None:
+    log = initz_stage1_for_counter()
+    if memory:  # the stage-1 script lists the RTL's memories between these markers
+        log = log.replace("MEMS-BEGIN\nMEMS-END", "MEMS-BEGIN\ntt_um_chip/mem\nMEMS-END")
+        if "MEMS-BEGIN" not in log:
+            log = "MEMS-BEGIN\ntt_um_chip/mem\nMEMS-END\n" + log
     fake = FakeYosys(
         "counter_good",
-        equiv=(0, "inline", initz_stage1_for_counter()),
+        equiv=(0, "inline", log),
         initstate=(0, "initstate_deep", "initstate.log"),
         initdep=(0, "counter_good", "bmc.log"),
     )
     got = go(tmp_path, fake)
-    assert "memory's contents cannot be set by rst_n" in got["message"]
+    assert ("memory's contents cannot be set by rst_n" in got["message"]) is memory
 
 
 def test_an_initial_value_check_that_cannot_be_read_is_not_a_pass(tmp_path: Path) -> None:
@@ -443,9 +451,9 @@ def test_a_guard_refusal_is_not_proven(
 @pytest.mark.parametrize(
     ("text", "word"),
     [
-        ("`ifdef SYNTHESIS\n`endif\n", "`ifdef SYNTHESIS"),
-        ("`ifdef __ICARUS__\n`endif\n", "`ifdef __ICARUS__"),
-        ("`ifndef VERILATOR\n`endif\n", "`ifndef VERILATOR"),
+        ("`ifdef SYNTHESIS\n`endif\n", "macro or directive `ifdef"),
+        ("`ifdef __ICARUS__\n`endif\n", "macro or directive `ifdef"),
+        ("`ifndef VERILATOR\n`endif\n", "macro or directive `ifndef"),
         ("bit b;\n", "two-state type `bit`"),
         ("assign #1 y = a;\n", "delay"),
         ("unique case (a)\n", "`unique`"),

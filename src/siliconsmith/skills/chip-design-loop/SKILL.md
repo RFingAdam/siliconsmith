@@ -63,7 +63,15 @@ It does not catch bugs in the RTL itself, including a wrong reset in the RTL: bo
 
 `not_equivalent` names the output bit and the first differing clock cycle (x means it depends on power-up). Fix and rerun.
 
-`not_proven` is never a pass. Latches, derived or falling-edge clocks, z (tri-state), flops with async set and reset, and RTL read differently by simulation and synthesis (`ifdef`, `#`, `bit`) are unsupported and come back not proven, as does a proof that runs out of time. Tell the user it is not checked. An `error` (a loop, an unknown cell) is no pass either.
+`not_proven` is never a pass. Latches, derived or falling-edge clocks, z (tri-state), flops with async set and reset are unsupported and come back not proven, as does a proof that runs out of time. Tell the user it is not checked. An `error` (a loop, an unknown cell) is no pass either.
+
+## What equivalence does not see
+
+"Equivalent" means synthesis did not change your logic: the gates match the RTL as Yosys reads it. A simulator reads some constructs differently, so the check refuses the common ones as not proven (`guard_sim_synth_differ`) and names them: macros and `ifdef`, `include`, `bit`/`int`, `unique`/`priority`, `casex`, `===`, x or z literals, `#` delays and a `lint_off` of a race warning.
+
+In hand-written Verilog it also refuses `always @(a or b)` and a function without `automatic`: write `@(*)` and `function automatic`. Use a parameter, not a macro.
+
+It cannot see an out-of-range index or a division by zero (x in a simulator, some value in the gates) or anything that depends on the order a simulator runs events. Gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour: run both.
 
 ## Too big for the tile
 

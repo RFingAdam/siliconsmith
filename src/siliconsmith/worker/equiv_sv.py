@@ -1,107 +1,110 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
 # SPDX-License-Identifier: Apache-2.0
 
-"""Read the RTL text the way a SIMULATOR does, for the equivalence check (stdlib only).
+"""Prepare the RTL text for the equivalence check, and refuse what the check cannot vouch for.
 
-Synthesis reads more into a Verilog file than a simulator does: hot comments (`// synopsys
-translate_off`, `full_case`), attributes (`(* nosync *)`, `(* nolatches *)`), predefined macros
-(`ifdef SYNTHESIS`). The check wants the RTL side to be what a simulator runs, and the netlist to be
-what synthesis made of the ORIGINAL text, so any real difference shows up as a difference.
+## What the check promises (stdlib only, runs in the container)
 
-* `clean(text)` returns the text with every comment and every attribute instance blanked out
-  (spaces; newlines stay, so line numbers do not move). Strings and escaped identifiers are
-  skipped over, and `@(*)` / `@( * )` is not taken for an attribute.
-* `refusal(files)` looks at the same text (comments, attributes and string contents blanked) for
-  what cannot be neutralized this way and returns the first such construct, or None. It is an
-  ALLOW-list: a macro must be `define`d in the same files before it is tested with `ifdef`, only a
-  short list of directives is accepted, and the rest is refused.
+PROVEN: the netlist implements the RTL as Yosys reads it, once comments, attributes and macros are
+out of the way. In plain words: synthesis did not change your logic.
 
-Refused (the plain reason names the construct and the line):
+BEST EFFORT: Yosys and a simulator do not read every Verilog file the same way. `refusal()` spots
+the common constructs where they differ and the check answers `not_proven` (with the construct
+named) instead of a verdict. What it does NOT spot is left to gate-level simulation
+(`run_tests` with `gl=true`):
 
-* `include (the check does not see the included file);
-* `ifdef / `ifndef / `elsif on a macro the files did not `define earlier (SYNTHESIS, YOSYS,
-  __ICARUS__, VERILATOR, FORMAL, ...: a simulator and the synthesis define different ones);
-* any directive other than `timescale, `default_nettype, `define, `undef, `ifdef, `ifndef,
-  `elsif, `else, `endif, `resetall, `celldefine, `endcelldefine and a macro defined earlier;
-  token pasting with two backticks;
-* the keywords `unique`, `unique0`, `priority` (synthesis assumes things a simulator does not);
-* the two-state types `bit`, `byte`, `shortint`, `int`, `longint` (they start at 0 in a simulator,
-  which is an initial value the check cannot see; use `reg` or `logic` and a reset);
-* delay controls (`#5`, `#(2)`, `##1`): a simulator waits, synthesis ignores them. The `#(` of a
-  parameter list (`module m #(`, `inst #(.W(8)) u (...)`) is fine;
-* `$readmemh` / `$readmemb` (they read a file the check does not have) and
-  `$test$plusargs` / `$value$plusargs` (simulator command-line options).
+* an out-of-range index or a division by zero (x in a simulator, some value in the gates, because
+  an x in the RTL is a don't-care);
+* anything that depends on the order in which a simulator runs events.
+
+## What this module does
+
+* `lex(text)` returns `(clean, scan, problem)`. `clean` is the text with every comment and every
+  attribute instance `(* ... *)` blanked out (spaces; newlines stay, so line numbers do not move):
+  Yosys then reads no hot comment (`// synopsys translate_off`) and no attribute (`nosync`,
+  `full_case`). `scan` is the same with the contents of strings and escaped identifiers blanked
+  too. `problem` is the first thing the tokenizer cannot read safely (an unterminated comment,
+  attribute or string; an attribute that holds `;`, a backtick or a comment).
+* `refusal(files, hand_written)` returns the first construct in the files that is refused, or None.
+
+## Refused (`refusal`)
+
+In every file:
+
+* the macro machinery: every backtick directive except `timescale, `default_nettype, `resetall,
+  `celldefine and `endcelldefine (so no `define, `ifdef, macro use, `` pasting, `line, `pragma);
+  `include has its own reason. A macro can build text the check never sees; use a parameter;
+* the keywords `unique`, `unique0`, `priority`, `primitive`, `casex`;
+* the two-state types `bit`, `byte`, `shortint`, `int`, `longint`, and an `enum` without a
+  four-state base type (`enum logic [1:0] {...}` is fine): they start at 0 in a simulator;
+* `===` and `!==`: the check models them differently from a simulator;
+* x digits in a based literal (`4'b1x0`, `'hx`) and the unbased `'x`; z or ? digits and `'z`
+  outside a `casez` (inside, they are wildcards for both a simulator and synthesis);
+* delay controls (`#`), except a parameter list in exactly two shapes:
+  `module NAME #(` and `NAME #( ... ) INSTANCE [range] (`; neither name may be a reserved word;
+* `$readmemh`, `$readmemb`, `$test$plusargs`, `$value$plusargs`;
+* a `// verilator lint_off` comment with no code, or with a code that hides what the lint step
+  catches (BLKSEQ, COMBDLY, CASEX, CASEWITHX, CASEINCOMPLETE, LATCH, MULTIDRIVEN, ...): the lint
+  runs with every warning fatal, and that is what finds a blocking race or an x in a case item.
+
+Only in hand-written Verilog (the core file of a Verilog project; MyHDL and Amaranth write theirs,
+and their event lists are complete by construction; `project.v` is always written by the tool):
+
+* an event control that is not `@*`, `@(*)` or only `posedge`/`negedge` items (`always @(a or b)`):
+  a simulator does not rerun the block for a signal missing from the list, the gates do not care;
+* `function` or `task` without `automatic`: a simulator keeps the local variables of a plain
+  function between calls.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 
 ALLOWED_DIRECTIVES = frozenset(
-    {
-        "timescale",
-        "default_nettype",
-        "define",
-        "undef",
-        "ifdef",
-        "ifndef",
-        "elsif",
-        "else",
-        "endif",
-        "resetall",
-        "celldefine",
-        "endcelldefine",
-    }
+    {"timescale", "default_nettype", "resetall", "celldefine", "endcelldefine"}
 )
-KEYWORDS = ("unique", "unique0", "priority")
+KEYWORDS = ("unique", "unique0", "priority", "primitive", "casex")
 TWO_STATE = ("bit", "byte", "shortint", "int", "longint")
 SYSTEM_TASKS = ("$readmemh", "$readmemb", "$test$plusargs", "$value$plusargs")
-# A `#` after one of these is a delay (`assign #1`, `and #2 g (...)`), not a parameter list.
-_NOT_A_MODULE_NAME = frozenset(
+# verilator lint codes whose warnings (fatal in our lint step) catch what a text scan cannot
+LINT_CODES_NOT_TO_HIDE = frozenset(
     {
-        "assign",
-        "begin",
-        "end",
-        "else",
-        "and",
-        "or",
-        "nand",
-        "nor",
-        "xor",
-        "xnor",
-        "not",
-        "buf",
-        "bufif0",
-        "bufif1",
-        "notif0",
-        "notif1",
-        "wire",
-        "wand",
-        "wor",
-        "tri",
-        "tri0",
-        "tri1",
-        "triand",
-        "trior",
-        "trireg",
-        "supply0",
-        "supply1",
-        "force",
-        "release",
-        "deassign",
-        "forever",
-        "fork",
-        "join",
-        "initial",
-        "always",
-        "always_comb",
-        "always_ff",
-        "always_latch",
-        "then",
-        "case",
-        "default",
+        "BLKSEQ", "BLKANDNBLK", "COMBDLY", "CASEX", "CASEWITHX", "CASEINCOMPLETE", "CASEOVERLAP",
+        "LATCH", "NOLATCH", "MULTIDRIVEN", "SYNCASYNCNET", "INITIALDLY", "ALWCOMBORDER",
+        "IMPLICITSTATIC",
     }
+)  # fmt: skip
+# Verilog-2005 and SystemVerilog reserved words: neither the module name of a parameter list
+# nor an instance name may be one of them.
+RESERVED = frozenset(
+    (  # noqa: SIM905
+        "accept_on alias always always_comb always_ff always_latch and assert assign assume "
+        "automatic before begin bind bins binsof bit break buf bufif0 bufif1 byte case casex "
+        "casez cell chandle checker class clocking cmos config const constraint context "
+        "continue cover covergroup coverpoint cross deassign default defparam design disable "
+        "dist do edge else end endcase endchecker endclass endclocking endconfig endfunction "
+        "endgenerate endgroup endinterface endmodule endpackage endprimitive endprogram "
+        "endproperty endsequence endspecify endtable endtask enum event eventually expect "
+        "export extends extern final first_match for force foreach forever fork forkjoin "
+        "function generate genvar global highz0 highz1 if iff ifnone ignore_bins illegal_bins "
+        "implements implies import incdir include initial inout input inside instance int "
+        "integer interconnect interface intersect join join_any join_none large let liblist "
+        "library local localparam logic longint macromodule matches medium modport module "
+        "nand negedge nettype new nexttime nmos nor noshowcancelled not notif0 notif1 null or "
+        "output package packed parameter pmos posedge primitive priority program property "
+        "protected pull0 pull1 pulldown pullup pulsestyle_ondetect pulsestyle_onevent pure "
+        "rand randc randcase randsequence rcmos real realtime ref reg reject_on release "
+        "repeat restrict return rnmos rpmos rtran rtranif0 rtranif1 s_always s_eventually "
+        "s_nexttime s_until s_until_with scalared sequence shortint shortreal showcancelled "
+        "signed small soft solve specify specparam static string strong strong0 strong1 "
+        "struct super supply0 supply1 sync_accept_on sync_reject_on table tagged task this "
+        "throughout time timeprecision timeunit tran tranif0 tranif1 tri tri0 tri1 triand "
+        "trior trireg type typedef union unique unique0 unsigned until until_with untyped use "
+        "uwire var vectored virtual void wait wait_order wand weak weak0 weak1 while wildcard "
+        "wire with within wor xnor xor"
+    ).split()
 )
 
 
@@ -119,29 +122,38 @@ def _blank(segment: str) -> str:
     return "".join(c if c == "\n" else " " for c in segment)
 
 
-def _string_end(text: str, i: int) -> int:
-    """Index just past the string that starts at `text[i] == '"'`."""
+def _string_end(text: str, i: int) -> int | None:
+    """Index just past the string that starts at `text[i] == '"'`; None if it is not closed on
+    this line (a raw line break or the end of the file comes first)."""
     n = len(text)
     j = i + 1
     while j < n:
-        if text[j] == "\\":
+        c = text[j]
+        if c == "\\":
             j += 2
-        elif text[j] == '"':
+        elif c == '"':
             return j + 1
-        elif text[j] == "\n":
-            return j  # an unterminated string ends at the line end (Yosys will refuse it)
+        elif c == "\n":
+            return None
         else:
             j += 1
-    return n
+    return None
 
 
-def lex(text: str) -> tuple[str, str]:
-    """`(clean, scan)`: the text without comments and attributes, and the same with the contents
-    of strings and escaped identifiers blanked as well (what `refusal` looks at)."""
+def lex(text: str) -> tuple[str, str, tuple[int, str] | None]:
+    """`(clean, scan, problem)`: see the module docstring. `problem` is `(position, what)`."""
     n = len(text)
     clean: list[str] = []
     scan: list[str] = []
+    problem: tuple[int, str] | None = None
+    last = ""  # the last significant character so far (not blank, not in a comment)
     i = 0
+
+    def note(pos: int, what: str) -> None:
+        nonlocal problem
+        if problem is None:
+            problem = (pos, what)
+
     while i < n:
         c = text[i]
         two = text[i : i + 2]
@@ -152,120 +164,288 @@ def lex(text: str) -> tuple[str, str]:
             scan.append(_blank(text[i:j]))
         elif two == "/*":
             j = text.find("*/", i + 2)
-            j = n if j < 0 else j + 2
+            if j < 0:
+                note(i, "a /* comment that is never closed")
+                j = n
+            else:
+                j += 2
             clean.append(_blank(text[i:j]))
             scan.append(_blank(text[i:j]))
         elif c == '"':
-            j = _string_end(text, i)
-            clean.append(text[i:j])
-            scan.append('"' + _blank(text[i + 1 : j - 1]) + '"' if j - i >= 2 else text[i:j])
+            end = _string_end(text, i)
+            if end is None:
+                note(i, "a string with a line break in it, or one that is never closed")
+                end = text.find("\n", i)
+                end = n if end < 0 else end
+            clean.append(text[i:end])
+            scan.append('"' + _blank(text[i + 1 : end - 1]) + '"' if end - i >= 2 else text[i:end])
+            last = '"'
+            j = end
         elif c == "\\" and i + 1 < n and not text[i + 1].isspace():
             j = i + 1
             while j < n and not text[j].isspace():
                 j += 1
             clean.append(text[i:j])
             scan.append("\\" + "x" * (j - i - 1))
-        elif two == "(*" and not re.match(r"\(\*[ \t]*\)", text[i:]):
-            j = i + 2
-            while j < n and text[j : j + 2] != "*)":
-                j = _string_end(text, j) if text[j] == '"' else j + 1
-            j = n if j >= n else j + 2
+            last = "x"
+        elif two == "(*" and last == "@":
+            clean.append("(")  # the event `@(*)`: `*` and `)` are ordinary characters
+            scan.append("(")
+            last = "("
+            j = i + 1
+        elif two == "(*":
+            k = i + 2
+            closed = False
+            while k < n:
+                if text[k : k + 2] == "*)":
+                    closed = True
+                    break
+                if text[k] == '"':
+                    end = _string_end(text, k)
+                    k = k + 1 if end is None else end
+                    continue
+                if text[k] == ";" or text[k] == "`" or text[k : k + 2] in ("(*", "//", "/*"):
+                    note(i, "an attribute (* ... *) that holds `;`, a backtick or a comment")
+                k += 1
+            if not closed:
+                note(i, "an attribute (* that is never closed")
+            j = k + 2 if closed else n
             clean.append(_blank(text[i:j]))
             scan.append(_blank(text[i:j]))
         else:
             clean.append(c)
             scan.append(c)
+            if not c.isspace():
+                last = c
             j = i + 1
         i = j
-    return "".join(clean), "".join(scan)
+    return "".join(clean), "".join(scan), problem
 
 
 def clean(text: str) -> str:
-    """The RTL as a simulator reads it: comments and attribute instances blanked out."""
+    """The RTL the proof reads: comments and attribute instances blanked out."""
     return lex(text)[0]
 
 
-def _define_bodies(scan: str) -> list[tuple[int, int]]:
-    """Character ranges of the macro definitions (to the line end, `\\` continues the line)."""
-    ranges = []
-    for m in re.finditer(r"`define\b", scan):
-        j = m.end()
-        while True:
-            k = scan.find("\n", j)
-            if k < 0:
-                j = len(scan)
-                break
-            if scan[j:k].rstrip().endswith("\\"):
-                j = k + 1
-                continue
-            j = k
-            break
-        ranges.append((m.start(), j))
-    return ranges
+_DIRECTIVE = re.compile(r"``|`([A-Za-z_]\w*)?")
+_WORD = re.compile(r"(?<![\w$'])[A-Za-z_][\w$]*")
+_BASED = re.compile(r"'\s*[sS]?\s*([bBoOdDhH])\s*([0-9a-fA-FxXzZ?_]+)")
+_UNBASED = re.compile(r"'[xXzZ](?![\w])")
+_LINT_OFF = re.compile(r"verilator\s+lint_off\b([^\n*]*)", re.I)
 
 
-def _line(scan: str, pos: int) -> int:
-    return scan.count("\n", 0, pos) + 1
+def _line(text: str, pos: int) -> int:
+    return text.count("\n", 0, pos) + 1
 
 
-def _delay(scan: str, pos: int, in_define: bool) -> bool:
-    """True if the `#` at `scan[pos]` is a delay, not the start of a parameter list."""
-    j = pos + 1
-    while j < len(scan) and scan[j] in " \t\r\n":
-        j += 1
-    if in_define or scan[j : j + 1] != "(" or scan[pos + 1 : pos + 2] == "#":
-        return True
+def _word_before(scan: str, pos: int) -> tuple[str, int]:
+    """The identifier that ends right before `pos` (blanks skipped) and where it starts."""
     k = pos - 1
-    while k >= 0 and scan[k] in " \t\r\n":
+    while k >= 0 and scan[k].isspace():
         k -= 1
     end = k + 1
     while k >= 0 and (scan[k].isalnum() or scan[k] in "_$"):
         k -= 1
-    word = scan[k + 1 : end]
-    return not word or word in _NOT_A_MODULE_NAME or word[0].isdigit()
+    return scan[k + 1 : end], k + 1
 
 
-_DIRECTIVE = re.compile(r"``|`([A-Za-z_]\w*)?")
+def _skip_blank(scan: str, k: int) -> int:
+    while k < len(scan) and scan[k].isspace():
+        k += 1
+    return k
 
 
-def refusal(files: list[tuple[str, str]]) -> Refusal | None:
-    """The first construct in the files (read in this order) that the check cannot vouch for."""
-    defined: set[str] = set()
-    for name, text in files:
-        scan = lex(text)[1]
-        bodies = _define_bodies(scan)
-
-        def refuse(code: str, what: str, pos: int, name: str = name, scan: str = scan) -> Refusal:
-            return Refusal(code, what, name, _line(scan, pos))
-
-        for m in _DIRECTIVE.finditer(scan):
-            word = m.group(1)
-            if m.group(0) == "``" or word is None:
-                return refuse("sim_synth", "a stray backtick or `` token pasting", m.start())
-            if word == "include":
-                return refuse("include", "`include", m.start())
-            rest = re.match(r"\s*([A-Za-z_]\w*)", scan[m.end() :])
-            macro = rest.group(1) if rest else ""
-            if word in ("ifdef", "ifndef", "elsif"):
-                if macro not in defined:
-                    return refuse("sim_synth", f"`{word} {macro or '?'}", m.start())
-            elif word == "define":
-                defined.add(macro)
-            elif word == "undef":
-                defined.discard(macro)
-            elif word not in ALLOWED_DIRECTIVES and word not in defined:
-                return refuse("sim_synth", f"the directive `{word}", m.start())
-        for m in re.finditer(r"(?<![\w$])(" + "|".join(KEYWORDS + TWO_STATE) + r")(?![\w$])", scan):
-            kind = "keyword" if m.group(1) in KEYWORDS else "two-state type"
-            return refuse("sim_synth", f"the {kind} `{m.group(1)}`", m.start())
-        for task in SYSTEM_TASKS:
-            at = scan.find(task)
-            if at >= 0:
-                return refuse("sim_synth", f"`{task}`", at)
-        for m in re.finditer(r"#", scan):
-            if _delay(scan, m.start(), any(a <= m.start() < b for a, b in bodies)):
-                return refuse("sim_synth", "a delay (`#`)", m.start())
+def _balanced(scan: str, k: int, open_c: str, close_c: str) -> int | None:
+    """Index just past the group that starts at `scan[k] == open_c`, or None."""
+    depth = 0
+    while k < len(scan):
+        if scan[k] == open_c:
+            depth += 1
+        elif scan[k] == close_c:
+            depth -= 1
+            if depth == 0:
+                return k + 1
+        k += 1
     return None
+
+
+def _parameter_list(scan: str, pos: int) -> bool:
+    """True if the `#` at `scan[pos]` starts a parameter list in one of the two accepted shapes:
+    `module [automatic|static] NAME #(` and `NAME #( ... ) INSTANCE [range] (`."""
+    after = _skip_blank(scan, pos + 1)
+    if scan[after : after + 1] != "(":
+        return False
+    name, start = _word_before(scan, pos)
+    if not name or name[0].isdigit() or name in RESERVED or (start > 0 and scan[start - 1] == "`"):
+        return False
+    before, at = _word_before(scan, start)
+    if before in ("automatic", "static"):
+        before, at = _word_before(scan, at)
+    if before in ("module", "macromodule"):
+        return True
+    close = _balanced(scan, after, "(", ")")
+    if close is None:
+        return False
+    k = _skip_blank(scan, close)
+    m = re.match(r"[A-Za-z_][\w$]*", scan[k:])
+    if m is None or m.group(0) in RESERVED:
+        return False
+    k = _skip_blank(scan, k + m.end())
+    while scan[k : k + 1] == "[":  # an array of instances
+        end = _balanced(scan, k, "[", "]")
+        if end is None:
+            return False
+        k = _skip_blank(scan, end)
+    return scan[k : k + 1] == "("
+
+
+def _casez_spans(scan: str) -> list[tuple[int, int]]:
+    """Character ranges of the `casez ... endcase` statements (nested cases counted)."""
+    spans = []
+    depth = 0
+    start = 0
+    for m in re.finditer(r"(?<![\w$])(casez|casex|case|endcase)(?![\w$])", scan):
+        word = m.group(1)
+        if word == "endcase":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    spans.append((start, m.end()))
+                    start = -1
+        else:
+            if depth == 0:
+                start = m.start() if word == "casez" else -1
+            depth += 1
+    return spans
+
+
+def _event_controls(scan: str) -> int | None:
+    """The position of the first event control that is not `@*`, `@(*)` or only edge items."""
+    for m in re.finditer(r"@", scan):
+        k = _skip_blank(scan, m.end())
+        if scan[k : k + 1] == "*":
+            continue
+        if scan[k : k + 1] != "(":
+            return m.start()
+        end = _balanced(scan, k, "(", ")")
+        if end is None:
+            return m.start()
+        inner = scan[k + 1 : end - 1].strip()
+        if inner == "*":
+            continue
+        items, depth, cur = [], 0, ""
+        for tok in re.split(r"(\(|\)|\[|\]|\{|\}|,|(?<![\w$])or(?![\w$]))", inner):
+            if tok in ("(", "[", "{"):
+                depth += 1
+            elif tok in (")", "]", "}"):
+                depth -= 1
+            elif depth == 0 and (tok == "," or tok == "or"):
+                items.append(cur)
+                cur = ""
+                continue
+            cur += tok
+        items.append(cur)
+        edge = r"\s*(posedge|negedge)\s+\S"
+        if not all(re.match(edge, it) and not re.search(r"\biff\b", it) for it in items):
+            return m.start()
+    return None
+
+
+def _refusal_in(name: str, text: str, hand: bool) -> Refusal | None:
+    _, scan, problem = lex(text)
+
+    def refuse(what: str, pos: int, code: str = "sim_synth", src: str = scan) -> Refusal:
+        return Refusal(code, what, name, _line(src, pos))
+
+    if problem is not None:
+        return refuse(problem[1], problem[0])
+    for m in _DIRECTIVE.finditer(scan):
+        word = m.group(1)
+        if word == "include":
+            return refuse("`include", m.start(), "include")
+        if word is None or m.group(0) == "``" or word not in ALLOWED_DIRECTIVES:
+            return refuse(f"the macro or directive `{word or ''}", m.start())
+    spans = _casez_spans(scan)
+    for m in _WORD.finditer(scan):
+        word = m.group(0)
+        if word in KEYWORDS or word in TWO_STATE:
+            kind = "two-state type" if word in TWO_STATE else "keyword"
+            return refuse(f"the {kind} `{word}`", m.start())
+        if word == "enum":
+            base = re.match(r"\s*(logic|reg|integer)\b", scan[m.end() :])
+            if base is None:
+                return refuse("an `enum` without a logic, reg or integer base type", m.start())
+        if (
+            hand
+            and word in ("function", "task")
+            and not re.match(r"\s*automatic\b", scan[m.end() :])
+        ):
+            return refuse(f"a `{word}` that is not `automatic`", m.start())
+    for task in SYSTEM_TASKS:
+        at = scan.find(task)
+        if at >= 0:
+            return refuse(f"`{task}`", at)
+    for op in ("===", "!=="):
+        at = scan.find(op)
+        if at >= 0:
+            return refuse(f"the case-equality operator `{op}`", at)
+    for m in _UNBASED.finditer(scan):
+        if m.group(0)[1] in "xX" or not any(a <= m.start() < b for a, b in spans):
+            return refuse(f"the literal `{m.group(0)}` (an x or z value)", m.start())
+    for m in _BASED.finditer(scan):
+        digits = m.group(2)
+        shown = m.group(0).strip()
+        if re.search(r"[xX]", digits):
+            return refuse(f"a literal with an x digit (`{shown}`)", m.start())
+        if re.search(r"[zZ?]", digits) and not any(a <= m.start() < b for a, b in spans):
+            return refuse(f"a literal with a z or ? digit (`{shown}`)", m.start())
+    for m in re.finditer(r"#", scan):
+        if not _parameter_list(scan, m.start()):
+            return refuse("a delay (`#`)", m.start())
+    for m in _LINT_OFF.finditer(text):  # a comment: look at the original text
+        words = re.findall(r"[-\w]+", m.group(1))
+        code = next((w for w in words if not w.startswith("-")), "")
+        if code == "" or code.upper() in LINT_CODES_NOT_TO_HIDE:
+            return refuse(f"`verilator lint_off {code}`".replace(" `", "`"), m.start(), src=text)
+    if hand:
+        event = _event_controls(scan)
+        if event is not None:
+            return refuse("an event control that is not `@*`, `@(*)` or edges", event)
+    return None
+
+
+def refusal(
+    files: list[tuple[str, str]], hand_written: Collection[str] | None = None
+) -> Refusal | None:
+    """The first construct in the files (read in this order) that the check cannot vouch for.
+
+    `hand_written`: names of the files a person wrote (None: all of them)."""
+    for name, text in files:
+        found = _refusal_in(name, text, hand_written is None or name in hand_written)
+        if found is not None:
+            return found
+    return None
+
+
+_ADVICE = (
+    ("macro or directive", "Use a `localparam` or `parameter` instead: a macro can build text the "
+     "check never sees."),
+    ("two-state", "Use `reg` or `logic` and reset it with rst_n: a two-state type starts at 0 in "
+     "a simulator, which the check cannot see."),
+    ("enum", "Write `enum logic [1:0] {...}`: without a base type it is a two-state int."),
+    ("keyword", "Use a plain `case` or `if`: synthesis assumes things a simulator does not."),
+    ("delay", "Remove it: a simulator waits, synthesis ignores it."),
+    ("case-equality", "Use `==` or `!=`: the check cannot model what `===` does with x."),
+    ("literal", "Remove the x or z (an x is a don't-care in the gates; use a plain value): a "
+     "simulator and the gates treat it differently."),
+    ("lint_off", "Remove it and fix the lint warning instead: the lint step catches races and x "
+     "in a case that no other check sees."),
+    ("event control", "Write `always @(*)`: a simulator does not rerun the block for a signal "
+     "missing from the list, and the gates do not care about the list."),
+    ("automatic", "Write `function automatic`: a simulator keeps the local variables of a plain "
+     "function between calls."),
+    ("$", "Remove it: it reads a file or an option the check does not have."),
+)  # fmt: skip
 
 
 def plain_message(found: Refusal) -> str:
@@ -276,17 +456,7 @@ def plain_message(found: Refusal) -> str:
             "project.v and the design file, so it cannot see what an included file does. Put "
             "the code in the design file."
         )
-    advice = {
-        "`ifdef": "Remove it: a simulator and the synthesis define different macros.",
-        "`ifndef": "Remove it: a simulator and the synthesis define different macros.",
-        "`elsif": "Remove it: a simulator and the synthesis define different macros.",
-        "two-state": "Use `reg` or `logic` and reset it with rst_n: a two-state type starts at "
-        "0 in a simulator, which the check cannot see.",
-        "keyword": "Use a plain `case` or `if`: synthesis assumes things a simulator does not.",
-        "delay": "Remove it: a simulator waits, synthesis ignores it.",
-        "$": "Remove it: it reads a file or an option the check does not have.",
-    }
-    hint = next((v for k, v in advice.items() if k in found.what), "Remove it.")
+    hint = next((v for k, v in _ADVICE if k in found.what), "Remove it.")
     return (
         f"the RTL ({found.file}, line {found.line}) uses {found.what}, which a simulator and "
         f"the synthesis read differently, so the check cannot vouch for it. {hint}"

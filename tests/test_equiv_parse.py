@@ -123,6 +123,12 @@ def test_a_state_check_that_could_not_expose_every_register_is_unusable() -> Non
     assert ep.state_result(log("expose_fail", "initstate.log")) == "unusable"
 
 
+def test_the_rtl_memories_are_listed_between_markers() -> None:
+    assert ep.has_memories("MEMS-BEGIN\ntt_um_c/mem\nMEMS-END\n") is True
+    assert ep.has_memories("MEMS-BEGIN\nMEMS-END\n") is False
+    assert ep.has_memories("nothing\n") is False
+
+
 def test_include_is_found() -> None:
     assert ep.include_directive('`include "other.v"\n')
     assert ep.include_directive("`  include <x.vh>\n")

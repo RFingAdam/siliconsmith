@@ -41,7 +41,10 @@ def test_production_script_still_has_the_passes_the_rtl_side_repeats() -> None:
 def test_gold_repeats_the_production_passes_in_order() -> None:
     gold = lines(es.gold("chip", "proof"))
     assert contiguous(gold, ["flatten", es.DELETE_NON_HARDWARE, "opt_expr", "opt_clean"])
-    assert contiguous(gold, [*es.PRODUCTION_FSM_PASSES, "opt_clean", "memory"])
+    assert contiguous(gold, [*es.PRODUCTION_FSM_PASSES, "opt_clean"])
+    # only a listing of the RTL's memories (it changes nothing) sits between them and `memory`
+    between = gold[gold.index("fsm") + 3 : gold.index("memory")]
+    assert between == [f"log {es.MEMS_BEGIN}", "select -list t:$mem*", f"log {es.MEMS_END}"]
     assert gold.index("memory") < gold.index("techmap t:$pmux") < gold.index("attrmap -remove init")
 
 
@@ -53,13 +56,14 @@ def test_what_the_production_script_removes_is_removed_from_the_rtl() -> None:
     assert "tribuf" in front()
 
 
-def test_the_rtl_is_read_the_way_the_production_script_reads_it() -> None:
+def test_the_rtl_is_read_with_the_production_parser_flags_but_no_defines() -> None:
     read = lines(es.gold("chip", "proof"))[0]
     prod = next(ln for ln in front() if ln.startswith("read_verilog"))
     for flag in ("-defer", "-noautowire", "-sv"):
         assert flag in read and flag in prod
-    for define in synth_script.DEFINES:
-        assert f"-D{define}" in read
+    # the proof reads cleaned files with no macro left in them; no implicit SYNTHESIS either
+    assert "-nosynthesis" in read and "-nosynthesis" not in prod
+    assert " -D" not in read and all(f"-D{d}" in prod for d in synth_script.DEFINES)
 
 
 # -- the modes of the RTL side -------------------------------------------------------------------
