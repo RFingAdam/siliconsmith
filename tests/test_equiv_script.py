@@ -91,6 +91,7 @@ def test_gate_reads_the_netlist_file_and_has_every_guard_in_order() -> None:
     assert gate[1] == "read_verilog netlist.v"
     marks = [ln.removeprefix("log ") for ln in gate if ln.startswith("log GUARD")]
     assert marks == [
+        es.M_MODULES,
         es.M_STRUCTURE,
         es.M_CELLS,
         es.M_TRISTATE,
@@ -99,7 +100,8 @@ def test_gate_reads_the_netlist_file_and_has_every_guard_in_order() -> None:
         es.M_OK,
     ]
     assert "setundef -undriven -anyseq" in gate  # x and z constants become free values
-    assert gate.index("setundef -undriven -anyseq") < gate.index("check -assert")
+    # An undriven net (a cell input left open) is refused BEFORE setundef makes it a free value
+    assert gate.index("check -assert") < gate.index("setundef -undriven -anyseq")
     # the netlist as Yosys read it is written before anything changes it (x/z are looked for there)
     assert f"write_rtlil {es.GATE_RTLIL}" in gate
     assert gate.index("hierarchy -check -top tt_um_chip") < gate.index(
@@ -110,7 +112,15 @@ def test_gate_reads_the_netlist_file_and_has_every_guard_in_order() -> None:
     assert "attrmap -remove init" in gate
     assert gate.index("flatten") < gate.index("attrmap -remove init")
     assert gate.index("attrmap -remove init") < gate.index("setundef -undriven -anyseq")
-    assert "select -assert-none t:* t:$* %d" in gate  # no cell without a function
+    # after flatten only plain gates (and $scopeinfo) may be left: no $shiftx, $div, ...
+    assert "select -assert-none t:* t:$_* %d t:$scopeinfo %d" in gate
+    assert gate.index("flatten") < gate.index("select -assert-none t:* t:$_* %d t:$scopeinfo %d")
+    # the file may define the top module only, and that is checked right after `hierarchy`
+    assert "select -assert-none A:src=netlist.v* tt_um_chip %d" in gate
+    assert gate.index("hierarchy -check -top tt_um_chip") < gate.index(
+        "select -assert-none A:src=netlist.v* tt_um_chip %d"
+    )
+    assert gate.index("select -assert-none A:src=netlist.v* tt_um_chip %d") < gate.index("flatten")
     assert "select -assert-none t:$tribuf t:$_TBUF_" in gate
     assert any(ln.startswith("select -assert-none t:$dffsr t:$dffsre") for ln in gate)
 
@@ -126,6 +136,24 @@ def test_the_state_check_compares_every_register_at_cycle_2_without_a_cycle_limi
     assert "-ignore_gold_x" in script and "-enable_undef" in sat
     # the first copy keeps the initial values, the second has none
     assert script.index("attrmap -remove init") > script.index("design -stash gold")
+
+
+def test_the_state_check_exposes_every_flop_before_async2sync_and_fails_closed() -> None:
+    """async2sync moves the output of a flop with an asynchronous reset to an internal wire that
+    `expose -dff` skips: exposing afterwards missed such registers (and their initial values)."""
+    rows = lines(es.state_check("chip"))
+    assert rows.count("async2sync") == 2 and rows.count("expose -dff") == 2
+    first = rows.index("expose -dff")
+    assert rows.index("async2sync", first - 5) > first  # exposed first, then async2sync
+    assert rows[first - 1] == f"log {es.M_EXPOSE}"
+    # fail closed: every flip-flop output must be a port now, else the state check is unusable
+    assert rows[first + 1] == (
+        "select -assert-none t:$*dff* t:$*DFF* %u %x:+[Q] t:$*dff* t:$*DFF* %u %d o:* %d"
+    )
+    for mode in ("rtl", "rtl_noinit"):
+        script = lines(es.gold("chip", mode, expose=True))
+        assert script.index("expose -dff") < script.index("async2sync")
+        assert "expose -dff" not in es.gold("chip", mode)  # only the state check exposes
 
 
 def test_the_clock_guard_pins() -> None:

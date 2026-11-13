@@ -8,9 +8,12 @@ from __future__ import annotations
 import pytest
 from netlist_edit import (
     async_set_and_reset,
+    behavioural_bit_select,
     clock_from_inverter,
     combinational_loop,
     hold_flop_on_tied_output,
+    open_cell_input,
+    own_cell_module,
     swap_cell_type,
     z_constant,
 )
@@ -48,6 +51,9 @@ endmodule
         (z_constant, "assign uio_out[0] = 1'bz;"),
         (clock_from_inverter, ".CLK(seed_clk_n)"),
         (combinational_loop, ".A(_0_)"),
+        (open_cell_input, ".A()"),
+        (own_cell_module, "module sky130_fd_sc_hd__dlclkp_1"),
+        (behavioural_bit_select, "assign uio_out[0] = ui_in[ui_in[2:0]];"),
     ],
 )
 def test_edit_applies(edit, expected: str) -> None:  # type: ignore[no-untyped-def]

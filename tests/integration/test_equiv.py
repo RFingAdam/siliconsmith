@@ -20,10 +20,13 @@ from conftest import REPO_ROOT
 from mcp import Client
 from netlist_edit import (
     async_set_and_reset,
+    behavioural_bit_select,
     clock_from_inverter,
     combinational_loop,
     hold_flop_on_tied_output,
     hold_flop_with_init_attribute,
+    open_cell_input,
+    own_cell_module,
     swap_cell_type,
     z_constant,
     z_constant_spelled,
@@ -190,6 +193,12 @@ NETLIST_SEEDS = {
     "init_attr": (hold_flop_with_init_attribute, "not_equivalent", None),
     "clkinv": (clock_from_inverter, "not_proven", "guard_clocking"),
     "loop": (combinational_loop, "error", "structure"),
+    # a floating cell input is x in simulation: never a free value in the proof
+    "open_pin": (open_cell_input, "error", "structure"),
+    # the file must not supply its own module for a library cell
+    "own_cell": (own_cell_module, "error", "netlist_modules"),
+    # behavioural code (a bit select) models an out-of-range index differently from a simulator
+    "bit_select": (behavioural_bit_select, "error", "cells"),
 }
 
 
@@ -239,6 +248,14 @@ RTL_SEEDS = [
     # so it must be not proven (it used to be called equivalent, which was wrong)
     ("deepinit", "verilog", "not_proven", "initial_values"),
     ("deepinit", "amaranth", "not_proven", "initial_values"),
+    # the same, but the register has an asynchronous clear (tied off, in a sub-block or a clock
+    # domain): the initial-value check used to miss these and said equivalent
+    ("subarst", "verilog", "not_proven", "initial_values"),
+    ("carst", "verilog", "not_proven", "initial_values"),
+    ("carst", "amaranth", "not_proven", "initial_values"),
+    # RTL that reads one way in simulation and another in synthesis
+    ("synthdef", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("xoff", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
 
 

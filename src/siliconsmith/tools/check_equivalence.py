@@ -322,6 +322,11 @@ _GUARD_HINTS = {
         "Use a flip-flop with one reset only (the synchronous rst_n of the template), then call "
         "check_equivalence again. Gate-level simulation (run_tests with gl=True) still checks it."
     ),
+    "guard_sim_synth_differ": (
+        "Remove the `ifdef SYNTHESIS (or YOSYS, FORMAL, PDK_*) branches and the `synthesis "
+        "translate_off` comments: the simulation and the synthesis must read the same code. Then "
+        "call check_equivalence again."
+    ),
     "time_limit": (
         "The proof ran out of time. Make the design smaller or simpler (wide multipliers and big "
         "memories are the hard cases), or rely on gate-level simulation (run_tests with gl=True)."
@@ -608,8 +613,9 @@ line of the summary is one of: "Equivalent: ..." (ok is true: proven), "NOT equi
 short trace, where cycle 1 is power-up with rst_n low) or "Not proven: ... This is NOT a pass." \
 (the tool could not decide: ok is false and Status shows Equivalence as fail). Not proven is \
 different from not equivalent: it says why, for example latches, a falling-edge or derived \
-clock, tri-state logic (z) and flip-flops with both an asynchronous set and reset are not \
-supported, or the proof ran out of time.\n\
+clock, tri-state logic (z), flip-flops with both an asynchronous set and reset, and RTL that \
+reads differently in simulation and synthesis (`ifdef SYNTHESIS, `synthesis translate_off`) \
+are not supported, or the proof ran out of time.\n\
 What it checks: every output value the RTL defines must match for every power-up state of \
 the chip's flip-flops (an x or default-don't-care in the RTL means any value is accepted); \
 registers that nothing resets are only compared for a consistent power-up (the RTL simulation \

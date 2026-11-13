@@ -25,7 +25,8 @@ and turns what they find into one verdict.
     reason       None for equivalent; else a machine code: rtl_initial_value,
                  initial_values, power_up_dependent, unreadable_counterexample, base_case,
                  unproven_points, unpaired_outputs, time_limit, guard_clocking, guard_tristate,
-                 guard_async_set_reset, structure, cells, xz_constant,
+                 guard_async_set_reset, guard_sim_synth_differ, structure, cells,
+                 netlist_modules, xz_constant,
     method       "equiv_induct" | "k-induction length L" | None
     message      one or two plain-English sentences; not_proven ends with "This is NOT a pass."
     seconds      {stage1, initdep, base, stage4, total}: seconds per stage that ran
@@ -455,6 +456,18 @@ def _check(
             f"The netlist contains an unknown constant ({bad}): an input that is floating or "
             "undefined. A correct netlist has none.",
         )
+
+    # the RTL must read the same in simulation and in synthesis (the proof reads it the way the
+    # synthesis does: `ifdef SYNTHESIS and translate_off are honoured, a simulator reads the rest)
+    for fname in ("project.v", f"{name}.v"):
+        rtl_text = (scratch / fname).read_text(encoding="utf-8", errors="replace")
+        if (diff := equiv_parse.sim_synth_difference(rtl_text)) is not None:
+            return r.verdict(
+                "not_proven",
+                "guard_sim_synth_differ",
+                f"Could not prove equivalence: the RTL ({fname}) reads differently in simulation "
+                f"and in synthesis ({diff}). The check cannot vouch for that; remove it.",
+            )
 
     # stage 1: guards and the induction step
     t1 = time.monotonic()

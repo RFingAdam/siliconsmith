@@ -146,3 +146,40 @@ def combinational_loop(text: str) -> tuple[str, str]:
     assert out is not None
     cell = re.sub(r"\.A\([^)]*\)", f".A({out.group(1)})", match.group(0), count=1)
     return _replace(text, match, cell), f"{match.group(2)}: input A driven by its own output"
+
+
+def open_cell_input(text: str) -> tuple[str, str]:
+    """Leave the first and/or/nand/nor-type cell's input A open (`.A()`): a floating net.
+
+    A floating input is an x in simulation. The proof must not turn it into a free value (then
+    `n | ~n` would be 1 and the gates would pass while a simulator shows x).
+    """
+    match = _cell(text, r"sky130_fd_sc_hd__(?:and|or|xor|nand|nor|xnor)\d_\d+ \S+ \(")
+    cell = re.sub(r"\.A\([^)]*\)", ".A()", match.group(0), count=1)
+    return _replace(text, match, cell), f"{match.group(2)}: input A left open"
+
+
+def own_cell_module(text: str) -> tuple[str, str]:
+    """Add a clock gate (dlclkp_1, a cell the library gives no function) that the netlist file
+    defines itself, as a plain wire, and instantiate it: the file would replace the real cell."""
+    end = text.rindex("endmodule")
+    inst = (
+        "  sky130_fd_sc_hd__dlclkp_1 seed_cg (\n"
+        "    .CLK(clk),\n    .GATE(ena),\n    .GCLK()\n  );\n"
+    )
+    module = (
+        "module sky130_fd_sc_hd__dlclkp_1 (CLK, GATE, GCLK);\n"
+        "  input CLK; input GATE; output GCLK;\n  assign GCLK = CLK;\nendmodule\n"
+    )
+    edited = text[:end] + inst + text[end:]
+    return edited + "\n" + module, "dlclkp_1 defined by the netlist file as a wire"
+
+
+def behavioural_bit_select(text: str, pin: str = "uio_out[0]") -> tuple[str, str]:
+    """Drive an output pin from a variable bit select of ui_in instead of its tie cell.
+
+    The bit select is behavioural code (`$shiftx`), not a gate. A proof models an index out of
+    range differently from a simulator, so the check must not accept it.
+    """
+    tie = _cell(text, rf"conb_1 \S+ \(\s*\.LO\({re.escape(pin)}\)")
+    return _replace(text, tie, f"assign {pin} = ui_in[ui_in[2:0]];"), f"{pin} = ui_in[ui_in[2:0]]"

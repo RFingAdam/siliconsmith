@@ -413,6 +413,21 @@ def test_a_guard_refusal_is_not_proven(
     assert got["base"] is None and got["first_mismatch"] is None
 
 
+@pytest.mark.parametrize("which", ["project.v", "chip.v"])
+@pytest.mark.parametrize("text", ["`ifdef SYNTHESIS\n`endif\n", "// synthesis translate_off\n"])
+def test_rtl_that_reads_differently_in_simulation_and_synthesis_is_not_proven(
+    tmp_path: Path, which: str, text: str
+) -> None:
+    rtl, netlist = inputs(tmp_path)
+    (rtl / which).write_text(text)
+    fake = FakeYosys("")  # no Yosys call is expected: the text guard runs first
+    got = equiv.check(rtl, "chip", netlist, tmp_path / "scratch", yosys=fake)
+    assert got["verdict"] == "not_proven" and got["ok"] is False
+    assert got["reason"] == "guard_sim_synth_differ" and fake.calls == []
+    assert which in got["message"] and NOT_A_PASS in got["message"]
+    assert "simulation and in synthesis" in got["message"]
+
+
 def test_a_stage_1_time_out_is_not_proven_and_says_it_is_not_a_pass(tmp_path: Path) -> None:
     fake = FakeYosys(
         "counter_good",

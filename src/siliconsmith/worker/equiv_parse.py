@@ -49,12 +49,20 @@ GUARD_VERDICTS: dict[str, tuple[str, str, str]] = {
     es.M_STRUCTURE: (
         "error",
         "structure",
-        "the design or the netlist has a combinational loop or a net with several drivers",
+        "the design or the netlist has a combinational loop, a net with several drivers, or a "
+        "net nothing drives (a cell input left open)",
     ),
     es.M_CELLS: (
         "error",
         "cells",
-        "the netlist has a cell without a logic function",
+        "the netlist has a cell that is not a plain logic gate (a cell without a logic function, "
+        "or behavioural code such as a bit select or a division)",
+    ),
+    es.M_MODULES: (
+        "error",
+        "netlist_modules",
+        "the netlist file defines a module of its own besides the design (a sky130 cell written "
+        "out by hand): the check only trusts the library's cells",
     ),
 }
 
@@ -76,6 +84,27 @@ def xz_constant(netlist_text: str) -> str | None:
     """The first x/z/? constant in the netlist text, or None."""
     found = XZ_LITERAL.search(netlist_text)
     return found.group(0) if found else None
+
+
+# Spellings that make the RTL read differently in simulation and in synthesis. Yosys sets
+# SYNTHESIS itself, the production synthesis defines the rest (`synth_script.DEFINES`), and
+# Yosys honours these hot comments, while a simulator reads the other branch or the hidden code.
+_HOT_COMMENT = re.compile(
+    r"\b(?:synopsys|synthesis|pragma|cadence|altera|xilinx)\s+(?:translate|synthesis)_(?:off|on)\b"
+    r"|\btranslate_(?:off|on)\b|\bsynthesis_(?:off|on)\b"
+    r"|\b(?:synopsys|synthesis)\s+(?:full|parallel)_case\b",
+    re.I,
+)
+_SYNTH_MACRO = re.compile(
+    r"`\s*(?:ifdef|ifndef|elsif)\s+\(?\s*"
+    r"(?:SYNTHESIS|YOSYS|FORMAL|__librelane__|__pnr__|PDK_\w*|SCL_\w*)\b"
+)
+
+
+def sim_synth_difference(rtl_text: str) -> str | None:
+    """The first spelling in the RTL that reads differently in synthesis and in simulation."""
+    found = _HOT_COMMENT.search(rtl_text) or _SYNTH_MACRO.search(rtl_text)
+    return " ".join(found.group(0).split()) if found else None
 
 
 def guard_failure(rc: int | None, log: str) -> dict[str, Any] | None:

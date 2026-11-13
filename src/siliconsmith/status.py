@@ -380,6 +380,7 @@ EQUIV_REASONS = {
     "guard_clocking": "a latch or a clock the proof cannot model",
     "guard_tristate": "tri-state logic is not supported",
     "guard_async_set_reset": "a flip-flop with async set and reset is not supported",
+    "guard_sim_synth_differ": "the RTL reads differently in simulation and in synthesis",
 }
 
 

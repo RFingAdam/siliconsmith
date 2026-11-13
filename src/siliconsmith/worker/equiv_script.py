@@ -63,6 +63,8 @@ M_TRISTATE = "GUARD-TRISTATE"
 M_ASYNC_SR = "GUARD-ASYNCSR"
 M_STRUCTURE = "GUARD-STRUCTURE"
 M_CELLS = "GUARD-CELLS"
+M_MODULES = "GUARD-MODULES"
+M_EXPOSE = "GUARD-EXPOSE"
 M_OK = "GUARD-OK"
 GATE_RTLIL = "gate_read.il"  # the netlist as Yosys read it (the host looks for x/z in it)
 INITS_BEGIN = "INITS-BEGIN"
@@ -84,7 +86,29 @@ GUARD_ASYNC_SR = (
     "select -assert-none t:$dffsr t:$dffsre t:$_DFFSR_* t:$_DFFSRE_* t:$aldff* t:$_ALDFF*\n"
 )
 GUARD_STRUCTURE = f"log {M_STRUCTURE}\ncheck -assert\n"
-GUARD_CELLS = f"log {M_CELLS}\nselect -assert-none t:* t:$* %d\n"
+# After `flatten` the netlist may hold only plain gates (`$_AND_`, `$_DFF_P_`, ...): a leftover
+# `$shiftx`, `$div` or a cell without a function is behaviour that the proof models differently
+# from a simulator (out-of-range bit selects, division by zero). `$scopeinfo` is bookkeeping.
+GUARD_CELLS = f"log {M_CELLS}\nselect -assert-none t:* t:$_* %d t:$scopeinfo %d\n"
+
+
+def guard_modules(name: str) -> str:
+    """The netlist file may define the top module and nothing else.
+
+    A module the file defines for a sky130 cell (one the liberty read skipped, a clock gate) would
+    replace the real cell with whatever the file says. The top module and everything in it is
+    removed from the selection; a module of the file left over fails the script.
+    """
+    return f"log {M_MODULES}\nselect -assert-none A:src=netlist.v* tt_um_{name} %d\n"
+
+
+# Every flip-flop output must be a port after `expose -dff`; else some register is invisible to
+# the state check (the check then cannot vouch for it).
+GUARD_EXPOSE = (
+    f"log {M_EXPOSE}\n"
+    "expose -dff\n"
+    "select -assert-none t:$*dff* t:$*DFF* %u %x:+[Q] t:$*dff* t:$*DFF* %u %d o:* %d\n"
+)
 
 
 def _read_rtl(name: str) -> list[str]:
@@ -96,12 +120,14 @@ def _read_rtl(name: str) -> list[str]:
     ]
 
 
-def gold(name: str, mode: str) -> str:
+def gold(name: str, mode: str, expose: bool = False) -> str:
     """The RTL side.
 
     `mode`: `proof` (stages 1 and 3: as synthesis sees it before mapping, initial values
     removed), `rtl` (as written, initial values kept) or `rtl_noinit` (as written, initial values
-    removed: what a chip does at power-up).
+    removed: what a chip does at power-up). `expose`: every flip-flop output becomes a port, for
+    the state check; it must happen BEFORE `async2sync`, which moves the output of a flip-flop
+    with an asynchronous reset to an internal wire that `expose` skips.
     """
     if mode not in ("proof", "rtl", "rtl_noinit"):
         raise ValueError(f"unknown mode {mode!r}")
@@ -124,8 +150,10 @@ def gold(name: str, mode: str) -> str:
         s += ["memory", "opt_clean"]
         if mode == "rtl_noinit":
             s += ["attrmap -remove init"]
-    s += ["splitnets", "tribuf", GUARD_TRISTATE, GUARD_STRUCTURE.rstrip("\n"), "async2sync"]
-    s += ["dffunmap", GUARD_CLOCK.rstrip("\n")]
+    s += ["splitnets", "tribuf", GUARD_TRISTATE, GUARD_STRUCTURE.rstrip("\n")]
+    if expose:
+        s += [GUARD_EXPOSE.rstrip("\n")]
+    s += ["async2sync", "dffunmap", GUARD_CLOCK.rstrip("\n")]
     return "\n".join(s) + "\n"
 
 
@@ -137,6 +165,7 @@ def gate(name: str, netlist: str) -> str:
                 f"read_liberty -ignore_miss_func {LIBERTY}",  # cell functions (dlclkp has none)
                 f"read_verilog {netlist}",
                 f"hierarchy -check -top tt_um_{name}",
+                guard_modules(name).rstrip("\n"),
                 # The netlist as Yosys understood it, before anything is changed. The host reads
                 # it for x/z constants whatever way they were spelled (`setundef` only replaces x,
                 # and Yosys's SAT reads a z as a plain 0).
@@ -146,10 +175,12 @@ def gate(name: str, netlist: str) -> str:
                 # a chip does not have: the netlist side never has initial values.
                 "attrmap -remove init",
                 "opt_clean",
-                # Any x or z constant the text guard missed becomes a free value, so it can only
-                # make the proof fail, never pass (Yosys's SAT would read z as a plain 0).
-                "setundef -undriven -anyseq",
+                # An undriven net (a cell input left open) is refused BEFORE `setundef`: made a
+                # free value per cycle, `n | ~n` would be 1 in the proof while the netlist is x.
                 GUARD_STRUCTURE.rstrip("\n"),
+                # An x or z constant the text guard missed becomes a free value. The host refuses
+                # such a netlist anyway (`write_rtlil` above); this is a second line of defence.
+                "setundef -undriven -anyseq",
                 GUARD_CELLS.rstrip("\n"),
                 GUARD_TRISTATE.rstrip("\n"),
                 GUARD_ASYNC_SR.rstrip("\n"),
@@ -176,8 +207,8 @@ def state_check(name: str) -> str:
     state. No cycle limit. A difference means some register keeps an initial value that reset
     does not set.
     """
-    rtl = stash(gold(name, "rtl") + "expose -dff\n", name, "gold")
-    noinit = stash(gold(name, "rtl_noinit") + "expose -dff\n", name, "gate")
+    rtl = stash(gold(name, "rtl", expose=True), name, "gold")
+    noinit = stash(gold(name, "rtl_noinit", expose=True), name, "gate")
     return (
         rtl
         + noinit
