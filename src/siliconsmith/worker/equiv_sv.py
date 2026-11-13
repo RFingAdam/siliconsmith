@@ -52,7 +52,7 @@ In every file:
   catches (BLKSEQ, COMBDLY, CASEX, CASEWITHX, CASEINCOMPLETE, LATCH, MULTIDRIVEN, ...): the lint
   runs with every warning fatal, and that is what finds a blocking race or an x in a case item.
 
-Only in a core file that lists no level signals itself (`strict_core`: Verilog and Amaranth; never
+Only in a core file that lists no level signals itself (strict: Verilog and Amaranth; never
 `project.v`, which the tool writes):
 
 * every event control that is not `@*`, `@(*)` or only `posedge`/`negedge` items (`always @(a or
@@ -61,8 +61,13 @@ Only in a core file that lists no level signals itself (`strict_core`: Verilog a
 * `function` or `task` without `automatic`: a simulator keeps the local variables of a plain
   function between calls.
 
-MyHDL writes `@always_comb` as `always @(a, b)`, so its core is not judged on event lists; the
-`hdl/` Python source is parsed instead (`myhdl_map.level_sensitive`).
+MyHDL writes `@always_comb` as `always @(a, b)` with every signal the block reads, so a MyHDL
+core (`myhdl_core`) is judged by one other rule, on the emitted text: a level-sensitive block must
+list every signal it reads (see `_myhdl_level_blocks`), otherwise it is refused and the advice is
+`@always_comb`. How the Python was spelled does not matter.
+
+In every file, a CR that no LF follows (Icarus ends a `//` comment there, the others do not) and
+an attribute whose string holds `*)` (Verilator ends the attribute there) are refused.
 """
 
 from __future__ import annotations
@@ -125,6 +130,7 @@ class Refusal:
     what: str  # the construct, in plain words
     file: str
     line: int
+    label: str = ""  # a MyHDL block label (`begin: label`), to name the agent's function
 
 
 # Whitespace is exactly these four characters, as in the Yosys, Icarus and Verilator lexers
@@ -173,6 +179,12 @@ def lex(text: str) -> tuple[str, str, tuple[int, str] | None]:
         nonlocal problem
         if problem is None:
             problem = (pos, what)
+
+    # Icarus ends a `//` comment at a CR that no LF follows; Yosys and Verilator do not. Where a
+    # line ends is not settled for such a file, so it is refused wherever the CR is (CRLF is fine).
+    lone_cr = re.search(r"\r(?!\n)", text)
+    if lone_cr is not None:
+        note(lone_cr.start(), "a carriage return that no line feed follows")
 
     def code(segment: str, pos: int) -> None:
         """Outside a comment every character must be printable ASCII, tab, CR or LF: the tools
@@ -232,6 +244,10 @@ def lex(text: str) -> tuple[str, str, tuple[int, str] | None]:
                     break
                 if text[k] == '"':
                     end = _string_end(text, k)
+                    if end is not None and "*)" in text[k:end]:
+                        # Verilator does not skip strings inside an attribute: it ends the
+                        # attribute at this `*)`, and what follows is code there but a string here.
+                        note(i, "an attribute (* ... *) with `*)` inside a string")
                     k = k + 1 if end is None else end
                     continue
                 if text[k] == ";" or text[k] == "`" or text[k : k + 2] in ("(*", "//", "/*"):
@@ -383,6 +399,30 @@ def _wildcard_ok(scan: str, cases: list[tuple[int, int, int, str]], start: int, 
     return scan[_skip_blank(scan, end) : _skip_blank(scan, end) + 1] in (",", ":")
 
 
+_EDGE_ITEM = re.compile(r"\s*(posedge|negedge)\s+\S", re.ASCII)
+
+
+def _split_items(inner: str) -> list[str]:
+    """The items of an event list: split at `or` and `,` outside brackets."""
+    items, depth, cur = [], 0, ""
+    for tok in re.split(r"(\(|\)|\[|\]|\{|\}|,|(?<![\w$])or(?![\w$]))", inner, flags=re.ASCII):
+        if tok in ("(", "[", "{"):
+            depth += 1
+        elif tok in (")", "]", "}"):
+            depth -= 1
+        elif depth == 0 and (tok == "," or tok == "or"):
+            items.append(cur)
+            cur = ""
+            continue
+        cur += tok
+    items.append(cur)
+    return items
+
+
+def _is_edge(item: str) -> bool:
+    return _EDGE_ITEM.match(item) is not None and re.search(r"\biff\b", item, re.ASCII) is None
+
+
 def _event_controls(scan: str) -> int | None:
     """The position of the first event control that is not `@*`, `@(*)` or only edge items."""
     for m in re.finditer(r"@", scan):
@@ -397,27 +437,279 @@ def _event_controls(scan: str) -> int | None:
         inner = scan[k + 1 : end - 1].strip()
         if inner == "*":
             continue
-        items, depth, cur = [], 0, ""
-        for tok in re.split(r"(\(|\)|\[|\]|\{|\}|,|(?<![\w$])or(?![\w$]))", inner, flags=re.ASCII):
-            if tok in ("(", "[", "{"):
-                depth += 1
-            elif tok in (")", "]", "}"):
-                depth -= 1
-            elif depth == 0 and (tok == "," or tok == "or"):
-                items.append(cur)
-                cur = ""
-                continue
-            cur += tok
-        items.append(cur)
-        edge = r"\s*(posedge|negedge)\s+\S"
-        if not all(
-            re.match(edge, it, re.ASCII) and not re.search(r"\biff\b", it, re.ASCII) for it in items
-        ):
+        if not all(_is_edge(it) for it in _split_items(inner)):
             return m.start()
     return None
 
 
-def _refusal_in(name: str, text: str, hand: bool) -> Refusal | None:
+# -- MyHDL: a level-sensitive block must list every signal it reads -------------------------------
+#
+# MyHDL writes `@always_comb` as `always @(a, b) begin: label ... end` with every signal the block
+# reads in the list, so a simulator reruns it exactly when the gates would change. `@always(a)` (or
+# any spelling of it) writes the same text with a list the agent chose: a signal the block reads
+# but does not list changes the output in the gates and not in a simulator. This is judged on the
+# emitted text, which does not care how the Python was spelled (alias, variable, call, file).
+#
+# Where MyHDL's normal output is wider than "plain identifiers", the rule is narrowed (each place
+# says why): a list of signals is listed word by word (`mem[0], mem[1]`); local variables are
+# declared inside the block. A call is refused: MyHDL writes a helper function with `disable`,
+# which Yosys cannot read, so such a core never gets this far. Everything the parser cannot read is
+# refused (fail closed).
+
+_TOKEN = re.compile(
+    r"""\s+
+    |(?P<num>(?:\d[\d_]*\s*)?'\s*[sS]?\s*[bBoOdDhH]\s*[0-9a-fA-FxXzZ?_]+|\d[\w.]*)
+    |(?P<sys>\$[\w$]*)
+    |(?P<id>[A-Za-z_][\w$]*)
+    |(?P<op>===|!==|==|!=|<=|>=|<<<|>>>|<<|>>|&&|\|\||~&|~\||~\^|\^~|\*\*|\+:|-:|.)
+    """,
+    re.VERBOSE | re.ASCII | re.DOTALL,
+)
+_DECL_WORDS = frozenset(
+    {"reg", "integer", "logic", "wire", "real", "time", "input", "output", "inout"}
+)
+_OPENERS = {
+    "begin": "end",
+    "fork": "join",
+    "case": "endcase",
+    "casez": "endcase",
+    "casex": "endcase",
+}
+_CLOSERS = frozenset({"end", "join", "join_any", "join_none", "endcase"})
+_STATEMENT_START = frozenset(
+    {";", "begin", "end", "else", "endcase", "fork", "join", "join_any", "join_none"}
+)
+_ITEM = re.compile(r"([A-Za-z_][\w$]*)(?:\s*\[\s*(\d+)\s*\])?", re.ASCII)
+
+Token = tuple[str, str, int]  # (kind: num|sys|id|op, text, position)
+
+
+def _tokens(text: str, start: int = 0) -> list[Token]:
+    out: list[Token] = []
+    for m in _TOKEN.finditer(text, start):
+        if m.lastgroup is not None:
+            out.append((m.lastgroup, m.group(0), m.start()))
+    return out
+
+
+def _group_end(tokens: list[Token], i: int, open_c: str, close_c: str) -> int | None:
+    """Index just past the group whose opening token is `tokens[i]`, or None."""
+    depth = 0
+    for j in range(i, len(tokens)):
+        if tokens[j][0] == "op":
+            depth += tokens[j][1] == open_c
+            depth -= tokens[j][1] == close_c
+            if depth == 0:
+                return j + 1
+    return None
+
+
+def _declared(tokens: list[Token]) -> tuple[set[str], set[int]]:
+    """The names declared in `tokens` (`reg [7:0] a, b;`, `integer i;`, `reg [7:0] m [0:3];`) and
+    the token indexes that are the declared names. An initial value is not part of the name."""
+    names: set[str] = set()
+    where: set[int] = set()
+    i = 0
+    while i < len(tokens):
+        if tokens[i][0] == "id" and tokens[i][1] in _DECL_WORDS:
+            j = i + 1
+            want = True  # the next identifier at depth 0 is a name
+            while j < len(tokens) and tokens[j][1] != ";":
+                kind, text, _ = tokens[j]
+                if text in ("[", "(", "{"):
+                    j = _group_end(tokens, j, text, {"[": "]", "(": ")", "{": "}"}[text]) or len(
+                        tokens
+                    )
+                    continue
+                if text == "=":
+                    want = False
+                elif text == ",":
+                    want = True
+                elif kind == "id" and want and text not in RESERVED:
+                    names.add(text)
+                    where.add(j)
+                    want = False
+                j += 1
+            i = j
+        i += 1
+    return names, where
+
+
+def _labels(tokens: list[Token]) -> set[str]:
+    """Block labels (`begin : name`, `fork : name`) and `disable name` targets."""
+    found: set[str] = set()
+    for i, (_, text, _) in enumerate(tokens):
+        if text in ("begin", "fork") and i + 2 < len(tokens) and tokens[i + 1][1] == ":":
+            found.add(tokens[i + 2][1])
+        if text == "disable" and i + 1 < len(tokens):
+            found.add(tokens[i + 1][1])
+    return found
+
+
+def _arrays(scan: str) -> dict[str, int]:
+    """Declared arrays `reg [7:0] mem [0:4-1];` as `{name: number of words}`."""
+    found: dict[str, int] = {}
+    for m in re.finditer(
+        r"([A-Za-z_][\w$]*)\s*\[\s*0\s*:\s*(\d+)\s*(?:-\s*(\d+)\s*)?\]", scan, re.ASCII
+    ):
+        found[m.group(1)] = int(m.group(2)) - int(m.group(3) or 0) + 1
+    return found
+
+
+def _block_body(tokens: list[Token], i: int) -> int | None:
+    """For `tokens[i]` the opening `begin`: the index of the `end` that closes it, with `begin` /
+    `end`, `case` / `endcase` and `fork` / `join` nested properly; None if they do not match."""
+    stack: list[str] = []
+    for j in range(i, len(tokens)):
+        kind, text, _ = tokens[j]
+        if kind != "id":
+            continue
+        if text in _OPENERS:
+            stack.append(_OPENERS[text])
+        elif text in _CLOSERS:
+            want = stack.pop() if stack else ""
+            if text != want and not (want == "join" and text.startswith("join")):
+                return None
+            if not stack:
+                return j
+    return None
+
+
+def _level_block(
+    scan: str,
+    tokens: list[Token],
+    at: int,
+    items: list[str],
+    arrays: dict[str, int],
+) -> tuple[int, str, str] | None:
+    """Judge the block that follows the event control ending at `scan[at]`.
+
+    Returns `(position, what, label)` of the first problem, or None if every identifier the block
+    reads is in the event list. `items` are the list's items, all of them level items."""
+    plain: set[str] = set()
+    indexed: set[tuple[str, int]] = set()
+    for item in items:
+        m = _ITEM.fullmatch(item.strip())
+        if m is None:
+            return at, f"a level list item that is not a plain signal name (`{item.strip()}`)", ""
+        if m.group(2) is None:
+            plain.add(m.group(1))
+        else:
+            indexed.add(
+                (m.group(1), int(m.group(2)))
+            )  # `mem[2]`: how MyHDL lists a list of signals
+    first = next((i for i, t in enumerate(tokens) if t[2] >= at), len(tokens))
+    if first >= len(tokens) or tokens[first][1] != "begin":
+        return at, "a level-sensitive block that does not start with `begin`", ""
+    label = ""
+    body_start = first + 1
+    if body_start + 1 < len(tokens) and tokens[body_start][1] == ":":
+        label = tokens[body_start + 1][1]
+        body_start += 2
+    stop = _block_body(tokens, first)
+    if stop is None:
+        return (
+            at,
+            "a level-sensitive block whose begin/end, case/endcase or fork/join do not match",
+            label,
+        )
+    body = tokens[body_start:stop]
+    declared, declared_at = _declared(body)
+    labels = _labels(body) | {label}
+    reads: dict[str, list[tuple[str | None, int]]] = {}
+    ternary = 0
+    colon_is_ternary: set[int] = set()
+    for i, (kind, text, _) in enumerate(body):
+        if kind != "op":
+            continue
+        if text in _STATEMENT_START:
+            ternary = 0
+        elif text == "?":
+            ternary += 1
+        elif text == ":" and ternary:
+            ternary -= 1
+            colon_is_ternary.add(i)
+    for i, (kind, text, pos) in enumerate(body):
+        if kind != "id" or text in RESERVED or text in labels or i in declared_at:
+            continue
+        nxt = body[i + 1][1] if i + 1 < len(body) else ""
+        if nxt == "(":
+            return pos, f"a level-sensitive block that calls `{text}(...)`", label
+        if text in declared:
+            continue
+        # a write target: `name`, optional `[...]` groups, then `=` or `<=`, at a statement start
+        j = i + 1
+        while j < len(body) and body[j][1] == "[":
+            j = _group_end(body, j, "[", "]") or len(body)
+        before = body[i - 1][1] if i else ";"
+        starts = before in _STATEMENT_START or (before == ":" and (i - 1) not in colon_is_ternary)
+        if (
+            j < len(body)
+            and body[j][1] in ("=", "<=")
+            and (starts or before == ")" or before in labels)
+        ):
+            continue
+        index = None
+        if nxt == "[":
+            close = _group_end(body, i + 1, "[", "]")
+            inner = body[i + 2 : (close or len(body)) - 1]
+            index = (
+                inner[0][1]
+                if len(inner) == 1 and inner[0][0] == "num" and inner[0][1].isdigit()
+                else ""
+            )
+        reads.setdefault(text, []).append((index, pos))
+    for name, uses in reads.items():
+        if name in plain:
+            continue
+        for index, pos in uses:
+            if index and (name, int(index)) in indexed:
+                continue
+            words = arrays.get(name)
+            if words is not None and all((name, w) in indexed for w in range(words)):
+                continue
+            return (
+                pos,
+                f"a level-sensitive block that reads `{name}` without listing it",
+                label,
+            )
+    return None
+
+
+def _myhdl_level_blocks(scan: str) -> tuple[int, str, str] | None:
+    """`(position, what, label)` of the first level-sensitive event control in a MyHDL core that
+    is not safe: a list that is not plain signal names (`mem[2]` for a list of signals is fine),
+    mixes in an edge, is not directly after `always`, or leaves out an identifier that the block
+    reads. Everything the parser cannot read is refused (fail closed)."""
+    tokens: list[Token] | None = None
+    arrays: dict[str, int] = {}
+    for m in re.finditer(r"@", scan):
+        k = _skip_blank(scan, m.end())
+        if scan[k : k + 1] == "*":
+            continue
+        end = _balanced(scan, k, "(", ")") if scan[k : k + 1] == "(" else None
+        if end is None:
+            return m.start(), "an event control that cannot be read", ""
+        inner = scan[k + 1 : end - 1].strip()
+        if inner == "*":
+            continue
+        items = _split_items(inner)
+        edges = [_is_edge(it) for it in items]
+        if all(edges):
+            continue
+        if any(edges):
+            return m.start(), "an event list that mixes edges and level signals", ""
+        if _word_before(scan, m.start())[0] != "always":
+            return m.start(), "a level-sensitive event control that is not an `always` block", ""
+        if tokens is None:
+            tokens, arrays = _tokens(scan), _arrays(scan)
+        found = _level_block(scan, tokens, end, items, arrays)
+        if found is not None:
+            return found
+    return None
+
+
+def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusal | None:
     _, scan, problem = lex(text)
 
     def refuse(what: str, pos: int, code: str = "sim_synth", src: str = scan) -> Refusal:
@@ -477,17 +769,27 @@ def _refusal_in(name: str, text: str, hand: bool) -> Refusal | None:
         event = _event_controls(scan)
         if event is not None:
             return refuse("an event control that is not `@*`, `@(*)` or edges", event)
+    if myhdl:
+        level = _myhdl_level_blocks(scan)
+        if level is not None:
+            found = refuse(level[1], level[0])
+            return Refusal(found.code, found.what, found.file, found.line, level[2])
     return None
 
 
 def refusal(
-    files: list[tuple[str, str]], hand_written: Collection[str] | None = None
+    files: list[tuple[str, str]],
+    hand_written: Collection[str] | None = None,
+    myhdl_core: Collection[str] = (),
 ) -> Refusal | None:
     """The first construct in the files (read in this order) that the check cannot vouch for.
 
-    `hand_written`: names of the files a person wrote (None: all of them)."""
+    `hand_written`: names of the files judged by the strict event-list and function rules (None:
+    all of them). `myhdl_core`: names of MyHDL cores, judged by the level-list rule instead."""
     for name, text in files:
-        found = _refusal_in(name, text, hand_written is None or name in hand_written)
+        found = _refusal_in(
+            name, text, hand_written is None or name in hand_written, name in myhdl_core
+        )
         if found is not None:
             return found
     return None
@@ -506,6 +808,10 @@ _ADVICE = (
      "simulator and the gates treat it differently."),
     ("lint_off", "Remove it and fix the lint warning instead: the lint step catches races and x "
      "in a case that no other check sees."),
+    ("level-sensitive", "Use `@always_comb`: it lists every signal the block reads, so a "
+     "simulator reruns the block exactly when the gates would change."),
+    ("carriage return", "Save the file with LF or CRLF line ends: the tools disagree about where "
+     "a line ends at a lone CR."),
     ("event control", "Write `always @(*)`: a simulator does not rerun the block for a signal "
      "missing from the list, and the gates do not care about the list."),
     ("automatic", "Write `function automatic`: a simulator keeps the local variables of a plain "
@@ -514,8 +820,8 @@ _ADVICE = (
 )  # fmt: skip
 
 
-def plain_message(found: Refusal) -> str:
-    """What to tell the agent, in plain English."""
+def plain_message(found: Refusal, where: str = "") -> str:
+    """What to tell the agent, in plain English. `where`: more about the place, after the line."""
     if found.code == "include":
         return (
             f"the RTL ({found.file}, line {found.line}) uses `include. The check only reads "
@@ -524,6 +830,6 @@ def plain_message(found: Refusal) -> str:
         )
     hint = next((v for k, v in _ADVICE if k in found.what), "Remove it.")
     return (
-        f"the RTL ({found.file}, line {found.line}) uses {found.what}, which a simulator and "
-        f"the synthesis read differently, so the check cannot vouch for it. {hint}"
+        f"the RTL ({found.file}, line {found.line}{where}) uses {found.what}, which a simulator "
+        f"and the synthesis read differently, so the check cannot vouch for it. {hint}"
     )

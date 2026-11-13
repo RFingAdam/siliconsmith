@@ -91,6 +91,23 @@ def test_missing_verilog_core_is_a_design_error_naming_the_file(fake_work: Path)
     assert "does not exist" in result["python_error"]["msg"]
 
 
+def test_the_verilog_core_is_copied_byte_for_byte(
+    fake_work: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lone CR and bytes that are not UTF-8 must reach `out/` as they are: the equivalence
+    check reads that copy, and a simulator reads the original."""
+    raw = b"// c\rassign y = a;\r\n// caf\xe9 \xff\n"
+    (fake_work / "src" / "chip.v").write_bytes(raw)
+
+    def stop(*_args: object, **_kw: object) -> None:
+        raise RuntimeError("stop after the copy (no yosys on the host)")
+
+    monkeypatch.setattr(worker_emit, "_yosys_ports", stop)
+    with pytest.raises(RuntimeError, match="stop after the copy"):
+        worker_emit.emit(request(fake_work))
+    assert (fake_work / "build" / ".ss" / "r1" / "out" / "chip.v").read_bytes() == raw
+
+
 def test_missing_design_file_for_python_frontends(fake_work: Path) -> None:
     for frontend in ("myhdl",):  # amaranth needs the container's seed script first
         result = worker_emit.emit(request(fake_work, frontend=frontend))

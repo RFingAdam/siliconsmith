@@ -88,7 +88,7 @@ async def design_project(client: Client, root: Path, name: str, fe: str) -> Path
         description=f"The {name} equivalence fixture.",
     )
     assert created["ok"] is True, created["summary"]
-    source = (DESIGNS / name / SOURCE_FILE[fe]).read_text()
+    source = (DESIGNS / name / SOURCE_FILE[fe]).read_bytes().decode("utf-8")  # a CR stays a CR
     wrote = await call(
         client, "write_rtl", project=name, path=SOURCE_PATH[fe].format(name), content=source
     )
@@ -292,6 +292,12 @@ RTL_SEEDS = [
     ("nbspdel", "verilog", "not_proven", "guard_sim_synth_differ"),
     # MyHDL `@always(b0)`: written as `always @(b0)`, a level list that misses `cnt`
     ("mysens2", "myhdl", "not_proven", "guard_sim_synth_differ"),
+    # Round 6: judged on the emitted Verilog, so how the Python was spelled does not matter
+    ("myalias", "myhdl", "not_proven", "guard_sim_synth_differ"),  # `import always as alw`
+    # Icarus ends a `//` comment at a lone CR, Yosys and Verilator do not
+    ("crhide", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # Verilator ends an attribute at a `*)` inside its string, Yosys does not
+    ("attrhide", "verilog", "not_proven", "guard_sim_synth_differ"),
     # `unique case`: synthesis assumes what a simulator does not
     ("uniquecase", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
@@ -307,6 +313,7 @@ async def test_equiv_rtl_seeds(
         await design_project(client, tmp_path, design, fe)
         result = await call(client, "check_equivalence", project=design)
         details = result["details"]
+        assert "verdict" in details, result["summary"]
         print(f"\n{design}-{fe}: {details['verdict']} {details['reason']}: {details['message']}")
         assert result["ok"] is False, result["summary"]
         assert (details["verdict"], details["reason"]) == (verdict, reason), details
@@ -398,7 +405,12 @@ async def test_equiv_the_expose_guard_runs_and_fails_closed(
 # Designs that must NOT be refused by the sim/synth guard, on every front-end they have: the
 # Verilog that the tool emits (and the hand-written core of a Verilog project) is read exactly
 # as the check reads it. A rule that fires on normal front-end output is a bug.
-PRECISION = ["ammem", "arcnt", "carst", "deepinit", "fallingedge", "initz", "seqdet", "shiftpar"]
+PRECISION = [
+    "ammem", "arcnt", "carst", "deepinit", "fallingedge", "initz", "seqdet", "shiftpar",
+    # MyHDL `@always_comb` in the shapes MyHDL writes: if chains, local variables, slices, a
+    # list of signals, a for loop, an enum
+    "mycomb", "mylocals", "mylists", "myfor", "mymix",
+]  # fmt: skip
 
 
 PRECISION_CASES = [
@@ -412,7 +424,9 @@ async def test_the_refusals_do_not_fire_on_emitted_rtl(
 ) -> None:
     async with server as client:
         project = await design_project(client, tmp_path, design, fe)
-        await call(client, "emit_verilog", project=design)
+        emitted = await call(client, "emit_verilog", project=design)
+        assert emitted["ok"] is True, emitted["summary"]
         files = [(f, (project / "src" / f).read_text()) for f in ("project.v", f"{design}.v")]
-        hand = {f"{design}.v"} if fe != "myhdl" else set()
-        assert equiv_sv.refusal(files, hand) is None, (design, fe)
+        core = {f"{design}.v"}
+        hand, myhdl = (core, set()) if fe != "myhdl" else (set(), core)
+        assert equiv_sv.refusal(files, hand, myhdl) is None, (design, fe)

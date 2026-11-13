@@ -21,6 +21,7 @@ from conftest import REPO_ROOT
 from siliconsmith.worker import equiv
 
 FIX = REPO_ROOT / "tests" / "fixtures" / "equiv"
+FIXTURES_MYHDL = REPO_ROOT / "tests" / "fixtures" / "equiv_myhdl"
 NOT_A_PASS = "This is NOT a pass."
 
 
@@ -526,7 +527,7 @@ def test_a_byte_outside_plain_ascii_in_code_is_not_proven(tmp_path: Path, outsid
 def test_the_event_list_rule_is_for_the_cores_that_do_not_list_signals_themselves(
     tmp_path: Path,
 ) -> None:
-    text = b"always @(a or b) y = a & b;\n"
+    text = b"always @(a or b) begin\n  y = a & b;\nend\n"
     rtl, netlist = inputs(tmp_path)
     (rtl / "chip.v").write_bytes(text)
     strict = equiv.check(rtl, "chip", netlist, tmp_path / "s1", yosys=FakeYosys(""))
@@ -536,31 +537,26 @@ def test_the_event_list_rule_is_for_the_cores_that_do_not_list_signals_themselve
     assert lax["reason"] != "guard_sim_synth_differ" and fake.tags == ["equiv"]
 
 
-def test_a_source_refusal_is_a_not_proven_with_the_sentence_it_was_given(tmp_path: Path) -> None:
+def test_a_myhdl_core_is_judged_by_the_level_list_rule(tmp_path: Path) -> None:
+    text = (FIXTURES_MYHDL / "bad" / "myalias.v").read_bytes()
     rtl, netlist = inputs(tmp_path)
+    (rtl / "chip.v").write_bytes(text)
     fake = FakeYosys("")
-    got = equiv.check(
-        rtl, "chip", netlist, tmp_path / "s", yosys=fake, source_refusal="the MyHDL source says no."
-    )
+    got = equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=fake, strict_core=False)
     assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
-    assert "the MyHDL source says no." in got["message"] and fake.calls == []
+    assert "reads `cnt` without listing it" in got["message"] and "@always_comb" in got["message"]
+    assert fake.calls == []
 
 
-def test_the_myhdl_refusal_names_file_function_and_line(tmp_path: Path) -> None:
+def test_the_refusal_names_the_agents_function(tmp_path: Path) -> None:
     (tmp_path / "hdl").mkdir()
     (tmp_path / "hdl" / "d.py").write_text(
         "from myhdl import *\n\n@block\ndef top(a, y):\n    @always(a)\n    def pick():\n"
         "        y.next = 1\n    return pick\n"
     )
-    said = equiv._myhdl_refusal("myhdl", tmp_path)
-    assert said is not None and "hdl/d.py" in said and "function pick" in said
-    assert "line 5" in said and "@always_comb" in said
-    assert equiv._myhdl_refusal("verilog", tmp_path) is None
-    (tmp_path / "hdl" / "d.py").write_text(
-        "from myhdl import *\n\n@block\ndef top(a, y):\n    @always_comb\n    def pick():\n"
-        "        y.next = a\n    return pick\n"
-    )
-    assert equiv._myhdl_refusal("myhdl", tmp_path) is None
+    assert equiv._hdl_function("pick", tmp_path) == ", hdl/d.py, function pick"
+    assert equiv._hdl_function("nope", tmp_path) == ""
+    assert equiv._hdl_function("", tmp_path) == ""
 
 
 def test_an_include_in_the_rtl_is_not_proven(tmp_path: Path) -> None:

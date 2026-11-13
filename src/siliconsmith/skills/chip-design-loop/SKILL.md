@@ -69,7 +69,7 @@ It does not catch bugs in the RTL itself, including a wrong reset in the RTL: bo
 
 "Equivalent" means synthesis did not change your logic: the gates match the RTL as Yosys reads it. A simulator reads some constructs differently, so the check refuses the common ones as not proven (`guard_sim_synth_differ`) and names them: macros and `ifdef`, `include`, `bit`/`int`, `unique`/`priority`, `casex`, `===`, x or z literals, `#` delays and a `lint_off` of a race warning.
 
-Write `always @(*)` (a list of level signals is refused) and `function automatic`. In MyHDL use `@always_comb`, not `@always(level)`. Use a parameter, not a macro.
+Write `always @(*)` (a list of level signals is refused) and `function automatic`. In MyHDL a level-sensitive block must list every signal it reads (`@always_comb` always does); otherwise it is refused, so use `@always_comb`. Use a parameter, not a macro.
 
 It cannot see an out-of-range index or a division by zero (x in a simulator, some value in the gates) or anything that depends on the order a simulator runs events. Gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour: run both.
 

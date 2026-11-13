@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 import pytest
@@ -147,77 +146,3 @@ def test_unparsable_files_are_skipped(tmp_path: Path, text: str) -> None:
     (tmp_path / "hdl").mkdir()
     (tmp_path / "hdl" / "counter.py").write_text(text)
     assert myhdl_map.read_functions(tmp_path) == []
-
-
-# -- level-sensitive processes (the equivalence check refuses them) -------------------------------
-
-
-def _level(tmp_path: Path, body: str) -> dict[str, object] | None:
-    (tmp_path / "hdl").mkdir(exist_ok=True)
-    (tmp_path / "hdl" / "d.py").write_text(
-        "from myhdl import *\n\n@block\ndef top(clk, a, b, y, cnt):\n"
-        + body
-        + "\n    return pick\n"
-    )
-    return myhdl_map.level_sensitive(myhdl_map.read_functions(tmp_path))
-
-
-@pytest.mark.parametrize(
-    ("decorator", "line_body"),
-    [
-        ("@always(b)", "        y.next = cnt"),  # the reviewer's mysens2
-        ("@always(a, b)", "        y.next = cnt"),
-        ("@always(clk.posedge, b)", "        y.next = cnt"),
-        ("@always(a.negedge, b.val)", "        y.next = cnt"),
-        ("@myhdl.always(b)", "        y.next = cnt"),
-        ("@always()", "        y.next = cnt"),
-        ("@always", "        y.next = cnt"),
-    ],
-)
-def test_an_always_that_waits_for_a_level_is_found(
-    tmp_path: Path, decorator: str, line_body: str
-) -> None:
-    found = _level(tmp_path, f"    {decorator}\n    def pick():\n{line_body}\n")
-    assert found is not None
-    assert (found["file"], found["function"], found["line"]) == ("hdl/d.py", "pick", 5)
-    assert "level" in str(found["what"]) or "always" in str(found["what"])
-
-
-@pytest.mark.parametrize(
-    "yielded",
-    ["a", "a, b", "delay(5)", "clk.posedge, b", "a.posedge, delay(1)", "None", ""],
-)
-def test_an_instance_that_yields_a_level_is_found(tmp_path: Path, yielded: str) -> None:
-    body = f"    @instance\n    def pick():\n        while True:\n            yield {yielded}\n"
-    found = _level(tmp_path, body)
-    assert found is not None and found["function"] == "pick" and found["line"] == 8
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        "    @always_comb\n    def pick():\n        y.next = cnt\n",
-        "    @always_seq(clk.posedge, reset=a)\n    def pick():\n        y.next = cnt\n",
-        "    @always(clk.posedge)\n    def pick():\n        y.next = cnt\n",
-        "    @always(clk.posedge, a.negedge)\n    def pick():\n        y.next = cnt\n",
-        "    @instance\n    def pick():\n        while True:\n            yield clk.posedge\n",
-        "    @instance\n    def pick():\n        while True:\n"
-        "            yield clk.posedge, a.negedge\n",
-        "    @block\n    def sub():\n        pass\n    pick = sub\n",
-    ],
-)
-def test_the_complete_forms_are_not_found(tmp_path: Path, body: str) -> None:
-    assert _level(tmp_path, body) is None
-
-
-def test_the_reviewers_mysens2_source_is_found() -> None:
-    path = REPO_ROOT / "tests" / "fixtures" / "equiv_designs" / "mysens2" / "myhdl.py"
-    source = path.read_text()
-    functions = [
-        myhdl_map.Function("hdl/mysens2.py", n.name, n.lineno, "mysens2", n)
-        for n in ast.walk(ast.parse(source))
-        if isinstance(n, ast.FunctionDef) and n.name != "mysens2"
-    ]
-    found = myhdl_map.level_sensitive(functions)
-    decorator_line = source.splitlines().index("    @always(b0)") + 1
-    assert found is not None and found["function"] == "pick" and found["line"] == decorator_line

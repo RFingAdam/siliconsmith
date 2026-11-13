@@ -157,7 +157,9 @@ def _read_verilog_core(name: str) -> str:
         raise DesignError(f"src/{name}.v", f"src/{name}.v does not exist")
     if path.stat().st_size > MAX_CORE_BYTES:
         raise DesignError(f"src/{name}.v", f"src/{name}.v is larger than {MAX_CORE_BYTES} bytes")
-    return path.read_text(encoding="utf-8", errors="replace")
+    # Bytes, one character per byte (latin-1): no newline translation and nothing replaced, so the
+    # copy in `out/` that synthesis and the equivalence check read is the file a simulator reads.
+    return path.read_bytes().decode("latin-1")
 
 
 def _core_header(author: str, name: str) -> str:
@@ -420,7 +422,10 @@ def _emit(request: dict[str, Any]) -> dict[str, Any]:
                 f"the Verilog generated from {entry} is larger than {MAX_GENERATED_BYTES} bytes",
             ),
         )
-    (out_dir / f"{name}.v").write_text(text, encoding="utf-8")
+    if generated:
+        (out_dir / f"{name}.v").write_text(text, encoding="utf-8")
+    else:
+        (out_dir / f"{name}.v").write_bytes(text.encode("latin-1"))  # see _read_verilog_core
 
     # 2. the core's ports
     ports, error = _yosys_ports(out_dir, name, [f"{name}.v"], name, "core.json")

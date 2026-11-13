@@ -628,8 +628,9 @@ macros out of the way (synthesis did not change your logic). A simulator can rea
 constructs differently from Yosys. The tool refuses the common ones as not proven and names \
 them: macros and `include, bit/int types, unique/priority, casex, ===, x or z literals, delays \
 (#), characters outside plain ASCII, a lint_off of a race warning, every level-sensitive \
-always @(a or b) in Verilog or Amaranth (write always @(*)), a MyHDL @always(level signal) or \
-@instance that waits on a level (use @always_comb), and a function without automatic. It does \
+always @(a or b) in Verilog or Amaranth (write always @(*)), a MyHDL level-sensitive block \
+that does not list every signal it reads (use @always_comb, which always does), a carriage \
+return that no line feed follows, and a function without automatic. It does \
 NOT detect an out-of-range index or a division by zero (x in a simulator, some value in the \
 gates) or anything that depends on simulation event order: run gate-level simulation \
 (run_tests with gl=True) as well.\n\

@@ -405,19 +405,12 @@ def _unreadable_cex(r: _Run, got: dict[str, Any], where: str) -> dict[str, Any]:
     )
 
 
-def _myhdl_refusal(frontend: str, work: Path = Path("/work")) -> str | None:
-    """For a MyHDL project: a plain sentence if a process in `hdl/` waits for a level signal."""
-    if frontend != "myhdl":
-        return None
-    found = myhdl_map.level_sensitive(myhdl_map.read_functions(work))
-    if found is None:
-        return None
-    return (
-        f"the MyHDL source ({found['file']}, function {found['function']}, line {found['line']}) "
-        f"uses {found['what']}, a process that waits for a level signal: a simulator only reruns "
-        "it when that signal changes, the gates do not care. Use `@always_comb` for combinational "
-        "logic, or `@always_seq` / `@always(clk.posedge)` for clocked logic."
-    )
+def _hdl_function(label: str, work: Path = Path("/work")) -> str:
+    """`, hdl/x.py, function f` for the MyHDL block `label`, or "" if it cannot be found."""
+    if not label:
+        return ""
+    function = myhdl_map.find_function(label, myhdl_map.read_functions(work))
+    return f", {function.file}, function {function.name}" if function else ""
 
 
 def check(
@@ -432,7 +425,6 @@ def check(
     deadline_s: float = DEADLINE_S,
     yosys: YosysRunner = run_yosys,
     strict_core: bool = True,
-    source_refusal: str | None = None,
 ) -> dict[str, Any]:
     """Check the RTL in `rtl_dir` (`project.v`, `<name>.v`) against the netlist FILE `netlist`.
 
@@ -440,8 +432,8 @@ def check(
     list level signals itself (every level-sensitive `always @(a or b)` and every function or
     task without `automatic` is refused). True for Verilog (hand-written) and Amaranth (its
     combinational logic is `@*`); False for MyHDL, whose `@always_comb` is written as
-    `always @(a, b)`: its level-sensitive processes are judged in the `hdl/` Python source by the
-    caller, who passes what it found as `source_refusal` (a plain sentence, or None).
+    `always @(a, b)`: its core is judged by the level-list rule instead (a level-sensitive block
+    must list every signal it reads; `equiv_sv.refusal`, `myhdl_core`).
 
     The inputs are copied into `scratch` first; every Yosys call runs there. Returns the verdict
     dict described at the top of this module. It never raises: an unexpected failure inside the
@@ -461,7 +453,6 @@ def check(
             yosys,
             t0,
             strict_core,
-            source_refusal,
         )
     except Exception as exc:
         failed = _Run(scratch, yosys, Clock(budget_s, deadline_s), t0)
@@ -484,7 +475,6 @@ def _check(
     yosys: YosysRunner,
     t0: float,
     strict_core: bool,
-    source_refusal: str | None,
 ) -> dict[str, Any]:
     scratch.mkdir(parents=True, exist_ok=True)
     r = _Run(scratch, yosys, Clock(budget_s, deadline_s), t0)
@@ -525,23 +515,21 @@ def _check(
     # Bytes, not text: a file is read as latin-1 (one character per byte, nothing replaced, no
     # newline translation) and written back the same way, so the proof reads the bytes that the
     # synthesis read, minus the comments and attributes.
-    if source_refusal is not None:
-        return r.verdict(
-            "not_proven",
-            "guard_sim_synth_differ",
-            f"Could not prove equivalence: {source_refusal}",
-        )
     try:
         sources = [
             (fname, (scratch / fname).read_bytes().decode("latin-1"))
             for fname in ("project.v", f"{name}.v")
         ]
-        found = equiv_sv.refusal(sources, {f"{name}.v"} if strict_core else set())
+        core = {f"{name}.v"}
+        found = equiv_sv.refusal(
+            sources, core if strict_core else set(), set() if strict_core else core
+        )
         if found is not None:
             return r.verdict(
                 "not_proven",
                 "guard_include" if found.code == "include" else "guard_sim_synth_differ",
-                f"Could not prove equivalence: {equiv_sv.plain_message(found)}",
+                f"Could not prove equivalence: "
+                f"{equiv_sv.plain_message(found, _hdl_function(found.label))}",
             )
         for fname, text in sources:  # the proof reads these cleaned copies
             (scratch / fname).write_bytes(equiv_sv.clean(text).encode("latin-1"))
@@ -888,7 +876,6 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
         out_dir / EQUIV_DIR,
         deadline_s=deadline_s,
         strict_core=frontend != "myhdl",
-        source_refusal=_myhdl_refusal(frontend) if frontend == "myhdl" else None,
     )
     return result
 
