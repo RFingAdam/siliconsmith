@@ -629,14 +629,17 @@ constructs differently from Yosys. The tool refuses the common ones as not prove
 them: macros and `include, bit/int types, unique/priority, casex, ===, x or z literals, delays \
 (#), characters outside plain ASCII, a lint_off of a race warning, every level-sensitive \
 always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational block that \
-reads a signal before it writes it, a MyHDL core that is not the plain single module MyHDL writes \
+reads a signal before it writes it (in @* blocks found by Verilator's always_comb check; in \
+MyHDL blocks checked directly, loops included), a function that reads anything other than \
+its arguments and any task, a MyHDL core that is not the plain single module MyHDL writes \
 (generate, instances, a second module, odd arrays), a MyHDL level-sensitive block \
 that is not the plain shape @always_comb writes and does not list every signal it reads (use \
-@always_comb), a carriage return that no line feed follows, and a function or task without \
-automatic in any front-end. It does \
+@always_comb), a carriage return that no line feed follows, and a function without \
+automatic. It does \
 NOT detect an out-of-range index or a division by zero (x in a simulator, some value in the \
-gates) or anything that depends on simulation event order: run gate-level simulation \
-(run_tests with gl=True) as well.\n\
+gates), in hand-written Verilog a read and a write that happen in that order only across \
+loop iterations (Verilator cannot see it), or other effects of simulation event order: run \
+gate-level simulation (run_tests with gl=True) as well.\n\
 What it checks: every output value the RTL defines must match for every power-up state of \
 the chip's flip-flops (an x or default-don't-care in the RTL means any value is accepted); \
 registers that nothing resets are only compared for a consistent power-up (the RTL simulation \

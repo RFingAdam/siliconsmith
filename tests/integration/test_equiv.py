@@ -302,6 +302,15 @@ RTL_SEEDS = [
     # a simulator does not rerun the block for its own write. Hand-written (Verilator's
     # ALWCOMBORDER pass), and genuine MyHDL @always_comb (the block parser)
     ("hrbw", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # Round 9: a loop that reads in one iteration what another writes (gloopit is genuine MyHDL;
+    # mloopit writes the core by hand), no `@*` in a MyHDL core, and functions and tasks: a
+    # function may read only its arguments, a task is never allowed
+    ("gloopit", "myhdl", "not_proven", "guard_sim_synth_differ"),
+    ("mloopit", "myhdl", "not_proven", "guard_sim_synth_differ"),
+    ("mstarloop", "myhdl", "not_proven", "guard_sim_synth_differ"),
+    ("vfunc", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("vtask2", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("vfsens", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("mrbw2", "myhdl", "not_proven", "guard_sim_synth_differ"),
     # Icarus ends a `//` comment at a lone CR, Yosys and Verilator do not
     ("crhide", "verilog", "not_proven", "guard_sim_synth_differ"),
@@ -481,3 +490,18 @@ async def test_no_combinational_read_before_write_in_the_counter(
         emitted = await call(client, "emit_verilog", project="counter")
         assert emitted["ok"] is True, emitted["summary"]
         assert comb_order_in_container(image, project, "counter") == "None", fe
+
+
+async def test_a_read_and_a_write_across_loop_iterations_in_verilog_is_not_detected(
+    server: Client, tmp_path: Path
+) -> None:
+    """vloopit, PINNED AS NOT DETECTED: hand-written `always @*` whose loop reads `t` in iteration
+    0 and writes it in iteration 1. A simulator keeps the old `t`, the gates use the new one, so
+    the two differ; but Verilator's ALWCOMBORDER cannot see an order that only exists across loop
+    iterations, and the check has no other way to see it. It is listed under what the check does
+    not detect (gate-level simulation is the check for that). If this test starts to fail
+    because the check now refuses the design, update the docs and this test."""
+    async with server as client:
+        await design_project(client, tmp_path, "vloopit", "verilog")
+        result = await call(client, "check_equivalence", project="vloopit")
+        assert result["details"]["verdict"] == "equivalent", result["summary"]

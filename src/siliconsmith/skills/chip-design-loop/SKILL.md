@@ -69,7 +69,12 @@ It does not catch bugs in the RTL itself, including a wrong reset in the RTL: bo
 
 "Equivalent" means synthesis did not change your logic: the gates match the RTL as Yosys reads it. A simulator reads some constructs differently, so the check refuses the common ones as not proven (`guard_sim_synth_differ`) and names them: macros and `ifdef`, `include`, `bit`/`int`, `unique`/`priority`, `casex`, `===`, x or z literals, `#` delays and a `lint_off` of a race warning.
 
-Write `always @(*)` (a list of level signals is refused) and `function automatic`. Write every signal of a combinational block before you read it (a simulator does not rerun the block for its own write; `y = t; t = cnt;` is refused). In MyHDL the core must be the plain single module MyHDL writes, and a level-sensitive block must have the plain shape `@always_comb` writes and list every signal it reads; otherwise it is refused, so use `@always_comb`. Use a parameter, not a macro.
+Write `always @(*)` (a list of level signals is refused) and `function automatic`.
+Write every signal of a combinational block before you read it (a simulator does not rerun the block for its own write; `y = t; t = cnt;` is refused, in a loop too).
+A `function` may read only its arguments (pass the rest in) and a `task` is refused.
+The check cannot see, in hand-written Verilog, a read and a write that happen in that order only across loop iterations (Verilator cannot see it); gate-level simulation is the check for that.
+In MyHDL the core must be the plain single module MyHDL writes, and a level-sensitive block must have the plain shape `@always_comb` writes and list every signal it reads; otherwise it is refused, so use `@always_comb`.
+Use a parameter, not a macro.
 
 It cannot see an out-of-range index or a division by zero (x in a simulator, some value in the gates) or anything that depends on the order a simulator runs events. Gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour: run both.
 

@@ -20,6 +20,8 @@ from conftest import REPO_ROOT
 
 from siliconsmith.worker import equiv
 
+REAL_RUN_VERILATOR = equiv._run_verilator  # the autouse fixture replaces it
+
 FIX = REPO_ROOT / "tests" / "fixtures" / "equiv"
 FIXTURES_MYHDL = REPO_ROOT / "tests" / "fixtures" / "equiv_myhdl"
 NOT_A_PASS = "This is NOT a pass."
@@ -60,7 +62,7 @@ class FakeYosys:
 @pytest.fixture(autouse=True)
 def no_verilator(monkeypatch: pytest.MonkeyPatch) -> None:
     """The ALWCOMBORDER pass runs Verilator; unit tests do not have it (it is inconclusive)."""
-    monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: None)
+    monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: None)  # cannot start
 
 
 def inputs(tmp_path: Path, netlist: str = "module tt_um_chip(); endmodule\n") -> tuple[Path, Path]:
@@ -798,14 +800,22 @@ def star_core(tmp_path: Path) -> tuple[Path, Path]:
     return rtl, netlist
 
 
+def check_star(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run: equiv.LintRun | None
+) -> dict[str, Any]:
+    monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: run)
+    rtl, netlist = star_core(tmp_path)
+    return equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=FakeYosys(""))
+
+
 def test_a_block_that_reads_before_it_writes_is_not_proven(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: list[tuple[list[str], str]] = []
 
-    def verilator(argv: list[str], cwd: Path) -> str:
+    def verilator(argv: list[str], cwd: Path) -> equiv.LintRun:
         seen.append((argv, (cwd / "chip.v").read_text()))
-        return ALWCOMBORDER
+        return equiv.LintRun(0, ALWCOMBORDER)
 
     monkeypatch.setattr(equiv, "_run_verilator", verilator)
     rtl, netlist = star_core(tmp_path)
@@ -820,31 +830,85 @@ def test_a_block_that_reads_before_it_writes_is_not_proven(
     assert "always_comb" in copy and "@*" not in copy and copy.count("\n") == 6  # lines stay
 
 
+def test_the_comb_pass_has_the_emit_lints_time() -> None:
+    assert equiv.COMB_LINT_TIMEOUT_S == equiv.emit.TOOL_TIMEOUT_S == 120
+
+
+def test_a_timeout_is_not_proven_with_the_time_limit_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    got = check_star(tmp_path, monkeypatch, equiv.LintRun(-1, "", True))
+    assert got["verdict"] == "not_proven" and got["reason"] == "time_limit"
+    assert "did not finish within 120 s" in got["message"]
+
+
+def test_a_finding_seen_before_the_timeout_still_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    got = check_star(tmp_path, monkeypatch, equiv.LintRun(-1, ALWCOMBORDER, True))
+    assert got["reason"] == "guard_sim_synth_differ" and "reads a signal before" in got["message"]
+
+
+@pytest.mark.parametrize(
+    ("run", "line"),
+    [
+        (equiv.LintRun(1, "%Error: chip.v:3:5: syntax error, unexpected always_comb\n"), "line 3"),
+        (
+            equiv.LintRun(1, "%Error: chip.v:2:3: Unsupported: foo\n%Error: chip.v:9:1: later\n"),
+            "line 2",
+        ),
+        (equiv.LintRun(1, "verilator: something odd happened"), "something odd happened"),
+        (equiv.LintRun(1, ""), "failed"),
+        # an ALWCOMBORDER in the output beats an error elsewhere (the finding is the answer)
+    ],
+)
+def test_a_copy_that_does_not_lint_is_not_proven_naming_the_first_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run: equiv.LintRun, line: str
+) -> None:
+    got = check_star(tmp_path, monkeypatch, run)
+    assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
+    assert "does not lint" in got["message"] and "always_comb" in got["message"]
+    assert line in got["message"]
+
+
+def test_a_finding_beats_an_error_in_the_same_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = equiv.LintRun(1, "%Error: chip.v:3:5: syntax error\n" + ALWCOMBORDER)
+    got = check_star(tmp_path, monkeypatch, run)
+    assert "reads a signal before it writes it" in got["message"]
+
+
 @pytest.mark.parametrize(
     "output",
     [
-        None,  # Verilator could not be run
         "",
-        "%Error: chip.v:3:5: syntax error, unexpected always_comb\n",
         "%Warning-MULTIDRIVEN: chip.v:3:5: Signal has multiple driving blocks: 'y'\n",
         "%Warning-WIDTHTRUNC: chip.v:3:5: Operator ASSIGN expects 8 bits\n",
         "%Warning-ALWCOMBORDER: elsewhere.v:4:5: Always_comb variable driven after use: 't'\n",
         "%Warning-ALWCOMBORDER: Always_comb variable driven after use: 't'\n",  # no position
     ],
 )
-def test_an_inconclusive_verilator_run_adds_no_refusal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str | None
+def test_a_clean_copy_or_other_warnings_add_no_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str
 ) -> None:
-    monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: output)
-    rtl, netlist = star_core(tmp_path)
-    got = equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=FakeYosys(""))
-    assert got["reason"] != "guard_sim_synth_differ"
+    got = check_star(tmp_path, monkeypatch, equiv.LintRun(0, output))
+    assert got["reason"] != "guard_sim_synth_differ" and got["reason"] != "time_limit"
+
+
+def test_a_verilator_that_cannot_be_started_is_inconclusive_and_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("WARNING"):
+        got = check_star(tmp_path, monkeypatch, None)
+    assert got["reason"] != "guard_sim_synth_differ" and got["reason"] != "time_limit"
+    assert "could not be started" in caplog.text
 
 
 def test_no_star_block_means_no_verilator_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def verilator(argv: list[str], cwd: Path) -> str:
+    def verilator(argv: list[str], cwd: Path) -> equiv.LintRun:
         raise AssertionError("verilator was run")
 
     monkeypatch.setattr(equiv, "_run_verilator", verilator)
@@ -856,6 +920,14 @@ def test_no_star_block_means_no_verilator_run(
     assert got["reason"] != "guard_sim_synth_differ"
 
 
-def test_a_missing_or_failing_verilator_is_inconclusive() -> None:
-    assert equiv.__dict__["subprocess"] is not None
-    assert equiv._run_verilator(["/nonexistent-verilator"], Path(".")) is None
+def test_run_verilator_reports_start_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    assert REAL_RUN_VERILATOR(["/nonexistent-verilator"], Path(".")) is None  # cannot start
+
+    def boom(*a: Any, **k: Any) -> Any:
+        raise subprocess.TimeoutExpired(cmd="verilator", timeout=1, stderr="partial")
+
+    monkeypatch.setattr(equiv.subprocess, "run", boom)
+    run = REAL_RUN_VERILATOR(["verilator"], Path("."))
+    assert run is not None and run.timed_out and run.output == "partial"

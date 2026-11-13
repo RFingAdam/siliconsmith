@@ -430,10 +430,15 @@ def test_myhdl_style_event_lists_are_not_judged_by_the_strict_rule() -> None:
     assert sv.refusal([("core.v", text)], (), {"core.v"}) is None  # it lists what it reads
 
 
-@pytest.mark.parametrize("word", ["function", "task"])
-def test_a_plain_function_or_task_is_refused_in_hand_written_verilog(word: str) -> None:
-    refused(f"{word} [7:0] f;\n input [7:0] a;\n f = a;\n end{word}", "automatic")
-    ok(f"module m; {word} automatic [7:0] f; input [7:0] a; f = a; end{word} endmodule\n")
+def test_a_plain_function_is_refused_and_an_automatic_one_is_fine() -> None:
+    refused("function [7:0] f;\n input [7:0] a;\n f = a;\n endfunction", "automatic")
+    ok("module m; function automatic [7:0] f; input [7:0] a; f = a; endfunction endmodule\n")
+
+
+@pytest.mark.parametrize("form", ["task", "task automatic"])
+def test_every_task_is_refused(form: str) -> None:
+    found = refused(f"{form} wr;\n t = cnt;\n endtask", "a `task`")
+    assert "function automatic" in sv.plain_message(found)
 
 
 def test_the_reviewers_function_design_is_refused() -> None:
@@ -709,6 +714,9 @@ BAD = {
     "agenif": "`generate` at module level", "agensh": "`generate` at module level",
     # and a signal is not read before the block writes it (genuine MyHDL: mrbw2)
     "brbw": "reads `t` before it writes it", "mrbw2": "reads `t` before it writes it",
+    # round 9: a loop reads what a later iteration writes (gloopit is genuine MyHDL); no `@*`
+    "gloopit": "both reads and writes `t` in a for loop", "mloopit": "in a for loop",
+    "mstarloop": "explicit lists only",
 }  # fmt: skip
 
 
@@ -785,8 +793,6 @@ def test_a_level_block_of_the_plain_shape_that_lists_what_it_reads_is_accepted(
     [
         "always @(posedge clk) begin\n  q <= d;\nend",
         "always @(posedge clk, negedge rst_n) begin: s\n  q <= d;\nend",
-        "always @* begin\n  y = a;\nend",
-        "always @(*) begin\n  y = a;\nend",
     ],
 )
 def test_edge_and_star_blocks_are_not_the_level_rule(block: str) -> None:
@@ -1068,8 +1074,6 @@ def _module(items: str) -> sv.Refusal | None:
         "initial begin\n  r = 0;\nend",
         "always @(posedge clk, negedge a) begin: s\n  r <= a;\nend",
         "always @(posedge clk or negedge a) begin: s\n  r <= a;\nend",
-        "always @* begin\n  r = a;\nend",
-        "always @(*) begin\n  r = a;\nend",
         "always @(a) begin: l\n  r = a;\nend",
     ],
 )
@@ -1212,3 +1216,135 @@ def test_every_star_block_is_written_as_always_comb_and_nothing_else_moves(
     assert got == want
     if got is not None:
         assert got.count("\n") == text.count("\n")
+
+
+# -- only pure functions --------------------------------------------------------------------------
+
+PURE = "function automatic [7:0] rd(input [7:0] a, input d);\n  rd = {a[6:0], d};\nendfunction"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        PURE,
+        # a local, a parameter, a localparam, a system function and a pure function of its own
+        "localparam P = 3;\nparameter [3:0] Q = 2, R = 1;\n"
+        "function automatic [7:0] g(input [7:0] x);\n  g = x << 1;\nendfunction\n"
+        "function automatic [7:0] f(input [7:0] a, input signed [3:0] b);\n  reg [7:0] t;\n"
+        "  integer i;\n  begin: body\n    t = a ^ P ^ Q;\n"
+        "    for (i = 0; i < R; i = i + 1) t = g(t);\n"
+        "    f = $clog2(t) + $signed(b) + $unsigned(a);\n  end\nendfunction",
+        # old-style ports and a range that names a parameter
+        "localparam W = 8;\nfunction automatic [W-1:0] f;\n  input [W-1:0] a;\n"
+        "  f = ~a;\nendfunction",
+        "function automatic integer h(input integer x);\n  h = x + 1;\nendfunction",
+    ],
+)
+def test_a_pure_function_is_fine(text: str) -> None:
+    assert sv.refusal([("m.v", f"module m;\n{text}\nendmodule\n")]) is None, text
+
+
+@pytest.mark.parametrize(
+    ("text", "name", "bad"),
+    [
+        # the reviewer's vfunc: a module signal that `@*` does not see
+        (
+            "reg [7:0] t;\nfunction automatic [7:0] rd(input d);\n"
+            "  rd = t ^ {7'd0, d};\nendfunction",
+            "rd",
+            "t",
+        ),
+        ("function automatic [7:0] rd(input d);\n  rd = cnt;\nendfunction", "rd", "cnt"),
+        ("function automatic [7:0] rd(input [W-1:0] d);\n  rd = d;\nendfunction", "rd", "W"),
+        ("function automatic [7:0] rd(input d);\n  rd = top.cnt;\nendfunction", "rd", "top"),
+        ("function automatic [7:0] rd(input d);\n  rd = $random;\nendfunction", "rd", "$random"),
+        ("function automatic [7:0] rd(input d);\n  rd = \\cnt ;\nendfunction", "rd", "escaped"),
+        (
+            "function automatic [7:0] rd(input d);\n  reg [7:0] t;\n  t = d;\n"
+            "  rd = t + u;\nendfunction",
+            "rd",
+            "u",
+        ),
+        # a function that calls an impure or unknown function is impure
+        (
+            "function automatic [7:0] a(input d);\n  a = cnt;\nendfunction\n"
+            "function automatic [7:0] b(input d);\n  b = a(d);\nendfunction",
+            "a",
+            "cnt",
+        ),
+        ("function automatic [7:0] b(input d);\n  b = zz(d);\nendfunction", "b", "zz"),
+        (
+            "function automatic [7:0] b(input d);\n  b = b(d);\nendfunction\n"
+            "function automatic [7:0] c(input d);\n  c = c(1'b0) + cnt;\nendfunction",
+            "c",
+            "cnt",
+        ),
+    ],
+)
+def test_a_function_that_reads_anything_but_its_arguments_is_refused(
+    text: str, name: str, bad: str
+) -> None:
+    found = sv.refusal([("m.v", f"module m;\n{text}\nendmodule\n")])
+    assert found is not None, text
+    assert f"the function `{name}`" in found.what and bad in found.what, found.what
+    assert "pass it as an argument" in found.what or "not a pure function" in found.what
+    assert "pure" in sv.plain_message(found)
+
+
+def test_the_reviewers_function_and_task_designs_are_refused() -> None:
+    """r8/v/vfunc (a function reads t), vtask2 (a task writes t), vfsens (a function reads cnt)."""
+    for name, what in (("vfunc", "reads `t`"), ("vtask2", "a `task`"), ("vfsens", "reads `cnt`")):
+        path = REPO_ROOT / "tests" / "fixtures" / "equiv_designs" / name / "verilog.v"
+        found = sv.refusal([(f"{name}.v", path.read_text())])
+        assert found is not None and what in found.what, (name, found)
+
+
+def test_what_cannot_be_seen_across_loop_iterations_is_not_detected() -> None:
+    """vloopit: hand-written `always @*` that reads `t` in iteration 0 and writes it in 1. A
+    simulator keeps the old t; Verilator's ALWCOMBORDER cannot see an order that only exists across
+    iterations. NOT refused here, and listed under what is not detected (the gate-level simulation
+    is the check); the MyHDL parser refuses the same shape."""
+    path = REPO_ROOT / "tests" / "fixtures" / "equiv_designs" / "vloopit" / "verilog.v"
+    assert sv.refusal([("vloopit.v", path.read_text())]) is None
+
+
+# -- loops: an iteration may read what another one writes ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # the reviewer's gloopit / mloopit: iteration 0 reads t, iteration 1 writes it
+        "integer i;\n y = 0;\n for (i = 0; i < 2; i = i + 1) begin\n  if (i == 1) t = cnt;\n"
+        "  else y = t;\n end",
+        "integer i;\n for (i = 0; i < 2; i = i + 1) begin\n  case (i)\n   1: t = cnt;\n"
+        "   default: y = t;\n  endcase\n end",
+        "integer i;\n y = 0;\n for (i = 0; i < 4; i = i + 1) begin\n  if (a[i]) begin\n"
+        "   if (b[i]) t = 1;\n  end\n  else y = t;\n end",
+    ],
+)
+def test_a_signal_that_a_loop_both_reads_and_writes_is_refused(body: str) -> None:
+    found = _lvl(body, "a, b, cnt, t, y, z")
+    assert found is not None, body
+    assert "in a for loop" in found.what and "before the loop" in found.what, found.what
+    assert found.label == "l" and "@always_comb" in sv.plain_message(found)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "integer i;\n y = 0;\n for (i = 0; i < 8; i = i + 1) y = y + a[i];",  # the accumulator
+        "integer i;\n integer n;\n n = 0;\n for (i = 0; i < 8; i = i + 1) begin\n"
+        "  if (a[i]) n = n + 1;\n end\n y = n;",  # lfor.v
+        "integer i;\n t = a;\n y = 0;\n for (i = 0; i < 2; i = i + 1) begin\n  y = y + t;\n"
+        "  t = t + 1;\n end",  # t was written before the loop
+        "integer i;\n for (i = 0; i < 4; i = i + 1) begin\n  y[i] = a[i];\n end",
+        "integer i;\n y = 0;\n for (i = 0; i < 2; i = i + 1) begin\n  if (a[i]) y = y | b;\n end"
+        "\n z = y;",
+        "j = 0;\n for (k = 0; k < 2; k = k + 1) begin\n  y = a;\n end",
+    ],
+)
+def test_the_normal_accumulator_and_loops_over_signals_written_first_are_accepted(
+    body: str,
+) -> None:
+    assert _lvl(body, "a, b, t, y, z, j, k") is None, body

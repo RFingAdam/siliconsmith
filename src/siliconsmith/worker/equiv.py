@@ -62,11 +62,13 @@ share files.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import shutil
 import subprocess
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -413,31 +415,52 @@ def _hdl_function(label: str, work: Path = Path("/work")) -> str:
     return f", {function.file}, function {function.name}" if function else ""
 
 
-COMB_LINT_TIMEOUT_S = 60.0
+COMB_LINT_TIMEOUT_S = float(emit.TOOL_TIMEOUT_S)  # the same as the emit lint
+log = logging.getLogger(__name__)
 
 
-def _run_verilator(argv: list[str], cwd: Path) -> str | None:
-    """Verilator's output (stdout and stderr), or None if it could not be run."""
+@dataclass(frozen=True)
+class LintRun:
+    """What a Verilator run left: the exit code, stdout and stderr together, and whether it was
+    stopped for taking too long."""
+
+    code: int
+    output: str
+    timed_out: bool = False
+
+
+def _run_verilator(argv: list[str], cwd: Path) -> LintRun | None:
+    """Run Verilator; None only if it could not be STARTED at all (no binary)."""
     try:
         proc = subprocess.run(
             argv, cwd=cwd, capture_output=True, text=True, timeout=COMB_LINT_TIMEOUT_S, check=False
         )
-    except (OSError, subprocess.SubprocessError):
+    except subprocess.TimeoutExpired as exc:
+        partial = exc.stderr or exc.stdout or ""
+        return LintRun(-1, partial if isinstance(partial, str) else partial.decode("latin-1"), True)
+    except OSError:
         return None
-    return proc.stderr + "\n" + proc.stdout
+    return LintRun(proc.returncode, proc.stderr + "\n" + proc.stdout)
 
 
-def _comb_order(scratch: Path, sources: list[tuple[str, str]], name: str) -> str | None:
-    """A sentence if a combinational block (`always @*`) reads a signal before it writes it.
+def _comb_order(scratch: Path, sources: list[tuple[str, str]], name: str) -> tuple[str, str] | None:
+    """`(reason, sentence)` if the `always @*` blocks cannot be shown to write before they read.
 
     A simulator does not rerun such a block for its own write, so a signal read before it is
     written holds the value of the run before (`y = t; t = cnt;` gives y the old t); the gates
     give the new one. Verilator finds it for an `always_comb` (ALWCOMBORDER), so the RTL is linted
     once more with every `always @*` and `always @(*)` written as `always_comb`, on a copy in
-    `scratch`, with the flags of the emit lint (and `-Wno-fatal`). Only ALWCOMBORDER counts: this
-    pass can add a refusal and never another. `always_comb` is stricter than `@*` (MULTIDRIVEN, a
-    signal driven by two blocks, syntax it does not take), so a run that fails or finds anything
-    else is inconclusive, never a refusal: no normal design is refused by this pass."""
+    `scratch`, with the flags of the emit lint (and `-Wno-fatal`, so warnings do not stop it).
+    The pass must not pass by giving up:
+
+    * ALWCOMBORDER in one of our files: `guard_sim_synth_differ`;
+    * the run takes longer than the emit lint may: `time_limit`;
+    * the copy does not lint (an error, or a failing exit code) while the RTL does:
+      `guard_sim_synth_differ`, naming the first error, because the check cannot tell whether
+      the copy hides such a block;
+    * Verilator cannot be started at all (no binary): inconclusive, logged, nothing is refused.
+
+    Nothing runs if there is no `always @*`."""
     copies = {fname: equiv_sv.always_comb_copy(text) for fname, text in sources}
     if all(copy is None for copy in copies.values()):
         return None
@@ -450,18 +473,42 @@ def _comb_order(scratch: Path, sources: list[tuple[str, str]], name: str) -> str
         "verilator", "--lint-only", "-Wall", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
         "-Wno-DECLFILENAME", "--top-module", f"tt_um_{name}", "project.v", f"{name}.v",
     ]  # fmt: skip
-    output = _run_verilator(command, folder)
-    if output is None:
+    run = _run_verilator(command, folder)
+    if run is None:
+        log.warning("verilator could not be started: the always_comb order check was skipped")
         return None
-    for item in lint.parse(output):
+    found = lint.parse(run.output)
+    for item in found:
         if item["code"] == "ALWCOMBORDER" and item["file"] in copies and item["line"]:
             signal = re.search(r"'([^']+)'", item["msg"])
             shown = f" (`{signal.group(1)}`)" if signal else ""
             return (
+                "guard_sim_synth_differ",
                 f"the RTL ({item['file']}, line {item['line']}) has a combinational block that "
                 f"reads a signal before it writes it{shown}: a simulator does not rerun the block "
-                "for its own write, the gates do. Write each signal before you read it."
+                "for its own write, the gates do. Write each signal before you read it.",
             )
+    if run.timed_out:
+        return (
+            "time_limit",
+            f"the lint that looks for a combinational block reading a signal before it writes "
+            f"it did not finish within {COMB_LINT_TIMEOUT_S:.0f} s.",
+        )
+    errors = [item for item in found if item["severity"] == "error"]
+    if errors or run.code != 0:
+        if errors:
+            first = errors[0]
+            where = f"{first['file']}, line {first['line']}: " if first["line"] else ""
+            why = where + str(first["msg"])
+        else:
+            why = clip(run.output.strip().splitlines()[-1] if run.output.strip() else "failed", 200)
+        return (
+            "guard_sim_synth_differ",
+            "the RTL does not lint with every `always @*` written as `always_comb` (the check "
+            f"that looks for a combinational block reading a signal before it writes it): {why}. "
+            "The check cannot tell whether such a block is in the RTL: write the block so it "
+            "lints as `always_comb`.",
+        )
     return None
 
 
@@ -585,9 +632,7 @@ def _check(
             )
         comb = _comb_order(scratch, sources, name)
         if comb is not None:
-            return r.verdict(
-                "not_proven", "guard_sim_synth_differ", f"Could not prove equivalence: {comb}"
-            )
+            return r.verdict("not_proven", comb[0], f"Could not prove equivalence: {comb[1]}")
         for fname, text in sources:  # the proof reads these cleaned copies
             (scratch / fname).write_bytes(equiv_sv.clean(text).encode("latin-1"))
     except OSError as exc:
