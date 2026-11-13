@@ -62,6 +62,7 @@ share files.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import shutil
@@ -72,7 +73,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from siliconsmith.worker import emit, equiv_parse, equiv_script, equiv_sv, lint, myhdl_map, synth
+from siliconsmith.worker import (
+    emit,
+    equiv_parse,
+    equiv_script,
+    equiv_sv,
+    equiv_tree,
+    lint,
+    myhdl_map,
+    synth,
+)
 from siliconsmith.worker.limits import (
     EQUIV_DETAIL_LINE_MAX,
     EQUIV_SIGNAL_MAX,
@@ -512,6 +522,68 @@ def _comb_order(scratch: Path, sources: list[tuple[str, str]], name: str) -> tup
     return None
 
 
+def _function_purity(
+    scratch: Path, sources: list[tuple[str, str]], name: str
+) -> tuple[str, str] | None:
+    """`(reason, sentence)` if a function of the RTL reads anything but its arguments.
+
+    A simulator's `always @*` does not re-run when a signal read only inside a called function
+    changes; synthesis inlines the function. Scope cannot be judged from tokens, so Verilator
+    resolves the names (`--json-only` writes its syntax tree, `equiv_tree` reads it) on the
+    cleaned RTL that Yosys reads, with the top module and flags of the always_comb pass. It runs
+    only if the RTL has a `function` or `task` keyword. Like that pass it must not pass by
+    giving up:
+
+    * the run takes longer than the emit lint may: `time_limit`;
+    * a failing exit code, no readable tree, or a node the walker does not understand:
+      `guard_sim_synth_differ`, naming the first error;
+    * Verilator cannot be started at all: inconclusive, logged, nothing is refused. That cannot
+      happen in practice: the worker runs inside the toolchain image, which holds Verilator, and
+      the emit lint (which needs it, and which ran before this check) would have failed first.
+    """
+    if not any(equiv_sv.declares_function(equiv_sv.clean(text)) for _, text in sources):
+        return None
+    folder = scratch / "func_tree"
+    folder.mkdir(parents=True, exist_ok=True)
+    for fname, text in sources:
+        (folder / fname).write_bytes(equiv_sv.clean(text).encode("latin-1"))
+    top = f"tt_um_{name}"
+    command = [
+        "verilator", "--json-only", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
+        "-Wno-DECLFILENAME", "--top-module", top, "project.v", f"{name}.v",
+    ]  # fmt: skip
+    run = _run_verilator(command, folder)
+    if run is None:
+        log.warning("verilator could not be started: the function-purity check was skipped")
+        return None
+    if run.timed_out:
+        return (
+            "time_limit",
+            "the check of the functions in the RTL (Verilator) did not finish within "
+            f"{COMB_LINT_TIMEOUT_S:.0f} s.",
+        )
+
+    def unreadable(why: str) -> tuple[str, str]:
+        return (
+            "guard_sim_synth_differ",
+            f"the check could not read the functions in the RTL with Verilator: {clip(why, 200)}",
+        )
+
+    if run.code != 0:
+        lines = [x for x in run.output.splitlines() if x.strip()]
+        first = next((x for x in lines if x.startswith("%Error")), lines[-1] if lines else "failed")
+        return unreadable(first.strip())
+    try:
+        tree = json.loads((folder / "obj_dir" / f"V{top}.tree.json").read_text("latin-1"))
+        meta = json.loads((folder / "obj_dir" / f"V{top}.tree.meta.json").read_text("latin-1"))
+        found = equiv_tree.impure_function(tree, meta, [fname for fname, _ in sources])
+    except (OSError, ValueError, equiv_tree.TreeError, RecursionError) as exc:
+        return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
+    if found is None:
+        return None
+    return "guard_sim_synth_differ", f"{found.sentence}."
+
+
 def check(
     rtl_dir: Path,
     name: str,
@@ -630,6 +702,9 @@ def _check(
                 f"Could not prove equivalence: "
                 f"{equiv_sv.plain_message(found, _hdl_function(found.label))}",
             )
+        purity = _function_purity(scratch, sources, name)
+        if purity is not None:
+            return r.verdict("not_proven", purity[0], f"Could not prove equivalence: {purity[1]}")
         comb = _comb_order(scratch, sources, name)
         if comb is not None:
             return r.verdict("not_proven", comb[0], f"Could not prove equivalence: {comb[1]}")

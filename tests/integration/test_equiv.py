@@ -312,6 +312,17 @@ RTL_SEEDS = [
     ("vtask2", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("vfsens", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("mrbw2", "myhdl", "not_proven", "guard_sim_synth_differ"),
+    # Round 10: a function that reads a module signal while the old token scanner thought it was
+    # a local or a parameter (a block label, a cast, a same-named localparam, a header
+    # parameter list, a nested local, a `disable`)
+    ("flabel", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("fcasti", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("fparam2", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("fdup", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("fport", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("fnest", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("fparam3", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("fdisable", "verilog", "not_proven", "guard_sim_synth_differ"),
     # Icarus ends a `//` comment at a lone CR, Yosys and Verilator do not
     ("crhide", "verilog", "not_proven", "guard_sim_synth_differ"),
     # Verilator ends an attribute at a `*)` inside its string, Yosys does not
@@ -505,3 +516,228 @@ async def test_a_read_and_a_write_across_loop_iterations_in_verilog_is_not_detec
         await design_project(client, tmp_path, "vloopit", "verilog")
         result = await call(client, "check_equivalence", project="vloopit")
         assert result["details"]["verdict"] == "equivalent", result["summary"]
+
+
+# -- the function-purity check on Verilator's syntax tree (round 10) -----------------------------
+
+# The bypasses of the old token scanner, and the message that names the signal read.
+IMPURE_FIXTURES = {
+    "flabel": "reads `cnt`",  # a block label named cnt
+    "fcasti": "reads `cnt`",  # a cast around the read
+    "fparam2": "reads `cnt`",  # a localparam cnt in another module
+    "fdup": "reads `cnt`",  # a same-named function in another module
+    "fport": "reads `ui_in`",  # a parameter list in the module header
+    "fnest": "reads `cnt`",  # a local of a nested block shadows the signal for the whole function
+    "fparam3": "reads `cnt`",  # a localparam cnt in another function
+    "fdisable": "reads `cnt`",  # `disable cnt`
+    "finit": "reads `cnt`",  # `reg tmp = cnt;`
+    "fdef": "reads `cnt`",  # a default argument value
+}
+
+
+def purity_in_container(image: str, project: Path, name: str) -> str:
+    """What `equiv._function_purity` says about the project's emitted RTL (`src/`), run in the
+    container where Verilator is: "None" when every function is pure."""
+    script = (
+        "from pathlib import Path\n"
+        "from siliconsmith.worker import equiv\n"
+        f"name = {name!r}\n"
+        "src = Path('/work/src')\n"
+        "files = ('project.v', name + '.v')\n"
+        "sources = [(f, (src / f).read_bytes().decode('latin-1')) for f in files]\n"
+        "print('RESULT', equiv._function_purity(Path('/work/build/pu'), sources, name))\n"
+    )
+    proc = run_hardened(image, project, "python", "-c", script, timeout=300)
+    assert proc.returncode == 0, proc.stderr
+    line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT "))
+    return line.removeprefix("RESULT ")
+
+
+@pytest.mark.parametrize("design", ["finit", "fdef", "fnest", "fparam3", "fdisable"])
+async def test_the_purity_check_names_the_signal_a_function_reads(
+    server: Client, tmp_path: Path, image: str, design: str
+) -> None:
+    async with server as client:
+        project = await design_project(client, tmp_path, design, "verilog")
+        emitted = await call(client, "emit_verilog", project=design)
+        if emitted["ok"] is not True:  # the front end itself rejects it: even better
+            print(f"\n{design}: emit_verilog says {emitted['summary']}")
+            return
+        got = purity_in_container(image, project, design)
+        assert IMPURE_FIXTURES[design] in got and f"{design}.v, line" in got, got
+        assert got.startswith("('guard_sim_synth_differ'"), got
+
+
+def texts_in_container(image: str, project: Path, cases: dict[str, str]) -> dict[str, str]:
+    """`equiv._function_purity` on each text (a whole `tt_um_chip` module, in `chip.v`)."""
+    script = (
+        "import json\nfrom pathlib import Path\n"
+        "from siliconsmith.worker import equiv\n"
+        f"cases = json.loads({json.dumps(cases)!r})\n"
+        "for i, (key, text) in enumerate(cases.items()):\n"
+        "    sources = [('project.v', '// wrapper\\n'), ('chip.v', text)]\n"
+        "    got = equiv._function_purity(Path(f'/work/build/pu{i}'), sources, 'chip')\n"
+        "    print('RESULT', json.dumps([key, got]))\n"
+    )
+    proc = run_hardened(image, project, "python", "-c", script, timeout=600)
+    assert proc.returncode == 0, proc.stderr
+    out: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        if line.startswith("RESULT "):
+            key, got = json.loads(line.removeprefix("RESULT "))
+            out[key] = "None" if got is None else got[0] + ": " + got[1]
+    assert set(out) == set(cases), proc.stdout
+    return out
+
+
+MOD = (
+    "module tt_um_chip(input wire [7:0] ui_in, output reg [7:0] y);\n"
+    "  reg [7:0] cnt;\n{}\nendmodule\n"
+)
+
+PURE_CASES = {
+    "system functions of arguments, parameters and localparams": MOD.format(
+        "  localparam [7:0] K = 3;\n  localparam N = 8;\n"
+        "  function automatic [7:0] f(input [7:0] a, input signed [3:0] b);\n"
+        "    localparam M = 2;\n    reg [7:0] t;\n"
+        "    begin\n      t = a ^ K ^ M;\n"
+        "      f = $clog2(N) + $signed(b) + $unsigned(a) + $bits(a) + $size(a) + $high(a)\n"
+        "          + $low(a) + $clog2(K) + t;\n    end\n  endfunction\n"
+        "  always @(*) y = f(ui_in, ui_in[3:0]);"
+    ),
+    "$bits of a module signal is a constant, not a read": MOD.format(
+        "  function automatic [7:0] f(input [7:0] a);\n    f = a + $bits(cnt);\n  endfunction\n"
+        "  always @(*) y = f(ui_in);"
+    ),
+    "a pure function calling another pure function": MOD.format(
+        "  function automatic [7:0] g(input [7:0] a);\n    g = a << 1;\n  endfunction\n"
+        "  function automatic [7:0] f(input [7:0] a);\n    f = g(a) ^ g(~a);\n  endfunction\n"
+        "  always @(*) y = f(ui_in);"
+    ),
+    "a function in a generate block that uses the genvar": MOD.format(
+        "  genvar g;\n  generate for (g = 0; g < 2; g = g + 1) begin : blk\n"
+        "    function automatic [7:0] sh(input [7:0] a);\n      sh = a << g;\n"
+        "    endfunction\n    wire [7:0] o = sh(ui_in);\n  end endgenerate\n"
+        "  always @(*) y = blk[0].o ^ blk[1].o;"
+    ),
+    "a local array and a loop variable": MOD.format(
+        "  function automatic [7:0] f(input [7:0] a);\n    reg [7:0] m [0:3];\n"
+        "    integer i;\n    begin\n"
+        "      for (i = 0; i < 4; i = i + 1) m[i] = a ^ i[7:0];\n"
+        "      f = m[a[1:0]];\n    end\n  endfunction\n"
+        "  always @(*) y = f(ui_in);"
+    ),
+    "a named block with its own local": MOD.format(
+        "  function automatic [7:0] f(input [7:0] a);\n    begin : inner\n"
+        "      reg [7:0] u;\n      u = a;\n      f = u;\n    end\n  endfunction\n"
+        "  always @(*) y = f(ui_in);"
+    ),
+    "recursion on its own argument": MOD.format(
+        "  function automatic [7:0] f(input [7:0] a);\n"
+        "    f = (a == 8'd0) ? 8'd0 : a + f(a - 8'd1);\n  endfunction\n"
+        "  always @(*) y = f(8'd3);"
+    ),
+    "a parameterized core whose function reads only its arguments": (
+        "module tt_um_chip #(parameter W = 8) (input wire [W-1:0] ui_in, "
+        "output reg [W-1:0] y);\n"
+        "  function automatic [W-1:0] inv(input [W-1:0] a);\n    inv = ~a ^ W;\n"
+        "  endfunction\n  always @(*) y = inv(ui_in);\nendmodule\n"
+    ),
+}
+
+IMPURE_CASES = {
+    "a function that writes a module signal": (
+        MOD.format(
+            "  function automatic [7:0] f(input [7:0] a);\n    begin\n      cnt = a;\n"
+            "      f = a;\n    end\n  endfunction\n  always @(*) y = f(ui_in);"
+        ),
+        "writes `cnt`",
+    ),
+    "a call chain to an impure function": (
+        MOD.format(
+            "  function automatic [7:0] g(input [7:0] a);\n    g = cnt;\n  endfunction\n"
+            "  function automatic [7:0] f(input [7:0] a);\n    f = g(a);\n  endfunction\n"
+            "  always @(*) y = f(ui_in);"
+        ),
+        "the function `g`",
+    ),
+    "a localparam of the same name in a generate block": (
+        MOD.format(
+            "  function automatic [7:0] f(input [7:0] a);\n    f = a ^ cnt;\n  endfunction\n"
+            "  generate if (1) begin : g\n    localparam [7:0] cnt = 8'd0;\n"
+            "    wire [7:0] z = cnt;\n  end endgenerate\n"
+            "  always @(*) y = f(ui_in) ^ g.z;"
+        ),
+        "reads `cnt`",
+    ),
+    "a task": (
+        MOD.format(
+            "  task automatic t(input [7:0] a);\n    cnt = a;\n  endtask\n"
+            "  always @(*) begin\n    t(ui_in);\n    y = cnt;\n  end"
+        ),
+        "the task `t`",
+    ),
+    "a hierarchical read": (
+        MOD.format(
+            "  function automatic [7:0] f(input [7:0] a);\n    f = a ^ tt_um_chip.cnt;\n"
+            "  endfunction\n  always @(*) y = f(ui_in);"
+        ),
+        "uses a hierarchical name",
+    ),
+    "a function in a generate block that reads a module signal": (
+        MOD.format(
+            "  genvar g;\n  generate for (g = 0; g < 2; g = g + 1) begin : blk\n"
+            "    function automatic [7:0] sh(input [7:0] a);\n      sh = a << g ^ cnt;\n"
+            "    endfunction\n    wire [7:0] o = sh(ui_in);\n  end endgenerate\n"
+            "  always @(*) y = blk[0].o ^ blk[1].o;"
+        ),
+        "the function `sh`",
+    ),
+}
+
+
+async def test_the_purity_check_accepts_pure_functions_and_refuses_the_rest(
+    server: Client, tmp_path: Path, image: str
+) -> None:
+    async with server as client:
+        project = await counter_project(client, tmp_path, "verilog")
+    cases = dict(PURE_CASES) | {k: v[0] for k, v in IMPURE_CASES.items()}
+    got = texts_in_container(image, project, cases)
+    for key in PURE_CASES:
+        assert got[key] == "None", (key, got[key])
+    for key, (_, shown) in IMPURE_CASES.items():
+        assert got[key].startswith("guard_sim_synth_differ: ") and shown in got[key], (key, got)
+
+
+@pytest.mark.parametrize(("design", "fe"), PRECISION_CASES)
+async def test_the_purity_check_adds_no_refusal_on_emitted_rtl(
+    server: Client, tmp_path: Path, image: str, design: str, fe: str
+) -> None:
+    async with server as client:
+        project = await design_project(client, tmp_path, design, fe)
+        emitted = await call(client, "emit_verilog", project=design)
+        assert emitted["ok"] is True, emitted["summary"]
+        assert purity_in_container(image, project, design) == "None", (design, fe)
+
+
+@pytest.mark.parametrize("fe", FRONTENDS)
+async def test_the_purity_check_adds_no_refusal_in_the_counter(
+    server: Client, tmp_path: Path, image: str, fe: str
+) -> None:
+    async with server as client:
+        project = await counter_project(client, tmp_path, fe)
+        emitted = await call(client, "emit_verilog", project="counter")
+        assert emitted["ok"] is True, emitted["summary"]
+        assert purity_in_container(image, project, "counter") == "None", fe
+
+
+async def test_a_design_with_pure_functions_is_proven_equivalent(
+    server: Client, tmp_path: Path
+) -> None:
+    """fpure: functions that call each other and use a loop, a local and a localparam are not
+    refused by the purity check, and the whole proof still runs and passes."""
+    async with server as client:
+        await design_project(client, tmp_path, "fpure", "verilog")
+        result = await call(client, "check_equivalence", project="fpure")
+        assert result["ok"] is True, result["summary"]
+        assert result["details"]["verdict"] == "equivalent", result["details"]

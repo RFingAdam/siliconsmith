@@ -11,6 +11,7 @@ are never a pass.
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -931,3 +932,154 @@ def test_run_verilator_reports_start_and_timeout(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(equiv.subprocess, "run", boom)
     run = REAL_RUN_VERILATOR(["verilator"], Path("."))
     assert run is not None and run.timed_out and run.output == "partial"
+
+
+# -- the function-purity check (Verilator's syntax tree) -------------------------------------------
+
+FUNC_RTL = (
+    "module tt_um_chip();\n  reg [7:0] cnt;\n  function automatic [7:0] rd(input d);\n"
+    "    rd = cnt;\n  endfunction\nendmodule\n"
+)
+TREE_META = '{"files": {"e": {"filename": "chip.v"}}}'
+IMPURE_TREE = {
+    "type": "NETLIST",
+    "modulesp": [
+        {"type": "VAR", "addr": "(S)", "name": "cnt", "loc": "e,2:7,2:10"},
+        {
+            "type": "FUNC",
+            "addr": "(F)",
+            "name": "rd",
+            "loc": "e,3:28,3:30",
+            "stmtsp": [
+                {
+                    "type": "VARREF",
+                    "addr": "(r)",
+                    "name": "cnt",
+                    "varp": "(S)",
+                    "access": "RD",
+                    "loc": "e,4:10,4:13",
+                }
+            ],
+        },
+    ],
+}
+
+
+def purity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    run: equiv.LintRun | None,
+    *,
+    tree: str | None = None,
+    text: str = FUNC_RTL,
+) -> tuple[tuple[str, str] | None, list[list[str]]]:
+    """`equiv._function_purity` with a fake Verilator that answers `run` and writes `tree`."""
+    argvs: list[list[str]] = []
+
+    def verilator(argv: list[str], cwd: Path) -> equiv.LintRun | None:
+        argvs.append(argv)
+        if tree is not None:
+            out = cwd / "obj_dir"
+            out.mkdir()
+            (out / "Vtt_um_chip.tree.json").write_text(tree)
+            (out / "Vtt_um_chip.tree.meta.json").write_text(TREE_META)
+        return run
+
+    monkeypatch.setattr(equiv, "_run_verilator", verilator)
+    sources = [("project.v", "// wrapper\n"), ("chip.v", text)]
+    return equiv._function_purity(tmp_path / "s", sources, "chip"), argvs
+
+
+def test_no_function_or_task_means_no_purity_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = "module tt_um_chip();\n  // a function in a comment\n  wire a;\nendmodule\n"
+    got, argvs = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), text=text)
+    assert got is None and argvs == []
+
+
+def test_an_impure_function_is_not_proven_with_one_clean_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    got, argvs = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(IMPURE_TREE))
+    assert got == (
+        "guard_sim_synth_differ",
+        "the function `rd` (chip.v, line 3) reads `cnt` (line 4), which is not one of its "
+        "arguments: a simulator's always @* does not re-run when it changes; pass it in as an "
+        "argument.",
+    )
+    argv = argvs[0]
+    assert argv[:2] == ["verilator", "--json-only"] and "-Wno-fatal" in argv
+    assert argv[-2:] == ["project.v", "chip.v"] and "tt_um_chip" in argv
+
+
+def test_a_pure_tree_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tree = {"type": "NETLIST", "modulesp": []}
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(tree))
+    assert got is None
+
+
+def test_a_purity_run_that_times_out_is_a_time_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(-1, "", True))
+    assert got is not None and got[0] == "time_limit"
+
+
+@pytest.mark.parametrize(
+    ("run", "tree", "shown"),
+    [
+        (
+            equiv.LintRun(1, "%Warning-X: a\n%Error: chip.v:3:5: syntax error\n"),
+            None,
+            "syntax error",
+        ),
+        (equiv.LintRun(1, ""), None, "failed"),
+        (equiv.LintRun(0, ""), None, "no usable syntax tree"),  # no tree.json written
+        (equiv.LintRun(0, ""), "{not json", "no usable syntax tree"),
+        (equiv.LintRun(0, ""), "[]", "the tree is not an object"),
+        (
+            equiv.LintRun(0, ""),
+            json.dumps({"modulesp": [{"type": "FUNC", "addr": "(F)", "loc": "z,1:1,1:2"}]}),
+            "no readable position",
+        ),
+    ],
+)
+def test_a_purity_run_that_cannot_be_read_is_not_proven(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    run: equiv.LintRun,
+    tree: str | None,
+    shown: str,
+) -> None:
+    got, _ = purity(tmp_path, monkeypatch, run, tree=tree)
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert got[1].startswith("the check could not read the functions in the RTL with Verilator: ")
+    assert shown in got[1]
+
+
+def test_a_purity_run_that_cannot_start_is_inconclusive_and_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("WARNING"):
+        got, _ = purity(tmp_path, monkeypatch, None)
+    assert got is None and "function-purity check was skipped" in caplog.text
+
+
+def test_check_refuses_an_impure_function_before_any_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def verilator(argv: list[str], cwd: Path) -> equiv.LintRun:
+        (cwd / "obj_dir").mkdir()
+        (cwd / "obj_dir" / "Vtt_um_chip.tree.json").write_text(json.dumps(IMPURE_TREE))
+        (cwd / "obj_dir" / "Vtt_um_chip.tree.meta.json").write_text(TREE_META)
+        return equiv.LintRun(0, "")
+
+    monkeypatch.setattr(equiv, "_run_verilator", verilator)
+    rtl, netlist = inputs(tmp_path)
+    (rtl / "chip.v").write_text(FUNC_RTL)
+    fake = FakeYosys("")
+    got = equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
+    assert "the function `rd` (chip.v, line 3) reads `cnt` (line 4)" in got["message"]
+    assert fake.calls == []

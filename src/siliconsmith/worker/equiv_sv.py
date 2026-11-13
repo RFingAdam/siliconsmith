@@ -54,7 +54,8 @@ In every file:
 
 * `function` without `automatic` (any front-end): a simulator keeps the local variables of a plain
   function between calls; a `function` that reads anything but its own arguments, locals,
-  parameters and pure functions (a simulator's `@*` does not see it); every `task`.
+  parameters and pure functions (a simulator's `@*` does not see it; judged on Verilator's
+  syntax tree in `equiv_tree`, not here); every `task`.
 
 Only in a core file that lists no level signals itself (strict: Verilog and Amaranth; never
 `project.v`, which the tool writes):
@@ -1116,151 +1117,10 @@ def _myhdl_level_blocks(scan: str) -> tuple[int, str, str] | None:
     return _judge_levels(module)
 
 
-# -- functions: only pure ones --------------------------------------------------------------------
-#
-# A simulator's `@*` does not include a signal that a function reads inside its body, and
-# Verilator's ALWCOMBORDER does not look inside function bodies. A function is therefore only
-# allowed if it is PURE: it names nothing but its own arguments, its own locals, its own name (the
-# return value), module parameters and localparams, system functions (`$clog2`, `$signed`,
-# `$unsigned`) and other pure functions. A task is never allowed (it can write any signal).
-
-_FUNC_DECL = frozenset(
-    {"input", "output", "inout", "reg", "wire", "integer", "logic", "real", "time"}
-)
-_SYSTEM_PURE = frozenset({"$clog2", "$signed", "$unsigned"})
-_BRACKET_OPEN = frozenset({"[", "{"})
-_BRACKET_CLOSE = frozenset({"]", "}"})
-
-
-@dataclass
-class _Func:
-    pos: int
-    reads: list[tuple[int, str]]  # names that are not the function's own, in text order
-    calls: list[tuple[int, str]]  # names followed by `(` that are not its own
-
-
-def _flat_ids(tokens: list[Token]) -> list[str]:
-    """The names at bracket depth 0 (`input [W-1:0] a` gives `a`; `W` is inside a bracket)."""
-    found: list[str] = []
-    depth = 0
-    for kind, text, _ in tokens:
-        if text in _BRACKET_OPEN:
-            depth += 1
-        elif text in _BRACKET_CLOSE:
-            depth -= 1
-        elif depth == 0 and kind == "id" and text not in RESERVED:
-            found.append(text)
-    return found
-
-
-def _module_params(tokens: list[Token]) -> set[str]:
-    """Names declared by `parameter` / `localparam` anywhere."""
-    names: set[str] = set()
-    for i, (kind, text, _) in enumerate(tokens):
-        if kind == "id" and text in ("parameter", "localparam"):
-            j = i + 1
-            while j < len(tokens) and tokens[j][1] != ";":
-                follows = tokens[j + 1][1] if j + 1 < len(tokens) else ""
-                if (
-                    tokens[j][0] == "id"
-                    and tokens[j][1] not in RESERVED
-                    and follows in ("=", ",", ";")
-                ):
-                    names.add(tokens[j][1])
-                j += 1
-    return names
-
-
-def _functions(tokens: list[Token], params: set[str]) -> dict[str, _Func] | tuple[int, str]:
-    """Every `function ... endfunction` as `{name: _Func}`, or `(position, what)` if one cannot be
-    read."""
-    funcs: dict[str, _Func] = {}
-    n = len(tokens)
-    for i, (kind, text, pos) in enumerate(tokens):
-        if kind != "id" or text != "function":
-            continue
-        head = next((k for k in range(i + 1, n) if tokens[k][1] == ";"), None)
-        end = next((k for k in range(i + 1, n) if tokens[k][1] == "endfunction"), None)
-        if head is None or end is None or head > end:
-            return pos, "a `function` the check cannot read"
-        header = tokens[i + 1 : head]
-        body = tokens[head + 1 : end]
-        paren = next((k for k, t in enumerate(header) if t[1] == "("), len(header))
-        flat = _flat_ids(header[:paren])
-        if not flat:
-            return pos, "a `function` without a name the check can read"
-        name = flat[-1]
-        declared = set(flat) | {name}
-        if paren < len(header):  # ANSI ports: `(input [7:0] a, input b)`
-            inner, depth = header[paren + 1 : -1], 0
-            items: list[list[Token]] = [[]]
-            for t in inner:
-                if t[1] in _BRACKET_OPEN:
-                    depth += 1
-                elif t[1] in _BRACKET_CLOSE:
-                    depth -= 1
-                if depth == 0 and t[1] == ",":
-                    items.append([])
-                else:
-                    items[-1].append(t)
-            for item in items:
-                declared.update(_flat_ids(item)[-1:])
-        k = 0
-        while k < len(body):  # `reg [3:0] t;` / `input a;` / `integer i;`
-            if body[k][0] == "id" and body[k][1] in _FUNC_DECL:
-                m = k
-                while m < len(body) and body[m][1] != ";":
-                    m += 1
-                declared.update(_flat_ids(body[k + 1 : m]))
-                k = m
-            k += 1
-        for k, tok in enumerate(body):  # `begin : label` and `disable label`
-            if tok[1] in ("begin", "fork") and k + 2 < len(body) and body[k + 1][1] == ":":
-                declared.add(body[k + 2][1])
-            if tok[1] == "disable" and k + 1 < len(body):
-                declared.add(body[k + 1][1])
-        func = _Func(pos, [], [])
-        whole = header + body
-        for k, (tk, tt, tpos) in enumerate(whole):
-            nxt = whole[k + 1][1] if k + 1 < len(whole) else ""
-            if tt in ("\\", ".") and tk == "op":
-                func.reads.append((tpos, "a hierarchical or escaped name"))
-            elif tk == "sys":
-                if tt not in _SYSTEM_PURE:
-                    func.reads.append((tpos, tt))
-            elif tk == "id" and tt not in RESERVED and tt not in declared and tt not in params:
-                (func.calls if nxt == "(" else func.reads).append((tpos, tt))
-        funcs[name] = func
-    return funcs
-
-
-def _impure_function(scan: str) -> tuple[int, str] | None:
-    """`(position, what)` of the first function that reads anything but its own arguments (or
-    calls something that is not a pure function), or None."""
-    tokens = _tokens(scan)
-    found = _functions(tokens, _module_params(tokens))
-    if isinstance(found, tuple):
-        return found
-    pure = set(found)
-    changed = True
-    while changed:  # a function that calls an impure or unknown one is impure
-        changed = False
-        for name in sorted(pure):
-            if found[name].reads or any(c not in pure for _, c in found[name].calls):
-                pure.discard(name)
-                changed = True
-    for name, func in found.items():
-        if name in pure:
-            continue
-        if func.reads:
-            at, bad = min(func.reads)
-            return at, (
-                f"the function `{name}` reads `{bad}`, which is not one of its arguments: a "
-                "simulator's `@*` does not see it; pass it as an argument"
-            )
-        at, bad = min(c for c in func.calls if c[1] not in pure)
-        return at, f"the function `{name}` calls `{bad}`, which is not a pure function"
-    return None
+def declares_function(text: str) -> bool:
+    """True if the cleaned RTL has a `function` or `task` keyword (then the function-purity check
+    reads Verilator's tree; without one nothing runs)."""
+    return any(m.group(0) in ("function", "task") for m in _WORD.finditer(text))
 
 
 def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusal | None:
@@ -1291,9 +1151,6 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
             return refuse("a `task` (it can write any signal, and `@*` does not see it)", m.start())
         if word == "function" and not re.match(r"\s*automatic\b", scan[m.end() :], re.ASCII):
             return refuse("a `function` that is not `automatic`", m.start())
-    impure = _impure_function(scan)
-    if impure is not None:
-        return refuse(impure[1], impure[0])
     for task in SYSTEM_TASKS:
         at = scan.find(task)
         if at >= 0:
@@ -1372,7 +1229,6 @@ _ADVICE = (
      "a line ends at a lone CR."),
     ("event control", "Write `always @(*)`: a simulator does not rerun the block for a signal "
      "missing from the list, and the gates do not care about the list."),
-    ("the function", "Make the function pure: pass every signal it needs as an argument."),
     ("a `task`", "Use a `function automatic` that takes its inputs as arguments and returns the "
      "value."),
     ("automatic", "Write `function automatic`: a simulator keeps the local variables of a plain "
