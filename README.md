@@ -95,32 +95,24 @@ verified.](docs/demos/README.md)
 ## How it works
 
 ```mermaid
-flowchart TD
-    create["create_project<br/>Amaranth, MyHDL or Verilog"]
-    spec["write_spec<br/>clock, pins, requirements R1, R2, ..."]
-    tests["write_test<br/>cocotb tests, written first"]
-    rtl["write_rtl<br/>the design"]
-    lint["emit_verilog<br/>Verilog + lint"]
-    sim["run_tests<br/>Icarus and Verilator"]
-    synth["synthesize<br/>sky130 gates, area, utilization"]
-    gl["run_tests gl=true<br/>same tests on the gates"]
-    status["status<br/>validation ledger, docs/verification.md"]
-    owner["You: read spec.yaml,<br/>run siliconsmith approve"]
-    equiv["check_equivalence<br/>(in progress)"]
-    layout["Layout, DRC/LVS, timing<br/>(M2)"]
-    tt["Tiny Tapeout export<br/>(M3, you submit by hand)"]
-
-    create --> spec --> tests --> rtl --> lint --> sim
-    sim -- "fail: expected vs actual,<br/>inspect_waves, fix" --> rtl
-    sim -- pass --> synth --> gl --> status
-    status --> owner
-    status -.-> equiv -.-> layout -.-> tt
-
-    classDef later stroke-dasharray: 5 5
-    class equiv,layout,tt later
+flowchart TB
+    subgraph write ["Step 1: the agent writes"]
+        direction LR
+        spec["write_spec<br/>pins, clock,<br/>requirements"] --> tests["write_test<br/>cocotb tests,<br/>before the design"] --> rtl["write_rtl<br/>Amaranth, MyHDL<br/>or Verilog"]
+    end
+    subgraph check ["Step 2: the tools check"]
+        direction LR
+        sim["run_tests<br/>lint, then Icarus<br/>and Verilator"] --> synth["synthesize<br/>sky130 gates,<br/>area, size"] --> gl["run_tests gl=true<br/>same tests<br/>on the gates"] --> status["status<br/>validation table;<br/>you approve the spec"]
+    end
+    subgraph later ["Not built yet"]
+        direction LR
+        equiv["check_equivalence<br/>(M1-3, in progress)"] --> layout["layout, DRC, LVS,<br/>timing (M2)"] --> tt["Tiny Tapeout export;<br/>you submit (M3)"]
+    end
+    write --> check --> later
 ```
 
-Dashed boxes are not on `main` yet. The parts:
+When a check fails, the agent gets the expected and actual values (and a waveform when it asks
+for one) and goes back to step 1. The parts:
 
 - **An MCP server** that runs on your machine and talks to the agent over stdin and stdout, so
   nothing listens on the network. Every tool answers with a short plain-English summary,
