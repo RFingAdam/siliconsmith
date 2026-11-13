@@ -628,7 +628,9 @@ macros out of the way (synthesis did not change your logic). A simulator can rea
 constructs differently from Yosys. The tool refuses the common ones as not proven and names \
 them: macros and `include, bit/int types, unique/priority, casex, ===, x or z literals, delays \
 (#), characters outside plain ASCII, a lint_off of a race warning, every level-sensitive \
-always @(a or b) in Verilog or Amaranth (write always @(*)), a MyHDL level-sensitive block \
+always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational block that \
+reads a signal before it writes it, a MyHDL core that is not the plain single module MyHDL writes \
+(generate, instances, a second module, odd arrays), a MyHDL level-sensitive block \
 that is not the plain shape @always_comb writes and does not list every signal it reads (use \
 @always_comb), a carriage return that no line feed follows, and a function or task without \
 automatic in any front-end. It does \

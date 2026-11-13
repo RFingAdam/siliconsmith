@@ -70,7 +70,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from siliconsmith.worker import emit, equiv_parse, equiv_script, equiv_sv, myhdl_map, synth
+from siliconsmith.worker import emit, equiv_parse, equiv_script, equiv_sv, lint, myhdl_map, synth
 from siliconsmith.worker.limits import (
     EQUIV_DETAIL_LINE_MAX,
     EQUIV_SIGNAL_MAX,
@@ -413,6 +413,58 @@ def _hdl_function(label: str, work: Path = Path("/work")) -> str:
     return f", {function.file}, function {function.name}" if function else ""
 
 
+COMB_LINT_TIMEOUT_S = 60.0
+
+
+def _run_verilator(argv: list[str], cwd: Path) -> str | None:
+    """Verilator's output (stdout and stderr), or None if it could not be run."""
+    try:
+        proc = subprocess.run(
+            argv, cwd=cwd, capture_output=True, text=True, timeout=COMB_LINT_TIMEOUT_S, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stderr + "\n" + proc.stdout
+
+
+def _comb_order(scratch: Path, sources: list[tuple[str, str]], name: str) -> str | None:
+    """A sentence if a combinational block (`always @*`) reads a signal before it writes it.
+
+    A simulator does not rerun such a block for its own write, so a signal read before it is
+    written holds the value of the run before (`y = t; t = cnt;` gives y the old t); the gates
+    give the new one. Verilator finds it for an `always_comb` (ALWCOMBORDER), so the RTL is linted
+    once more with every `always @*` and `always @(*)` written as `always_comb`, on a copy in
+    `scratch`, with the flags of the emit lint (and `-Wno-fatal`). Only ALWCOMBORDER counts: this
+    pass can add a refusal and never another. `always_comb` is stricter than `@*` (MULTIDRIVEN, a
+    signal driven by two blocks, syntax it does not take), so a run that fails or finds anything
+    else is inconclusive, never a refusal: no normal design is refused by this pass."""
+    copies = {fname: equiv_sv.always_comb_copy(text) for fname, text in sources}
+    if all(copy is None for copy in copies.values()):
+        return None
+    folder = scratch / "comb_order"
+    folder.mkdir(parents=True, exist_ok=True)
+    for fname, text in sources:
+        copy = copies[fname] if copies[fname] is not None else equiv_sv.clean(text)
+        (folder / fname).write_bytes(str(copy).encode("latin-1"))
+    command = [
+        "verilator", "--lint-only", "-Wall", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
+        "-Wno-DECLFILENAME", "--top-module", f"tt_um_{name}", "project.v", f"{name}.v",
+    ]  # fmt: skip
+    output = _run_verilator(command, folder)
+    if output is None:
+        return None
+    for item in lint.parse(output):
+        if item["code"] == "ALWCOMBORDER" and item["file"] in copies and item["line"]:
+            signal = re.search(r"'([^']+)'", item["msg"])
+            shown = f" (`{signal.group(1)}`)" if signal else ""
+            return (
+                f"the RTL ({item['file']}, line {item['line']}) has a combinational block that "
+                f"reads a signal before it writes it{shown}: a simulator does not rerun the block "
+                "for its own write, the gates do. Write each signal before you read it."
+            )
+    return None
+
+
 def check(
     rtl_dir: Path,
     name: str,
@@ -530,6 +582,11 @@ def _check(
                 "guard_include" if found.code == "include" else "guard_sim_synth_differ",
                 f"Could not prove equivalence: "
                 f"{equiv_sv.plain_message(found, _hdl_function(found.label))}",
+            )
+        comb = _comb_order(scratch, sources, name)
+        if comb is not None:
+            return r.verdict(
+                "not_proven", "guard_sim_synth_differ", f"Could not prove equivalence: {comb}"
             )
         for fname, text in sources:  # the proof reads these cleaned copies
             (scratch / fname).write_bytes(equiv_sv.clean(text).encode("latin-1"))

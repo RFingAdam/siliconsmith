@@ -57,6 +57,12 @@ class FakeYosys:
         return [t for t, _ in self.calls]
 
 
+@pytest.fixture(autouse=True)
+def no_verilator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ALWCOMBORDER pass runs Verilator; unit tests do not have it (it is inconclusive)."""
+    monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: None)
+
+
 def inputs(tmp_path: Path, netlist: str = "module tt_um_chip(); endmodule\n") -> tuple[Path, Path]:
     rtl = tmp_path / "rtl"
     rtl.mkdir()
@@ -527,7 +533,7 @@ def test_a_byte_outside_plain_ascii_in_code_is_not_proven(tmp_path: Path, outsid
 def test_the_event_list_rule_is_for_the_cores_that_do_not_list_signals_themselves(
     tmp_path: Path,
 ) -> None:
-    text = b"always @(a or b) begin: l\n  y = a & b;\nend\n"
+    text = b"module chip ();\nalways @(a or b) begin: l\n  y = a & b;\nend\nendmodule\n"
     rtl, netlist = inputs(tmp_path)
     (rtl / "chip.v").write_bytes(text)
     strict = equiv.check(rtl, "chip", netlist, tmp_path / "s1", yosys=FakeYosys(""))
@@ -773,3 +779,83 @@ def test_lists_and_strings_are_clipped() -> None:
     trace = [{"cycle": c, "inputs": {"rst_n": "1"}, "rtl": {}, "netlist": {}} for c in range(1, 60)]
     short = equiv._trace(trace, {"cycle": 40, "differs": []})
     assert len(short) == lim.MAX_EQUIV_TRACE and short[-1]["cycle"] == 40
+
+
+# -- a combinational block that reads a signal before it writes it ---------------------------------
+
+ALWCOMBORDER = (
+    "%Warning-ALWCOMBORDER: chip.v:4:5: Always_comb variable driven after use: 't'\n"
+    "                                  : ... note: In instance 'chip'\n"
+    "    4 |     t = cnt;\n      |     ^\n"
+)
+
+
+def star_core(tmp_path: Path) -> tuple[Path, Path]:
+    rtl, netlist = inputs(tmp_path)
+    (rtl / "chip.v").write_text(
+        "module tt_um_chip();\n  always @* begin\n    y = t;\n    t = cnt;\n  end\nendmodule\n"
+    )
+    return rtl, netlist
+
+
+def test_a_block_that_reads_before_it_writes_is_not_proven(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[tuple[list[str], str]] = []
+
+    def verilator(argv: list[str], cwd: Path) -> str:
+        seen.append((argv, (cwd / "chip.v").read_text()))
+        return ALWCOMBORDER
+
+    monkeypatch.setattr(equiv, "_run_verilator", verilator)
+    rtl, netlist = star_core(tmp_path)
+    fake = FakeYosys("")
+    got = equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
+    assert "chip.v, line 4" in got["message"] and "`t`" in got["message"]
+    assert "reads a signal before it writes it" in got["message"] and fake.calls == []
+    argv, copy = seen[0]
+    assert argv[:2] == ["verilator", "--lint-only"] and "-Wno-fatal" in argv and "-Wall" in argv
+    assert argv[-2:] == ["project.v", "chip.v"] and "tt_um_chip" in argv
+    assert "always_comb" in copy and "@*" not in copy and copy.count("\n") == 6  # lines stay
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        None,  # Verilator could not be run
+        "",
+        "%Error: chip.v:3:5: syntax error, unexpected always_comb\n",
+        "%Warning-MULTIDRIVEN: chip.v:3:5: Signal has multiple driving blocks: 'y'\n",
+        "%Warning-WIDTHTRUNC: chip.v:3:5: Operator ASSIGN expects 8 bits\n",
+        "%Warning-ALWCOMBORDER: elsewhere.v:4:5: Always_comb variable driven after use: 't'\n",
+        "%Warning-ALWCOMBORDER: Always_comb variable driven after use: 't'\n",  # no position
+    ],
+)
+def test_an_inconclusive_verilator_run_adds_no_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str | None
+) -> None:
+    monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: output)
+    rtl, netlist = star_core(tmp_path)
+    got = equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=FakeYosys(""))
+    assert got["reason"] != "guard_sim_synth_differ"
+
+
+def test_no_star_block_means_no_verilator_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def verilator(argv: list[str], cwd: Path) -> str:
+        raise AssertionError("verilator was run")
+
+    monkeypatch.setattr(equiv, "_run_verilator", verilator)
+    rtl, netlist = inputs(tmp_path)
+    (rtl / "chip.v").write_text(
+        "module tt_um_chip();\n  always @(posedge clk) y <= a;\nendmodule\n"
+    )
+    got = equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=FakeYosys(""))
+    assert got["reason"] != "guard_sim_synth_differ"
+
+
+def test_a_missing_or_failing_verilator_is_inconclusive() -> None:
+    assert equiv.__dict__["subprocess"] is not None
+    assert equiv._run_verilator(["/nonexistent-verilator"], Path(".")) is None

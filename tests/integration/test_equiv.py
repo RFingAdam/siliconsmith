@@ -298,6 +298,11 @@ RTL_SEEDS = [
     # core is judged by its text, in the plain shape @always_comb writes or not at all
     ("mylab4", "myhdl", "not_proven", "guard_sim_synth_differ"),  # a nested label hides a read
     ("myfst", "myhdl", "not_proven", "guard_sim_synth_differ"),  # a static function
+    # Round 8: a combinational block that reads a signal before it writes it (`y = t; t = cnt;`):
+    # a simulator does not rerun the block for its own write. Hand-written (Verilator's
+    # ALWCOMBORDER pass), and genuine MyHDL @always_comb (the block parser)
+    ("hrbw", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("mrbw2", "myhdl", "not_proven", "guard_sim_synth_differ"),
     # Icarus ends a `//` comment at a lone CR, Yosys and Verilator do not
     ("crhide", "verilog", "not_proven", "guard_sim_synth_differ"),
     # Verilator ends an attribute at a `*)` inside its string, Yosys does not
@@ -434,3 +439,45 @@ async def test_the_refusals_do_not_fire_on_emitted_rtl(
         core = {f"{design}.v"}
         hand, myhdl = (core, set()) if fe != "myhdl" else (set(), core)
         assert equiv_sv.refusal(files, hand, myhdl) is None, (design, fe)
+
+
+def comb_order_in_container(image: str, project: Path, name: str) -> str:
+    """What `equiv._comb_order` says about the project's emitted RTL (`src/`), run in the
+    container where Verilator is: "None" when no combinational block reads before it writes."""
+    script = (
+        "from pathlib import Path\n"
+        "from siliconsmith.worker import equiv\n"
+        f"name = {name!r}\n"
+        "src = Path('/work/src')\n"
+        "files = ('project.v', name + '.v')\n"
+        "sources = [(f, (src / f).read_bytes().decode('latin-1')) for f in files]\n"
+        "print('RESULT', equiv._comb_order(Path('/work/build/cc'), sources, name))\n"
+    )
+    proc = run_hardened(image, project, "python", "-c", script, timeout=300)
+    assert proc.returncode == 0, proc.stderr
+    line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT "))
+    return line.removeprefix("RESULT ")
+
+
+@pytest.mark.parametrize(("design", "fe"), PRECISION_CASES)
+async def test_no_combinational_read_before_write_on_emitted_rtl(
+    server: Client, tmp_path: Path, image: str, design: str, fe: str
+) -> None:
+    """The ALWCOMBORDER pass (every `always @*` linted as `always_comb`) adds no refusal to the
+    designs that must pass, on all three front-ends."""
+    async with server as client:
+        project = await design_project(client, tmp_path, design, fe)
+        emitted = await call(client, "emit_verilog", project=design)
+        assert emitted["ok"] is True, emitted["summary"]
+        assert comb_order_in_container(image, project, design) == "None", (design, fe)
+
+
+@pytest.mark.parametrize("fe", FRONTENDS)
+async def test_no_combinational_read_before_write_in_the_counter(
+    server: Client, tmp_path: Path, image: str, fe: str
+) -> None:
+    async with server as client:
+        project = await counter_project(client, tmp_path, fe)
+        emitted = await call(client, "emit_verilog", project="counter")
+        assert emitted["ok"] is True, emitted["summary"]
+        assert comb_order_in_container(image, project, "counter") == "None", fe

@@ -424,7 +424,7 @@ def test_the_reviewers_sensitivity_design_is_refused() -> None:
 
 
 def test_myhdl_style_event_lists_are_not_judged_by_the_strict_rule() -> None:
-    text = "module m;\nalways @(a, b, c) begin: l\n  y = a & b;\nend\nendmodule\n"
+    text = "module m ();\nalways @(a, b, c) begin: l\n  y = a & b;\nend\nendmodule\n"
     assert sv.refusal([("core.v", text)], ()) is None
     assert sv.refusal([("core.v", text)], {"core.v"}) is not None
     assert sv.refusal([("core.v", text)], (), {"core.v"}) is None  # it lists what it reads
@@ -698,11 +698,17 @@ BAD = {
     "mybits": "not a word of an array",  # a bit item `cnt[0]` for a plain vector
     "myesc": "escaped identifier",
     "mycase1": "case item that is not a number", "mycase2": "case item that is not a number",
-    "myglob": "reserved word `global`",
+    "myglob": "`global` is not a plain name",  # declared as a reg: a keyword as a name
     "myconcat": "not a statement MyHDL writes",
     "myfor": "reads `cnt` without listing it",
     "myrep": "`repeat`", "mywhile": "`while`",
     "mylocal": "reads its local `held` before it is written",
+    # round 8: the module around the level blocks is parsed too
+    "aneg0": "the array `mem` has no word", "aneg1": "the array `mem` has no word",
+    "amulti": "`helper` at module level", "amulti2": "`helper` at module level",
+    "agenif": "`generate` at module level", "agensh": "`generate` at module level",
+    # and a signal is not read before the block writes it (genuine MyHDL: mrbw2)
+    "brbw": "reads `t` before it writes it", "mrbw2": "reads `t` before it writes it",
 }  # fmt: skip
 
 
@@ -722,7 +728,7 @@ def test_every_bad_core_has_an_expectation() -> None:
 
 
 def _my(block: str, extra: str = "") -> sv.Refusal | None:
-    text = f"module m;\n{extra}\n{block}\nendmodule\n"
+    text = f"module m ();\n{extra}\n{block}\nendmodule\n"
     return sv.refusal([("m.v", text)], (), {"m.v"})
 
 
@@ -989,3 +995,220 @@ def test_an_attribute_with_a_close_inside_a_string_is_refused(text: str) -> None
 
 def test_amaranths_src_strings_and_ordinary_attribute_strings_are_fine() -> None:
     ok('(* src = "top.py:12", keep *) reg s;\n(* note = "a (* b" *) reg t;\n')
+
+
+# -- a signal is not read before the block writes it ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "items"),
+    [
+        ("y = t;\n t = cnt;", "t, cnt"),  # the reviewer's mrbw2
+        ("if (a) y = t;\n else y = 0;\n t = cnt;", "a, t, cnt"),
+        ("y = y + 1;", "y"),  # a read, then a write of the same name
+        ("if (a) begin\n z = y;\n end\n if (b) begin\n y = 1;\n end", "a, b, y"),  # a branch after
+        ("z = y;\n y[3] = a;", "y, a"),  # a partial write later is a write too
+        ("integer i;\n for (i = 0; i < t; i = i + 1) y = a;\n t = 3;", "a, t"),
+        ("y = m[0];\n m[1] = a;", "a, m[0], m[1]"),
+    ],
+)
+def test_a_signal_read_before_the_block_writes_it_is_refused(body: str, items: str) -> None:
+    found = _lvl(body, items, ARR if "m[" in body else "")
+    assert found is not None, body
+    assert "before it writes it" in found.what and "write each signal" in found.what
+    assert found.label == "l"
+
+
+@pytest.mark.parametrize(
+    ("body", "items"),
+    [
+        (
+            "reg [7:0] v;\n sel = a;\n v = m[sel];\n y = v;",
+            "a, sel, m[0], m[1], m[2], m[3]",
+        ),  # lcomb.v
+        ("t = cnt;\n y = t;", "cnt, t"),  # written, then read
+        ("y = 0;\n if (a) y = y + 1;", "a, y"),  # written first, so the later read is fine
+        ("y = a;\n z = y;\n y = b;", "a, b, y"),  # read after the first write
+        ("if (a) y = 1;\n else y = 2;\n z = y;", "a, y"),  # writes, then a read
+        ("integer i;\n y = 0;\n for (i = 0; i < 4; i = i + 1) y = y + a;", "a, y"),
+        ("j = 0;\n for (k = j; k < 4; k = k + 1) y = k;\n z = k;", "j, k"),
+    ],
+)
+def test_a_signal_written_before_it_is_read_is_accepted(body: str, items: str) -> None:
+    extra = ARR if "m[" in body else ""
+    assert _lvl(body, items, extra) is None, body
+
+
+# -- the module around the level blocks: exactly one plain module ---------------------------------
+
+MOD = """module m (clk, a, y);
+input clk;
+input [7:0] a;
+output [7:0] y;
+wire [7:0] y;
+reg [7:0] r;
+{items}
+endmodule
+"""
+
+
+def _module(items: str) -> sv.Refusal | None:
+    return sv.refusal([("m.v", MOD.format(items=items))], (), {"m.v"})
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        "reg [7:0] mem [0:3];",
+        "reg [7:0] mem [0:4-1];",
+        "reg [7:0] mem [0:0];",  # one word
+        "reg [7:0] mem [0:2-2];",
+        "integer j;\nlocalparam P = 8'd5;\nparameter Q = 2;\nwire signed [3:0] w = 4'd1;",
+        "wire [7:0] w;\nassign w = r ^ a;\nassign w[0] = r[1];",
+        "initial begin\n  r = 0;\nend",
+        "always @(posedge clk, negedge a) begin: s\n  r <= a;\nend",
+        "always @(posedge clk or negedge a) begin: s\n  r <= a;\nend",
+        "always @* begin\n  r = a;\nend",
+        "always @(*) begin\n  r = a;\nend",
+        "always @(a) begin: l\n  r = a;\nend",
+    ],
+)
+def test_the_items_a_myhdl_core_may_have_are_accepted(items: str) -> None:
+    assert _module(items) is None, items
+
+
+def test_an_ansi_port_list_and_directives_are_read() -> None:
+    text = (
+        "`timescale 1ns/1ps\n`default_nettype none\nmodule m (\n  input wire clk,\n"
+        "  input wire [7:0] a,\n  output reg [7:0] y\n);\nalways @(a) begin: l\n  y = a;\nend\n"
+        "endmodule\n"
+    )
+    assert sv.refusal([("m.v", text)], (), {"m.v"}) is None
+
+
+@pytest.mark.parametrize(
+    ("what", "items"),
+    [
+        ("the array `mem` has no word", "reg [7:0] mem [0:2-3];"),  # aneg0
+        ("the array `mem` has no word", "reg [7:0] mem [0:1-3];"),  # aneg1
+        ("is not `[0:K]`", "reg [7:0] mem [3:0];"),
+        ("is not `[0:K]`", "reg [7:0] mem [4];"),
+        ("is not `[0:K]`", "reg [7:0] mem [1:3];"),
+        ("with plain numbers", "reg [7:0] mem [0:K];"),
+        ("with plain numbers", "reg [7:0] mem [0:3+1];"),
+        ("second dimension", "reg [7:0] mem [0:1][0:1];"),
+        ("an initializer", "reg [7:0] mem [0:1] = 0;"),
+        ("not a plain `reg` declared once", "wire [7:0] mem [0:1];"),
+        ("not a plain `reg` declared once", "reg [7:0] mem;\nreg [7:0] mem [0:1];"),  # awire
+        ("is an array and is declared twice", "reg [7:0] mem [0:1];\nreg [7:0] mem;"),
+        ("not a plain `reg` declared once", "reg [7:0] mem [0:1];\nreg [7:0] mem [0:2];"),
+        (
+            "`generate` at module level",
+            "generate if (1) reg [7:0] mem [0:1]; endgenerate",
+        ),  # agenif
+        (
+            "`generate` at module level",
+            "generate if (1) begin: g\n reg [7:0] mem;\n end endgenerate",
+        ),
+        ("`genvar` at module level", "genvar g;"),
+        ("`begin` at module level", "begin\n r = a;\nend"),
+        ("`if` at module level", "if (a) r = 1;"),
+        ("`for` at module level", "for (j = 0; j < 2; j = j + 1) r = a;"),
+        ("`case` at module level", "case (a)\n 0: r = 1;\nendcase"),
+        ("`helper` at module level", "helper u (.clk(clk));"),  # amulti: an instance
+        ("`always_comb` at module level", "always_comb begin\n r = a;\nend"),
+        (
+            "`function` at module level",
+            "function automatic [7:0] f;\n input a;\n f = a;\nendfunction",
+        ),
+        ("`specify` at module level", "specify\nendspecify"),
+        ("`defparam` at module level", "defparam u.P = 1;"),
+        ("`tri` at module level", "tri t;"),
+        ("`module` at module level", "module n ();\nendmodule"),
+        ("after the module", "endmodule\nmodule n ();\nendmodule"),  # amulti2: a second module
+        ("`;` is not a plain name", "assign;"),
+        ("a call `f(...)`", "assign y = f(a);"),
+        ("a call `f(...)`", "wire [7:0] w = f(a);"),
+        ("where `begin` was expected", "initial r = 0;"),
+        ("where `begin` was expected", "always @(posedge clk) r <= a;"),
+        ("`@` inside a block", "initial begin\n  @(a) r = a;\nend"),
+        ("`@` inside a block", "always @(posedge clk) begin\n  @(posedge clk) r <= a;\nend"),
+        ("`wait` inside a block", "initial begin\n  wait (a) r = a;\nend"),
+        ("do not match", "initial begin\n  case (a)\n 0: r = 1;\nend"),
+        ("never closed", "initial begin\n  r = 0;"),
+        ("an event list that mixes", "always @(posedge clk, a) begin: l\n r = a;\nend"),
+        ("an edge item that is not", "always @(posedge clk[0]) begin\n r <= a;\nend"),
+        ("an edge item that is not", "always @(posedge global) begin\n r <= a;\nend"),
+        ("an event control that cannot be read", "always @a begin\n r = a;\nend"),
+        ("expected `@`", "always begin\n r = a;\nend"),
+        ("is not a plain name", "reg global;"),
+        ("is not a plain name", "wire logic;"),
+        ("a call `x(...)`", "reg x(1);"),
+    ],
+)
+def test_what_is_not_the_plain_single_module_is_refused(what: str, items: str) -> None:
+    found = _module(items)
+    assert found is not None, items
+    assert what in found.what, (found.what, items)
+    assert "@always_comb" not in found.what
+    assert "plain single module" in found.what or "level" in found.what
+    assert "MyHDL" in sv.plain_message(found)
+
+
+def test_no_module_a_second_module_or_text_before_it_is_refused() -> None:
+    for text in (
+        "",
+        "wire w;\nmodule m ();\nendmodule\n",
+        "module m ();\n",
+        "module m ();\nendmodule\nwire w;\n",
+    ):
+        found = sv.refusal([("m.v", text)], (), {"m.v"})
+        assert found is not None and "plain single module" in found.what, text
+
+
+def test_an_array_of_another_module_does_not_cover_this_modules_vector() -> None:
+    """amulti: the first module's `mem` is a vector; the array is in a second module."""
+    text = (
+        "module a (clk);\ninput clk;\nreg [7:0] mem;\nreg [7:0] y;\n"
+        "always @(mem[0], mem[1]) begin: pick\n y = mem;\nend\nendmodule\n"
+        "module b (clk);\ninput clk;\nreg [7:0] mem [0:1];\nendmodule\n"
+    )
+    found = sv.refusal([("m.v", text)], (), {"m.v"})
+    assert found is not None and "after the module" in found.what
+
+
+def test_the_function_rule_and_the_module_rule_name_the_class_in_plain_words() -> None:
+    found = _module("generate if (1) reg [7:0] mem [0:1]; endgenerate")
+    assert found is not None
+    assert "single module" in sv.plain_message(found) and "Let MyHDL write" in sv.plain_message(
+        found
+    )
+
+
+# -- the ALWCOMBORDER pass: `always @*` written as `always_comb` ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("always @* begin\n y = a;\nend\n", "always_comb begin\n y = a;\nend\n"),
+        ("always @(*) y = a;\n", "always_comb y = a;\n"),
+        ("always\n  @ ( * )\n  y = a;\n", "always_comb\n\n  y = a;\n"),  # lines do not move
+        ("always@* y = a;", "always_comb y = a;"),
+        ("// always @* y = a;\nalways @(a) y = a;\n", None),  # a comment; a level list is not `@*`
+        ('x = "always @*";\nalways @(posedge c) y <= a;\n', None),  # a string
+        (
+            "/* always @* */ always @* y = a;",
+            "                always_comb y = a;",
+        ),  # comment blanked
+        ("alwaysx @* y = a;", None),
+        ("always @(* ) y = a;\nalways @* z = a;\n", "always_comb y = a;\nalways_comb z = a;\n"),
+    ],
+)
+def test_every_star_block_is_written_as_always_comb_and_nothing_else_moves(
+    text: str, want: str | None
+) -> None:
+    got = sv.always_comb_copy(text)
+    assert got == want
+    if got is not None:
+        assert got.count("\n") == text.count("\n")
