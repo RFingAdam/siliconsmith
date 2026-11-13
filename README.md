@@ -4,7 +4,7 @@
 
 [![ci](https://github.com/RFingAdam/siliconsmith/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/RFingAdam/siliconsmith/actions/workflows/ci.yml)
 [![image](https://github.com/RFingAdam/siliconsmith/actions/workflows/image.yml/badge.svg?branch=main)](https://github.com/RFingAdam/siliconsmith/actions/workflows/image.yml)
-[![License: Apache-2.0](https://img.shields.io/github/license/RFingAdam/siliconsmith)](LICENSE)
+[![License: AGPL-3.0-or-later](https://img.shields.io/github/license/RFingAdam/siliconsmith)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 
 [See it work](#see-it-work) · [How it works](#how-it-works) · [Status](#status) · [Quick start](#quick-start) · [Tools](#tools) · [Honest limits](#honest-limits) · [Docs](#documentation)
@@ -194,7 +194,7 @@ virtual environment, and either activate it before you start the agent or put th
 ### 2. Pull the toolchain image
 
 ```sh
-docker pull ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3694aba408b5
+docker pull ghcr.io/rfingadam/siliconsmith-toolchain:ctx-394870a8f4ff
 ```
 
 It is about 258 MB to download. The server never pulls the image by itself. If the image is
@@ -369,7 +369,7 @@ Siliconsmith is built to tell you what has been checked and what has not.
 Every simulator and chip tool runs inside one Docker image. It has no network access when
 Siliconsmith runs it.
 
-    ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3694aba408b5
+    ghcr.io/rfingadam/siliconsmith-toolchain:ctx-394870a8f4ff
 
 Size (linux/amd64 only): about 816 MB unpacked, and about 258 MB to download. An arm64 image is
 planned (M5-3).
@@ -398,7 +398,7 @@ different image, set `SILICONSMITH_IMAGE` for the server, and pass the same name
 `siliconsmith status --image`, because the image is part of what makes a result stale.
 
 To build it yourself instead:
-`docker build -t ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3694aba408b5 docker/`
+`docker build -t ghcr.io/rfingadam/siliconsmith-toolchain:ctx-394870a8f4ff docker/`
 
 ## Documentation
 
@@ -410,23 +410,31 @@ To build it yourself instead:
 | [docs/README.md](docs/README.md) | Index of all the documentation, with a suggested reading order. |
 | [PLAN.md](PLAN.md) | Architecture, threat model, validation sequence, and every milestone with its acceptance criteria. |
 | [ISSUES.md](ISSUES.md) | Every issue with its acceptance boxes, ticked as they are met. |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, the checks CI runs, license and sign-off rules. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, the checks CI runs, license rules and the CLA. |
 | [SECURITY.md](SECURITY.md) | How to report a vulnerability privately, and what the sandbox does and does not cover. |
 | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) | Every open-source tool used or planned, with its verified license. |
 
 ## Contributing
 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first: one issue
-per pull request, CI green before merge, and outside contributors sign off their commits (DCO).
+per pull request, CI green before merge, and outside contributors agree to the [CLA](CLA.md).
 If you are an AI agent, or you are implementing a milestone, also read [CLAUDE.md](CLAUDE.md) and
 [PLAN.md](PLAN.md).
 
 ## License
 
-Siliconsmith is licensed under [Apache-2.0](LICENSE). See [NOTICE](NOTICE) for attributions.
+Siliconsmith's code is licensed under [AGPL-3.0-or-later](LICENSE). Your chip design stays yours:
+what you and your agent write belongs to you, and the templates, the skills and every file
+Siliconsmith generates in your project (starter files, the wrapper, emitted Verilog, reports) are
+Apache-2.0. The extra permission that grants this is in [OUTPUT-EXCEPTION.md](OUTPUT-EXCEPTION.md).
+Versions up to commit `f752b50` were published under Apache-2.0, and those copies stay under
+Apache-2.0. AGPL-3.0-or-later applies from the relicense commit on. A commercial license is
+available from the maintainer for uses the AGPL does not fit; open an issue to ask. See
+[NOTICE](NOTICE) for attributions.
 
 The chip tools have their own licenses, some of them GPL or LGPL. GPL tools (such as Icarus
-Verilog) only ever run as separate processes; Siliconsmith never imports or links them. Amaranth,
+Verilog) only ever run as separate processes; Siliconsmith never imports or links them. That
+keeps the sandbox model and the option of a commercial license. Amaranth,
 MyHDL (LGPL-2.1) and cocotb are used as unmodified Python libraries inside the toolchain
 container. No tool's source or binaries are in this repository. `synthesize`
 follows LibreLane's Apache-2.0 synthesis recipe, credited in [NOTICE](NOTICE).

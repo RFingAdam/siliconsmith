@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 """Run one worker verb in a fresh, locked-down Docker container (PLAN.md section 5.1).
 
@@ -32,7 +32,7 @@ from siliconsmith.paths import FileTooLargeError, MissingFileError, safe_read
 from siliconsmith.runners.base import WorkerOutcome
 from siliconsmith.runners.worker_cache import ensure_worker_cache
 
-DEFAULT_IMAGE = "ghcr.io/rfingadam/siliconsmith-toolchain:ctx-3694aba408b5"
+DEFAULT_IMAGE = "ghcr.io/rfingadam/siliconsmith-toolchain:ctx-394870a8f4ff"
 IMAGE_ENV = "SILICONSMITH_IMAGE"
 
 MAX_RESULT_BYTES = 1024 * 1024

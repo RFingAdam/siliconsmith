@@ -1,5 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Under section 7 of the GNU AGPL version 3, you are granted the additional
+# permission in OUTPUT-EXCEPTION.md: files this module writes into a user's
+# project, and the text it copies into them, may be used under Apache-2.0.
 
 """The `spec.yaml` model, version 1 (PLAN.md section 5.7).
 

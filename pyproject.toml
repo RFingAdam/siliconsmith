@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -11,8 +11,8 @@ dynamic = ["version"]
 description = "MCP server, skills and a pinned Docker toolchain that let an AI coding agent design small chips with open-source tools."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE", "NOTICE", "OUTPUT-EXCEPTION.md", "LICENSES/*"]
 authors = [{ name = "Adam Engelbrecht" }]
 dependencies = [
   "mcp>=2.3,<3",

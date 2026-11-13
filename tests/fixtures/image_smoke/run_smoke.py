@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Run test_counter.py on one simulator, inside the toolchain image.
 
 Usage: python run_smoke.py <icarus|verilator> [build dir]

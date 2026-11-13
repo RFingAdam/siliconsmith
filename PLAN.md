@@ -3,7 +3,7 @@
 **Status:** Digital milestone M0 tools work (create, spec, write, emit, lint, simulate on Icarus and Verilator, waves, status and ledger, explain). Milestone M1 (synthesis, gate-level simulation, equivalence) is in progress: the sky130 files and `tt.lock` are in, and `synthesize` (M1-1) and gate-level simulation (`run_tests` with `gl=true`, M1-2) are available; the equivalence check follows in M1-3. Layout and Tiny Tapeout export come in M2 and M3; `ISSUES.md` and the GitHub issues track what has landed.
 **Owner:** Adam Engelbrecht (GitHub `RFingAdam`).
 **Repo:** [`RFingAdam/siliconsmith`](https://github.com/RFingAdam/siliconsmith)
-**License:** Apache-2.0
+**License:** AGPL-3.0-or-later for the code (Apache-2.0 for templates, skills, examples and everything generated into a user's project; versions up to commit `f752b50` were Apache-2.0)
 **Plan date:** 2026-11-11 (CT). Tool licenses were checked against official sources on that date (see `THIRD_PARTY_LICENSES.md`). Anything marked *(unverified)* still needs a check.
 
 ---
@@ -63,7 +63,7 @@ Every tool returns compact, parsed JSON instead of raw logs, so the loop fits in
 5. **A validation sequence.** A written spec, tests tagged with the requirements they cover, and a ledger of results show which checks pass for the current files (section 5.7).
 6. **Skills (playbooks)** for the TT pin interface, coding rules, analog reality, and debug procedures.
 7. **Beginner friendly.** The owner is new to digital HDL, so every example includes a plain-English README.
-8. **Clean licensing.** The repo is Apache-2.0. GPL and LGPL tools are only called as external programs, never copied into the repo (`THIRD_PARTY_LICENSES.md` and section 10).
+8. **Clean licensing.** The repo is AGPL-3.0-or-later, with Apache-2.0 for templates, skills, examples and generated files. GPL and LGPL tools are only called as external programs, never copied into the repo (`THIRD_PARTY_LICENSES.md` and section 10).
 9. **Digital track:** two Python HDL front-ends (Amaranth or MyHDL) plus plain Verilog/SystemVerilog, a Tiny Tapeout-ready export, and the full sim → synth → layout loop.
 10. **Analog/RF track:** schematic, SPICE, layout, LVS/DRC, a first oscillator/VCO and LNA, and a TT analog-tile export. Honest documentation of what will not fit on open PDKs or TT.
 11. **Acoustic track:** open simulation of SAW/BAW-style resonators and filters, with no claim of fabrication.
@@ -165,7 +165,7 @@ build/             all build output (the only folder the container can write)
 .siliconsmith/     ledger.json, written only by the host (section 5.7)
 ```
 
-The TT template files come from a pinned snapshot of `ttsky-verilog-template` shipped inside the package, with a manifest of our patches. Generated files carry an Apache-2.0 SPDX header and a copyright line with the author given to `create_project`. Generated output is reproducible: the same inputs give byte-identical files, with no `/home` or `/work` paths in them.
+The TT template files come from a pinned snapshot of `ttsky-verilog-template` shipped inside the package, with a manifest of our patches. Generated files carry an Apache-2.0 SPDX header (made accurate by the section 7 permission in `OUTPUT-EXCEPTION.md`) and a copyright line with the author given to `create_project`. Generated output is reproducible: the same inputs give byte-identical files, with no `/home` or `/work` paths in them.
 
 **Core/wrapper contract.** The agent writes only the **core** module `<name>`. Its ports use TT pin names, and it may use any subset of them: inputs `clk`, `rst_n` (active-low, synchronous reset), `ena`, `ui_in[7:0]`, `uio_in[7:0]`; outputs `uo_out[7:0]`, `uio_out[7:0]`, `uio_oe[7:0]`. The tool generates `src/project.v`, the `tt_um_<name>` wrapper with TT's fixed eight ports (checked against [ttsky-verilog-template/src/project.v](https://github.com/TinyTapeout/ttsky-verilog-template/blob/main/src/project.v)). The wrapper connects the core by name, ties unused outputs to 0, and lists unused inputs in an `_unused` wire, as the template does. Ports are read back with Yosys (`write_json`) and checked for names, directions and widths, so the agent cannot break the TT pin contract.
 
@@ -223,7 +223,7 @@ The server uses the official MCP Python SDK v2 (`mcp>=2.3,<3`). One module per t
 
 | Tool | Role |
 |---|---|
-| `bvd_model` / `mason_model` | Build our Apache-2.0 equivalent-circuit netlist from resonator parameters |
+| `bvd_model` / `mason_model` | Build our equivalent-circuit netlist from resonator parameters |
 | `run_filter_sim` | Simulate a ladder or similar filter in ngspice; return S-params / insertion loss |
 | `run_fem` | Elmer (or a documented fallback) for a simple resonator; structured summary |
 | `run_em` | Shared with the analog track; do not claim openEMS solves piezoelectric acoustics |
@@ -345,8 +345,10 @@ The check step (3) is set by the latest `emit_verilog`, `run_tests` **or** `synt
 
 ```
 siliconsmith/
-├─ LICENSE                      # Apache-2.0
-├─ LICENSES/Apache-2.0.txt      # license text where the REUSE tool expects it
+├─ LICENSE                      # AGPL-3.0-or-later
+├─ OUTPUT-EXCEPTION.md          # section 7 permission: generated files are Apache-2.0
+├─ CLA.md                       # contributor license agreement
+├─ LICENSES/                    # AGPL-3.0-or-later, Apache-2.0 and ISC texts where the REUSE tool expects them
 ├─ REUSE.toml                   # license and copyright for files without headers
 ├─ NOTICE, CONTRIBUTING.md
 ├─ THIRD_PARTY_LICENSES.md
@@ -401,7 +403,7 @@ SAW and BAW filters are piezoelectric devices: sound waves in special crystal or
 
 What we *can* try, in the open:
 
-- **Mason and Butterworth-Van Dyke (BVD) models** implemented by us (Apache-2.0) and simulated in ngspice or Python. Good for ladder-filter circuit studies.
+- **Mason and Butterworth-Van Dyke (BVD) models** implemented by us (AGPL-3.0-or-later) and simulated in ngspice or Python. Good for ladder-filter circuit studies.
 - **Elmer FEM** (GPL-2.0-or-later) for a piezoelectric resonator, *if* we can verify in S1 that the piezo solver and our meshing path actually run and produce a plausible response.
 - **openEMS** (GPL-3.0) is an **electromagnetic** FDTD solver. It is the right tool for EM passives in the analog track. It is **not** a piezoelectric acoustic solver. Do not advertise it as a SAW/BAW device simulator. An optional S1 example may use it for a related EM structure, with that limit stated in the README.
 
@@ -409,15 +411,15 @@ Success for this track is a documented, reproducible simulation flow and honest 
 
 ## 10. Licensing
 
-Repo license: **Apache-2.0**. It matches LibreLane, the PDKs and Tiny Tapeout templates. It includes a patent grant, which matters for hardware, and it is compatible with how we invoke GPL/LGPL tools (as separate processes).
+Repo license: **AGPL-3.0-or-later** (decided 2026-11-13; versions up to commit `f752b50` were published under Apache-2.0 and stay that way). It matches the owner's other repos: share back, and close the SaaS exit. Users' chip designs must stay free of it, so the templates, the skills, the examples and every file Siliconsmith generates in a user's project are **Apache-2.0** (what users and their agents write is theirs), which matches the Tiny Tapeout templates. The additional permission under AGPL section 7 that grants this is in `OUTPUT-EXCEPTION.md`. A commercial license is available from the maintainer on request.
 
 The verified tool table lives in `THIRD_PARTY_LICENSES.md` (checked 2026-11-11 against official license files). Summary of the rules:
 
-1. GPL tools (Icarus, KLayout, Xschem, netgen, openEMS, Elmer, OpenSTA inside OpenROAD, and any other GPL tool we add) are only ever called as **separate processes** (subprocess/docker). Never import, link, or copy their source.
+1. GPL tools (Icarus, KLayout, Xschem, netgen, openEMS, Elmer, OpenSTA inside OpenROAD, and any other GPL tool we add) are only ever called as **separate processes** (subprocess/docker). Never import, link, or copy their source. This keeps the sandbox model and keeps the owner able to offer a commercial license (he cannot relicense GPL code).
 2. LGPL (MyHDL, Verilator) is fine as an unmodified dependency or external binary. Keep MyHDL an *optional extra* (`pip install -e .[myhdl]` from a checkout).
 3. The repo contains no tool source or binaries. The Docker image is a separate distribution, and it contains GPL and LGPL binaries, so **each published image carries its corresponding-source information**: `/usr/share/doc/siliconsmith-toolchain/SOURCES.txt` (the source package and version of every Ubuntu package, which identifies the exact source in the Ubuntu archive; the upstream URL at the exact tag or version for Verilator and every pip package), `THIRD_PARTY_LICENSES.md`, and a written offer to provide the complete corresponding source. The written offer covers the GPL-2.0 components. For the GPL-3.0 components (for example gcc, make, ccache, binutils), `SOURCES.txt` is the "clear directions" that GPLv3 section 6(d) requires for a download, and we remain responsible for that source staying available. We distribute Verilator under its Artistic-2.0 option. A hosted source bundle per image is planned (M5-3) as the backstop. Images we only reference by digest and never re-publish, such as LibreLane's, are distributed by their own projects.
-4. Example designs and generated TT repos are Apache-2.0 with SPDX headers (`// SPDX-License-Identifier: Apache-2.0`), matching the TT template.
-5. **DCO for outside contributors:** they add `Signed-off-by` to their own commits (Developer Certificate of Origin, lighter than a CLA). AI agents never add `Signed-off-by` lines (not even the owner's), `Co-authored-by` lines, "Generated with" lines, or any other bot credit. The CI trailer scan fails on `Co-authored-by`, "Generated with" and AI-tool trailers in any commit or the PR body. It fails on `Signed-off-by` only in PRs from a branch of this repository (the owner's and agents' PRs). In PRs from a fork, outside contributors' own `Signed-off-by` lines pass.
+4. Example designs, templates, skills and generated TT repos are Apache-2.0 with SPDX headers (`// SPDX-License-Identifier: Apache-2.0`), matching the TT template. `REUSE.toml` and `tests/test_license_headers.py` enforce the split by path.
+5. **CLA for outside contributors:** they tick the CLA box in the pull request template (`CLA.md`, which lets the maintainer relicense, including commercially). `scripts/check_cla.py` fails fork PRs without the ticked box. There is no DCO. AI agents never add `Signed-off-by` lines (not even the owner's), `Co-authored-by` lines, "Generated with" lines, or any other bot credit. The CI trailer scan fails on `Co-authored-by`, "Generated with" and AI-tool trailers in any commit or the PR body. It fails on `Signed-off-by` only in PRs from a branch of this repository (the owner's and agents' PRs). In PRs from a fork, outside contributors' own `Signed-off-by` lines pass.
 6. Do not copy code from unlicensed repos, including mcp4eda.
 
 *Not legal advice.* This follows standard open-source practice, and it is fine for a hobby project.
@@ -461,7 +463,7 @@ Full issue text is in `ISSUES.md`.
 
 | S | Scope | Acceptance criteria |
 |---|---|---|
-| **S0** Research and circuit models | Reality note; Mason/BVD models in our Apache-2.0 code | A short doc explains why there is no open fab, and what each solver can do. A BVD (and Mason, if we implement both) resonator simulates in ngspice or Python and returns impedance / S-params. |
+| **S0** Research and circuit models | Reality note; Mason/BVD models in our code | A short doc explains why there is no open fab, and what each solver can do. A BVD (and Mason, if we implement both) resonator simulates in ngspice or Python and returns impedance / S-params. |
 | **S1** FEM / EM experiments | Elmer piezo resonator if it works; honest openEMS scope | Either a reproducible Elmer resonator example with a plausible response, or a documented failure with evidence. openEMS, if used, is labeled as EM-only. |
 | **S2** Filter stretch | Ladder (or similar) filter from BVD resonators; optional FEM comparison | A multi-resonator filter sim meets a written spec (band, ripple, or rejection) or explains the gap. Optional: circuit model vs FEM for one resonator. Still sim only. |
 
@@ -470,7 +472,7 @@ Full issue text is in `ISSUES.md`.
 All workflows run on `ubuntu-24.04` (not `ubuntu-latest`). Actions are pinned by commit SHA, and Dependabot keeps them current. Keep every `ci.yml` job green on `main`.
 
 - **`ci.yml`** (every PR and every push to `main`; a newer run cancels an older one; token permissions `contents: read`, `packages: read`):
-  - `lint`: ruff check and format; mypy (strict); `reuse lint` (reuse 6.3.0 with charset-normalizer, via `uvx`); a stale-API guard on `src/**/*.py` and `src/siliconsmith/templates/**` that fails on `FastMCP`, `BinaryValue`, `cocotb.runner` and `units=` (skill text is not scanned, because the `cocotb2-tests` skill names these on purpose); a no-binaries check (ELF files, archives, or files over 1 MB outside an allow-list); a wheel-contents check (every `SKILL.md` and template is in the wheel); a trailer scan that fails on `Co-authored-by`, "Generated with" and AI-tool trailers in any commit or the PR body, and on `Signed-off-by` only in PRs from a branch of this repository (in PRs from a fork, outside contributors' own `Signed-off-by` lines pass, see section 10 rule 5); and a pip-compat step (Python 3.12 from setup-python, a fresh venv, `pip install -e .[amaranth,myhdl]`, `siliconsmith --version`, `import amaranth, myhdl`).
+  - `lint`: ruff check and format; mypy (strict); `reuse lint` (reuse 6.3.0 with charset-normalizer, via `uvx`); a stale-API guard on `src/**/*.py` and `src/siliconsmith/templates/**` that fails on `FastMCP`, `BinaryValue`, `cocotb.runner` and `units=` (skill text is not scanned, because the `cocotb2-tests` skill names these on purpose); a no-binaries check (ELF files, archives, or files over 1 MB outside an allow-list); a wheel-contents check (every `SKILL.md` and template is in the wheel); a trailer scan that fails on `Co-authored-by`, "Generated with" and AI-tool trailers in any commit or the PR body, and on `Signed-off-by` only in PRs from a branch of this repository (in PRs from a fork, outside contributors' own `Signed-off-by` lines pass, see section 10 rule 5); a CLA check (`scripts/check_cla.py`, pull requests only) that fails when a PR from a fork does not have the CLA box ticked in its description (PRs from branches of this repository and Dependabot are exempt); and a pip-compat step (Python 3.12 from setup-python, a fresh venv, `pip install -e .[amaranth,myhdl]`, `siliconsmith --version`, `import amaranth, myhdl`).
   - `unit`: Python 3.11 and 3.14, `pytest -m "not integration"` (parsers are tested against saved real logs as fixtures).
   - `integration`: compute the image tag `ctx-<h>` (`python -m siliconsmith._imagetag`), log in to GHCR with the workflow token, and pull that tag; if the pull fails for any reason, build the image in the job (buildx with the GitHub Actions cache). Smoke test: `iverilog -V && verilator --version && yosys -V`, plus a check that Verilator is 5.036 or newer. Then `pytest -m integration`: the 6 front-end × simulator cells as separate test ids, plus emit, lint, error, waves, ledger, `toolchain_info` and TT-Makefile-parity tests.
   - Target: under 10 minutes when `docker/` has not changed *(unverified)*.
@@ -498,7 +500,7 @@ All workflows run on `ubuntu-24.04` (not `ubuntu-latest`). Actions are pinned by
 | [Chip-Design-Agent MCP](https://github.com/BARATHM111/Chip-Design-Agent---MCP-EDA-Server-for-Archestra) | FastMCP + Yosys/OpenROAD/OpenLane + GDS preview | Similar shape, but tied to the Archestra platform, Verilog-only, small hobby repo, no TT export, no license on GitHub as of 2026-11-11 |
 | Vendor AI: Synopsys.ai / DSO.ai, Cadence Cerebrus/JedAI; NVIDIA ChipNeMo | Closed, commercial | Need expensive licenses |
 
-**Our angle:** (1) Three tracks on one MCP server and one pinned toolchain. (2) Python HDL front-ends with a choice of Amaranth or MyHDL (none of the digital-only projects above do this, as far as we found). (3) Tiny Tapeout as a finish line for digital and analog tiles, not just a GDS. (4) LibreLane (current) instead of classic OpenLane. (5) Compact structured reports built for agent loops. (6) Beginner docs plus an honest analog/RF and acoustic guide. (7) A clean Apache-2.0 license, and no copied unlicensed code.
+**Our angle:** (1) Three tracks on one MCP server and one pinned toolchain. (2) Python HDL front-ends with a choice of Amaranth or MyHDL (none of the digital-only projects above do this, as far as we found). (3) Tiny Tapeout as a finish line for digital and analog tiles, not just a GDS. (4) LibreLane (current) instead of classic OpenLane. (5) Compact structured reports built for agent loops. (6) Beginner docs plus an honest analog/RF and acoustic guide. (7) Clean licensing: AGPL-3.0-or-later code, Apache-2.0 templates, skills and generated output, and no copied unlicensed code.
 
 ## 16. Tiny Tapeout facts (checked 2026-11-11)
 

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
 # SPDX-FileCopyrightText: 2020-2024 Efabless Corporation
 # SPDX-FileCopyrightText: 2012 Claire Xenia Wolf
-# SPDX-License-Identifier: Apache-2.0 AND ISC
+# SPDX-License-Identifier: AGPL-3.0-or-later AND Apache-2.0 AND ISC
 
 """The Yosys script that turns the emitted Verilog into sky130 cells.
 
