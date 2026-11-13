@@ -1,0 +1,10 @@
+GUARD-EXPOSE
+ERROR: Assertion failed: selection is not empty: t:$*dff* t:$*DFF* %u %x:+[Q] t:$*dff* t:$*DFF* %u %d o:* %d
+Selection contains:
+tt_um_carst/core.cnt[5]
+tt_um_carst/core.cnt[4]
+tt_um_carst/core.cnt[3]
+tt_um_carst/core.cnt[2]
+tt_um_carst/core.cnt[1]
+tt_um_carst/core.cnt[0]
+tt_um_carst/core.flag

@@ -87,21 +87,6 @@ def xz_constant(netlist_text: str) -> str | None:
     return found.group(0) if found else None
 
 
-# Spellings that make the RTL read differently in simulation and in synthesis. Yosys sets
-# SYNTHESIS itself, the production synthesis defines the rest (`synth_script.DEFINES`), and
-# Yosys honours these hot comments, while a simulator reads the other branch or the hidden code.
-_HOT_COMMENT = re.compile(
-    r"\b(?:synopsys|synthesis|pragma|cadence|altera|xilinx)\s+(?:translate|synthesis)_(?:off|on)\b"
-    r"|\btranslate_(?:off|on)\b|\bsynthesis_(?:off|on)\b"
-    r"|\b(?:unique0?|priority)\s+(?:case[xz]?|if)\b",
-    re.I,
-)
-_SYNTH_MACRO = re.compile(
-    r"`\s*(?:ifdef|ifndef|elsif)\s+\(?\s*"
-    r"(?:SYNTHESIS|YOSYS|FORMAL|__librelane__|__pnr__|PDK_\w*|SCL_\w*)\b"
-)
-
-
 INCLUDE = re.compile(r"`\s*include\b")
 _SRC_ATTR = re.compile(r"\(\*[^)]*\bsrc\b", re.S)
 _MODULE = re.compile(r"(?<![\w$])(?:macro)?module\s+(\\?[\w$.]+)")
@@ -123,12 +108,6 @@ def netlist_text_problem(text: str, top: str) -> str | None:
         if found.group(1).lstrip("\\") != top:
             return f"a module of its own ({found.group(1)})"
     return None
-
-
-def sim_synth_difference(rtl_text: str) -> str | None:
-    """The first spelling in the RTL that reads differently in synthesis and in simulation."""
-    found = _HOT_COMMENT.search(rtl_text) or _SYNTH_MACRO.search(rtl_text)
-    return " ".join(found.group(0).split()) if found else None
 
 
 def guard_failure(rc: int | None, log: str) -> dict[str, Any] | None:
@@ -402,7 +381,11 @@ def induction_length(log: str) -> int | None:
 
 
 def state_result(log: str) -> str:
-    """The state check (stage 2): `equal`, `differ` or `unreadable` (never read as equal)."""
+    """The state check (stage 2): `equal`, `differ`, `unusable` (some register could not be
+    exposed, so the check cannot see it) or `unreadable` (never read as equal)."""
+    marked = log.rfind(es.M_EXPOSE)
+    if marked >= 0 and "ERROR" in log[marked:]:
+        return "unusable"
     if SAT_FAILED in log:
         return "differ"
     if log.count(SAT_PROVED) == 1:

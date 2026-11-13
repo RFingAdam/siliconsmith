@@ -199,3 +199,11 @@ def own_cell_module_with_spoofed_src(text: str) -> tuple[str, str]:
 def include_directive(text: str) -> tuple[str, str]:
     """Start the netlist with an `include of another file."""
     return '`include "cells.v"\n' + text, "an include line in the netlist"
+
+
+def own_cell_module_hidden_by_macro(text: str) -> tuple[str, str]:
+    """`own_cell_module` with the `module` keyword hidden behind a macro, so a text search for
+    `module NAME` finds nothing: only the Yosys-level guard can stop it."""
+    edited, _ = own_cell_module(text)
+    edited = edited.replace("module sky130_fd_sc_hd__dlclkp_1", "`MOD sky130_fd_sc_hd__dlclkp_1")
+    return "`define MOD module // a macro\n" + edited, "dlclkp_1 defined behind a `MOD macro"

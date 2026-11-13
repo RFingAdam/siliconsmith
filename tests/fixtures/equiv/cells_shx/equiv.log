@@ -1,0 +1,7 @@
+GUARD-CELLS
+ERROR: Assertion failed: selection is not empty: t:* t:$_* %d t:$scopeinfo %d
+Selection contains:
+tt_um_shx/$eq$netlist.v:221$94
+tt_um_shx/$logic_and$netlist.v:221$95
+tt_um_shx/$shiftx$netlist.v:221$96
+tt_um_shx/$ternary$netlist.v:221$97

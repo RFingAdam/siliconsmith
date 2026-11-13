@@ -113,9 +113,6 @@ GUARD_EXPOSE = (
 )
 
 
-STRIP_SYNTH_ATTRS = "attrmap -remove full_case -remove parallel_case"
-
-
 def _read_rtl(name: str) -> list[str]:
     """Read the RTL the way the production synthesis does (same defines, same flags)."""
     defines = " ".join(f"-D{d}" for d in synth_script.DEFINES)
@@ -137,12 +134,6 @@ def gold(name: str, mode: str, expose: bool = False) -> str:
     if mode not in ("proof", "rtl", "rtl_noinit"):
         raise ValueError(f"unknown mode {mode!r}")
     s = _read_rtl(name)
-    # `full_case` / `parallel_case` (from `(* full_case *)`, hot comments, `unique`, `priority`;
-    # Amaranth writes them on every case) tell SYNTHESIS that some selector values never happen,
-    # while a simulator keeps the old value or takes the first match. The RTL side models the
-    # simulator, so they are dropped; where synthesis used them to build other gates, the
-    # proof then finds the difference.
-    s.append(STRIP_SYNTH_ATTRS)
     s += ["proc", "flatten", DELETE_NON_HARDWARE, "opt_expr", "opt_clean"]
     if mode == "proof":
         s += [*PRODUCTION_FSM_PASSES, "opt_clean"]

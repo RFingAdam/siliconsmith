@@ -103,59 +103,24 @@ def test_a_cell_without_a_function_is_named() -> None:
 
 
 @pytest.mark.parametrize(
-    ("marker", "verdict", "reason"),
+    ("scenario", "name", "verdict", "reason"),
     [
-        (es.M_MODULES, "error", "netlist_modules"),
-        (es.M_CELLS, "error", "cells"),
-        (es.M_STRUCTURE, "error", "structure"),
+        ("modules_macro", "equiv.log", "error", "netlist_modules"),  # a `define-hidden module
+        ("cells_shx", "equiv.log", "error", "cells"),  # a $shiftx left in the netlist
+        ("loop", "equiv.log", "error", "structure"),
     ],
 )
-def test_the_netlist_guards_name_what_they_refused(marker: str, verdict: str, reason: str) -> None:
-    got = ep.guard_failure(1, f"{marker}\nERROR: Assertion failed\n")
+def test_the_netlist_guards_name_what_they_refused_on_real_logs(
+    scenario: str, name: str, verdict: str, reason: str
+) -> None:
+    """The logs are Yosys's own (trimmed to the failing guard), not made up."""
+    got = ep.guard_failure(1, log(scenario, name))
     assert got is not None and (got["verdict"], got["reason"]) == (verdict, reason)
+    assert any("Assertion" in x or "Found" in x for x in got["detail"]) or reason == "structure"
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "// synthesis translate_off\n",
-        "// synopsys translate_on\n",
-        "/* pragma translate_off */\n",
-        "//synthesis translate_off\n",
-        "// SYNTHESIS TRANSLATE_OFF\n",
-        "`ifdef SYNTHESIS\n",
-        "`ifndef SYNTHESIS\n",
-        "`  ifdef   YOSYS\n",
-        "`elsif FORMAL\n",
-        "unique case (s)\n",
-        "unique0 case (s)\n",
-        "priority casez (s)\n",
-        "unique if (a)\n",
-        "`ifdef __librelane__\n",
-        "`ifdef __pnr__\n",
-        "`ifdef PDK_sky130A\n",
-        "`ifndef SCL_sky130_fd_sc_hd\n",
-    ],
-)
-def test_rtl_that_reads_differently_in_simulation_and_synthesis_is_found(text: str) -> None:
-    assert ep.sim_synth_difference(f"module m;\n{text}endmodule\n") is not None
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "// a plain comment about synthesis\n",
-        "`ifdef COCOTB_SIM\n",
-        "`ifdef MY_SYNTHESIS_FLAG\n",
-        "`ifdef SIMULATION\n",
-        "wire priority_hi;\n",
-        "wire [1:0] unique_id;\n",
-        "assign y = a;  // translated later\n",
-        "`define WIDTH 8\n",
-    ],
-)
-def test_ordinary_rtl_is_not_mistaken_for_a_simulation_difference(text: str) -> None:
-    assert ep.sim_synth_difference(f"module m;\n{text}endmodule\n") is None
+def test_a_state_check_that_could_not_expose_every_register_is_unusable() -> None:
+    assert ep.state_result(log("expose_fail", "initstate.log")) == "unusable"
 
 
 def test_include_is_found() -> None:

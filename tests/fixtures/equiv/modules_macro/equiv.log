@@ -1,0 +1,12 @@
+Parsing Verilog input from `netlist.v' to AST representation.
+Generating RTLIL representation for module `\tt_um_flt'.
+Generating RTLIL representation for module `\sky130_fd_sc_hd__buf_1'.
+Successfully finished Verilog frontend.
+GUARD-MODULES
+ERROR: Assertion failed: selection is not empty: * tt_um_flt %d
+Selection contains:
+sky130_fd_sc_hd__buf_1
+sky130_fd_sc_hd__buf_1/$not$netlist.v:14$78
+sky130_fd_sc_hd__buf_1/$not$netlist.v:14$78_Y
+sky130_fd_sc_hd__buf_1/X
+sky130_fd_sc_hd__buf_1/A

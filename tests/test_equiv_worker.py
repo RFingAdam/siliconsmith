@@ -264,6 +264,32 @@ def test_an_initial_value_that_only_shows_late_is_not_proven_never_a_pass(
     assert got["cycles_covered"] == 32 and got["time_limit_hit"] is False
 
 
+def test_a_register_the_state_check_cannot_see_has_its_own_reason(tmp_path: Path) -> None:
+    """GUARD_EXPOSE failed (a flip-flop output could not be exposed): the initial-value check
+    cannot vouch for that register. Not the generic initial-value text, and never a pass."""
+    fake = FakeYosys(
+        "counter_good",
+        equiv=(0, "inline", initz_stage1_for_counter()),
+        initstate=(1, "expose_fail", "initstate.log"),  # a real log of the failing guard
+        initdep=(0, "counter_good", "bmc.log"),
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "state_check_unusable"
+    assert "cannot look at" in got["message"] and "initial values" in got["message"]
+    assert got["cycles_covered"] == 32 and fake.tags == ["equiv", "initstate", "initdep"]
+
+
+def test_the_initial_value_messages_say_a_memory_is_not_reset_by_rst_n(tmp_path: Path) -> None:
+    fake = FakeYosys(
+        "counter_good",
+        equiv=(0, "inline", initz_stage1_for_counter()),
+        initstate=(0, "initstate_deep", "initstate.log"),
+        initdep=(0, "counter_good", "bmc.log"),
+    )
+    got = go(tmp_path, fake)
+    assert "memory's contents cannot be set by rst_n" in got["message"]
+
+
 def test_an_initial_value_check_that_cannot_be_read_is_not_a_pass(tmp_path: Path) -> None:
     """A state check that prints nothing is treated as a difference, then the bounded search
     decides: a clean search is not proven."""
@@ -414,9 +440,20 @@ def test_a_guard_refusal_is_not_proven(
 
 
 @pytest.mark.parametrize("which", ["project.v", "chip.v"])
-@pytest.mark.parametrize("text", ["`ifdef SYNTHESIS\n`endif\n", "// synthesis translate_off\n"])
+@pytest.mark.parametrize(
+    ("text", "word"),
+    [
+        ("`ifdef SYNTHESIS\n`endif\n", "`ifdef SYNTHESIS"),
+        ("`ifdef __ICARUS__\n`endif\n", "`ifdef __ICARUS__"),
+        ("`ifndef VERILATOR\n`endif\n", "`ifndef VERILATOR"),
+        ("bit b;\n", "two-state type `bit`"),
+        ("assign #1 y = a;\n", "delay"),
+        ("unique case (a)\n", "`unique`"),
+        ('initial $readmemh("f.hex", m);\n', "$readmemh"),
+    ],
+)
 def test_rtl_that_reads_differently_in_simulation_and_synthesis_is_not_proven(
-    tmp_path: Path, which: str, text: str
+    tmp_path: Path, which: str, text: str, word: str
 ) -> None:
     rtl, netlist = inputs(tmp_path)
     (rtl / which).write_text(text)
@@ -424,8 +461,22 @@ def test_rtl_that_reads_differently_in_simulation_and_synthesis_is_not_proven(
     got = equiv.check(rtl, "chip", netlist, tmp_path / "scratch", yosys=fake)
     assert got["verdict"] == "not_proven" and got["ok"] is False
     assert got["reason"] == "guard_sim_synth_differ" and fake.calls == []
-    assert which in got["message"] and NOT_A_PASS in got["message"]
-    assert "simulation and in synthesis" in got["message"]
+    assert which in got["message"] and NOT_A_PASS in got["message"] and word in got["message"]
+    assert "line " in got["message"]
+
+
+def test_the_proof_reads_the_cleaned_files_and_the_originals_stay_untouched(
+    tmp_path: Path,
+) -> None:
+    rtl, netlist = inputs(tmp_path)
+    original = "// synthesis translate_off\n(* nosync *) reg r;\n// synthesis translate_on\n"
+    (rtl / "chip.v").write_text(original)
+    fake = FakeYosys("counter_good", equiv=(1, "counter_good", "equiv.log"))
+    equiv.check(rtl, "chip", netlist, tmp_path / "scratch", yosys=fake)
+    seen = (tmp_path / "scratch" / "chip.v").read_text()
+    assert "translate_off" not in seen and "nosync" not in seen and "reg r;" in seen
+    assert seen.count("\n") == original.count("\n")  # line numbers do not move
+    assert (rtl / "chip.v").read_text() == original
 
 
 def test_an_include_in_the_rtl_is_not_proven(tmp_path: Path) -> None:

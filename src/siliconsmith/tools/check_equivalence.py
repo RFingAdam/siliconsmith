@@ -323,10 +323,9 @@ _GUARD_HINTS = {
         "check_equivalence again. Gate-level simulation (run_tests with gl=True) still checks it."
     ),
     "guard_sim_synth_differ": (
-        "Remove the `ifdef SYNTHESIS (or YOSYS, FORMAL, PDK_*) branches, the `synthesis "
-        "translate_off` comments and `unique`/`priority`: simulation and "
-        "synthesis must read the same code. Then "
-        "call check_equivalence again."
+        "Remove the construct the message names (an `ifdef, a delay, a two-state type such as "
+        "`bit`, `unique`/`priority`, $readmem): a simulator and the synthesis read it "
+        "differently. Then call check_equivalence again."
     ),
     "guard_include": (
         "Put the code of an `include file into the design file (src/<name>.v), then call "
@@ -349,7 +348,13 @@ _GUARD_HINTS = {
     ),
     "initial_values": (
         "Reset those registers with rst_n instead of giving them an initial value (`reg x = 0`, "
-        "`initial`, Amaranth reset_less or init=...), then call check_equivalence again."
+        "`initial`, Amaranth reset_less or init=...), then call check_equivalence again. "
+        "A memory's contents cannot be set by rst_n: do not rely on its starting contents, "
+        "write them after reset."
+    ),
+    "state_check_unusable": (
+        "Reset every register with rst_n and remove the initial values (`reg x = 0`, `initial`, "
+        "Amaranth init=...), then call check_equivalence again."
     ),
     "unreadable_counterexample": (
         "The solver found a difference it could not describe. Run run_tests with "
@@ -618,10 +623,13 @@ line of the summary is one of: "Equivalent: ..." (ok is true: proven), "NOT equi
 short trace, where cycle 1 is power-up with rst_n low) or "Not proven: ... This is NOT a pass." \
 (the tool could not decide: ok is false and Status shows Equivalence as fail). Not proven is \
 different from not equivalent: it says why, for example latches, a falling-edge or derived \
-clock, tri-state logic (z), flip-flops with both an asynchronous set and reset, and RTL that \
-reads differently in simulation and synthesis (`ifdef SYNTHESIS, translate_off, unique case) or \
-uses `include \
-are not supported, or the proof ran out of time.\n\
+clock, tri-state logic (z) and flip-flops with both an asynchronous set and reset are not \
+supported, or the proof ran out of time. The gates are compared with the RTL as a simulator \
+reads it (comments and (* attributes *) are ignored, so a `synopsys full_case` or `translate_off` \
+comment that changes the gates shows up as not equivalent). What a simulator and the synthesis \
+read differently and the tool cannot neutralize is refused as not proven, naming the construct: \
+`include, `ifdef on a macro the files did not define, delays (#), two-state types (bit, int), \
+unique/priority, $readmem.\n\
 What it checks: every output value the RTL defines must match for every power-up state of \
 the chip's flip-flops (an x or default-don't-care in the RTL means any value is accepted); \
 registers that nothing resets are only compared for a consistent power-up (the RTL simulation \

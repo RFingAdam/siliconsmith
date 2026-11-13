@@ -28,6 +28,7 @@ from netlist_edit import (
     include_directive,
     open_cell_input,
     own_cell_module,
+    own_cell_module_hidden_by_macro,
     own_cell_module_with_spoofed_src,
     swap_cell_type,
     z_constant,
@@ -201,6 +202,8 @@ NETLIST_SEEDS = {
     "own_cell": (own_cell_module, "error", "netlist_modules"),
     "own_cell_src": (own_cell_module_with_spoofed_src, "error", "netlist_modules"),
     "include": (include_directive, "error", "netlist_modules"),
+    # the `module` keyword behind a macro: no text search sees it, the Yosys guard must
+    "own_cell_macro": (own_cell_module_hidden_by_macro, "error", "netlist_modules"),
     # behavioural code (a bit select) models an out-of-range index differently from a simulator
     "bit_select": (behavioural_bit_select, "error", "cells"),
 }
@@ -259,10 +262,23 @@ RTL_SEEDS = [
     ("carst", "amaranth", "not_proven", "initial_values"),
     # RTL that reads one way in simulation and another in synthesis
     ("synthdef", "verilog", "not_proven", "guard_sim_synth_differ"),
-    ("xoff", "verilog", "not_proven", "guard_sim_synth_differ"),
-    # a keyword that makes synthesis build something a simulator does not run (full_case and
-    # parallel_case attributes, which Amaranth writes on every case, are modelled as the
-    # simulator sees them instead: the Amaranth seqdet in test_equiv_designs proves with them)
+    ("xoff", "verilog", "not_equivalent", None),  # translate_off is ignored, as in a simulator
+    # Round 3: the RTL is compared as a SIMULATOR reads it. Hot comments and attributes that make
+    # synthesis build other gates (each confirmed by the reviewer in Icarus: the outputs differ
+    # from cycle 2 on) are not neutralized in the gates, so the check reports the difference.
+    ("fchot", "verilog", "not_equivalent", None),
+    ("fccomblo", "verilog", "not_equivalent", None),
+    ("fcfunclo", "verilog", "not_equivalent", None),
+    ("xoffglued", "verilog", "not_equivalent", None),
+    ("nosync", "verilog", "not_equivalent", None),
+    # what a simulator and the synthesis read differently and cannot be neutralized is refused
+    ("ificarus", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("ifverilator", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("uqdodgelo", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("bitreg", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("delay", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("nolatchlo", "verilog", "not_proven", "guard_clocking"),  # a latch the attribute hid
+    # `unique case`: synthesis assumes what a simulator does not
     ("uniquecase", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
 
@@ -298,3 +314,68 @@ async def test_equiv_initial_value_declaration_stops_at_lint(
         assert result["details"].get("verdict") is None
         states = step_states(await call(client, "status", project="initz"))
         assert states["equivalence"] != "pass"
+
+
+@pytest.mark.parametrize("fe", ["verilog", "amaranth"])
+async def test_equiv_async_reset_counter_with_a_start_value_is_equivalent(
+    server: Client, tmp_path: Path, fe: str
+) -> None:
+    """A counter with an asynchronous reset and the start value 0: the initial-value check
+    (stage 2) runs on it (`initdep` in the timings) and must not refuse it."""
+    async with server as client:
+        await design_project(client, tmp_path, "arcnt", fe)
+        result = await call(client, "check_equivalence", project="arcnt")
+        details = result["details"]
+        assert result["ok"] is True, result["summary"]
+        assert details["verdict"] == "equivalent" and "initdep" in details["seconds"]
+
+
+async def test_equiv_a_memory_that_starts_with_contents_is_explained(
+    server: Client, tmp_path: Path
+) -> None:
+    async with server as client:
+        await design_project(client, tmp_path, "ammem", "amaranth")
+        result = await call(client, "check_equivalence", project="ammem")
+        details = result["details"]
+        assert result["ok"] is False and details["verdict"] == "not_equivalent"
+        assert details["reason"] == "rtl_initial_value"
+        assert "memory's contents cannot be set by rst_n" in details["message"]
+
+
+EXPOSE_PROBE = """
+import json, shutil, subprocess
+from pathlib import Path
+from siliconsmith.worker import equiv_parse, equiv_script
+
+work = Path("/work/build/expose_probe")
+work.mkdir(parents=True, exist_ok=True)
+for f in ("project.v", "arcnt.v"):
+    shutil.copy("/work/src/" + f, work / f)
+real = equiv_script.state_check("arcnt")
+# the same script without the `expose -dff` lines: the guard behind them must fire
+broken = real.replace("\\nexpose -dff\\n", "\\n")
+out = {}
+for tag, script in (("real", real), ("broken", broken)):
+    (work / f"{tag}.ys").write_text(script)
+    run = subprocess.run(
+        ["yosys", "-q", "-l", f"{tag}.log", "-s", f"{tag}.ys"], cwd=work, capture_output=True
+    )
+    log = (work / f"{tag}.log").read_text()
+    out[tag] = [run.returncode, equiv_parse.state_result(log), equiv_script.M_EXPOSE in log]
+print(json.dumps(out))
+"""
+
+
+async def test_equiv_the_expose_guard_runs_and_fails_closed(
+    server: Client, tmp_path: Path, image: str
+) -> None:
+    """GUARD_EXPOSE is part of the state check: with `expose -dff` the state check of an
+    async-reset counter runs through; without it the guard stops the script (`unusable`)."""
+    async with server as client:
+        project = await design_project(client, tmp_path, "arcnt", "verilog")
+        await call(client, "check_equivalence", project="arcnt")  # emits src/project.v
+        proc = run_hardened(image, project, "python", "-c", EXPOSE_PROBE, timeout=300)
+        assert proc.returncode == 0, proc.stderr
+        got = json.loads(proc.stdout.strip().splitlines()[-1])
+        assert got["real"][0] == 0 and got["real"][1] == "equal" and got["real"][2] is True
+        assert got["broken"][0] != 0 and got["broken"][1] == "unusable"

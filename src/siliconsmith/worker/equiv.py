@@ -25,7 +25,8 @@ and turns what they find into one verdict.
     reason       None for equivalent; else a machine code: rtl_initial_value,
                  initial_values, power_up_dependent, unreadable_counterexample, base_case,
                  unproven_points, unpaired_outputs, time_limit, guard_clocking, guard_tristate,
-                 guard_async_set_reset, guard_sim_synth_differ, guard_include, structure, cells,
+                 guard_async_set_reset, guard_sim_synth_differ, guard_include, state_check_unusable,
+                 structure, cells,
                  netlist_modules, xz_constant,
     method       "equiv_induct" | "k-induction length L" | None
     message      one or two plain-English sentences; not_proven ends with "This is NOT a pass."
@@ -60,7 +61,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from siliconsmith.worker import emit, equiv_parse, equiv_script, synth
+from siliconsmith.worker import emit, equiv_parse, equiv_script, equiv_sv, synth
 from siliconsmith.worker.limits import (
     EQUIV_DETAIL_LINE_MAX,
     EQUIV_SIGNAL_MAX,
@@ -466,25 +467,25 @@ def _check(
             "cells only.",
         )
 
-    # the RTL must read the same in simulation and in synthesis (the proof reads it the way the
-    # synthesis does: `ifdef SYNTHESIS and translate_off are honoured, a simulator reads the rest)
-    for fname in ("project.v", f"{name}.v"):
-        rtl_text = (scratch / fname).read_text(encoding="utf-8", errors="replace")
-        if equiv_parse.include_directive(rtl_text):
+    # The RTL side is the design as a SIMULATOR reads it: comments and attributes blanked out
+    # (hot comments, `(* nosync *)`, ... would otherwise change what the proof model is). What
+    # that cannot neutralize (`ifdef SYNTHESIS, delays, two-state types, ...) is refused.
+    try:
+        sources = [
+            (fname, (scratch / fname).read_text(encoding="utf-8", errors="replace"))
+            for fname in ("project.v", f"{name}.v")
+        ]
+        found = equiv_sv.refusal(sources)
+        if found is not None:
             return r.verdict(
                 "not_proven",
-                "guard_include",
-                f"Could not prove equivalence: the RTL ({fname}) uses `include. The check only "
-                "reads project.v and the design file, so it cannot see what an included file "
-                "does. Put the code in the design file.",
+                "guard_include" if found.code == "include" else "guard_sim_synth_differ",
+                f"Could not prove equivalence: {equiv_sv.plain_message(found)}",
             )
-        if (diff := equiv_parse.sim_synth_difference(rtl_text)) is not None:
-            return r.verdict(
-                "not_proven",
-                "guard_sim_synth_differ",
-                f"Could not prove equivalence: the RTL ({fname}) reads differently in simulation "
-                f"and in synthesis ({diff}). The check cannot vouch for that; remove it.",
-            )
+        for fname, text in sources:  # the proof reads these cleaned copies
+            (scratch / fname).write_text(equiv_sv.clean(text), encoding="utf-8")
+    except OSError as exc:
+        return r.verdict("error", "bad_input", f"The files to check could not be read ({exc}).")
 
     # stage 1: guards and the induction step
     t1 = time.monotonic()
@@ -524,13 +525,21 @@ def _check(
     return _kinduction_path(r, s1, rtl, gate, cycles)
 
 
+MEMORY_HINT = (
+    " A memory's contents cannot be set by rst_n: do not rely on its starting contents (a chip's "
+    "memory starts unknown), write the values after reset instead."
+)
+
+
 def _initial_values(r: _Run, name: str, rtl: str, cycles: int) -> dict[str, Any] | None:
     """Stage 2. None when the RTL's initial values change nothing after the reset cycle (the
     check goes on), else the verdict. Never skipped: every way this stage can end without a
     proof is `not_proven` or `error`, never a pass."""
     t2 = time.monotonic()
     code, log = r.yosys(r.scratch, equiv_script.state_check(name), "initstate", r.clock.left())
-    state = equiv_parse.state_result(log) if code == 0 else "unreadable"
+    state = equiv_parse.state_result(log)
+    if code != 0 and state != "unusable":
+        state = "unreadable"
     r.timed("initdep", t2)
     if state == "equal":
         return None
@@ -562,10 +571,21 @@ def _initial_values(r: _Run, name: str, rtl: str, cycles: int) -> dict[str, Any]
             "The RTL relies on initial values (`reg x = ...`, `initial`, Amaranth "
             "reset_less or init, memory contents) that a chip does not have: at "
             f"{_when(fm['cycle'])} {out} depend on them. Reset those registers with rst_n "
-            "instead.",
+            f"instead.{MEMORY_HINT}",
         )
     if d.get("stopped") or stopped:
         r.out["time_limit_hit"] = True
+    if state == "unusable" and not (d.get("stopped") or stopped):
+        r.out["cycles_covered"] = d["covered"]
+        return r.verdict(
+            "not_proven",
+            "state_check_unusable",
+            "Could not prove equivalence: the RTL has initial values and a register the check "
+            "cannot look at (it could not be exposed), so the check cannot tell whether the "
+            f"initial values change anything. No output differed in the first {d['covered']} "
+            "cycles from reset. Reset every register with rst_n and remove the initial values.",
+            cycles_covered=d["covered"],
+        )
     which = f" ({names})" if names else ""
     limit = " The check ran out of time." if d.get("stopped") or stopped else ""
     return r.verdict(
@@ -574,7 +594,7 @@ def _initial_values(r: _Run, name: str, rtl: str, cycles: int) -> dict[str, Any]
         "Could not prove equivalence: the RTL gives initial values to registers that reset does "
         f"not set{which}. A chip has no initial values, and no output differed in the first "
         f"{d['covered']} cycles from reset, so the check cannot say whether the gates match. "
-        f"Reset those registers with rst_n.{limit}",
+        f"Reset those registers with rst_n.{MEMORY_HINT}{limit}",
         cycles_covered=d["covered"],
     )
 

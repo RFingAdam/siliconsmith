@@ -63,7 +63,7 @@ It does not catch bugs in the RTL itself, including a wrong reset in the RTL: bo
 
 `not_equivalent` names the output bit and the first differing clock cycle (x means it depends on power-up). Fix and rerun.
 
-`not_proven` is never a pass. Latches, derived or falling-edge clocks, z (tri-state), flops with async set and reset, and `ifdef SYNTHESIS`, `unique case` or `include` code are unsupported and come back not proven, as does a proof that runs out of time. Tell the user the design is not checked. An `error` (a loop, an unknown cell) is no pass either.
+`not_proven` is never a pass. Latches, derived or falling-edge clocks, z (tri-state), flops with async set and reset, and RTL read differently by simulation and synthesis (`ifdef`, `#`, `bit`) are unsupported and come back not proven, as does a proof that runs out of time. Tell the user it is not checked. An `error` (a loop, an unknown cell) is no pass either.
 
 ## Too big for the tile
 

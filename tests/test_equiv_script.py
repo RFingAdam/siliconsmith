@@ -159,16 +159,13 @@ def test_the_state_check_exposes_every_flop_before_async2sync_and_fails_closed()
         assert "expose -dff" not in es.gold("chip", mode)  # only the state check exposes
 
 
-def test_every_rtl_side_models_the_simulator_not_full_case_or_parallel_case() -> None:
-    """Synthesis takes `full_case` / `parallel_case` as "other selector values never happen"; a
-    simulator does not. The RTL side drops them (before `proc` turns them into logic), so the
-    proof finds the difference where synthesis used them."""
+def test_the_rtl_side_reads_the_cleaned_files_with_no_attribute_surgery() -> None:
+    """The host blanks comments and attributes out of the RTL files (`equiv_sv.clean`) before
+    Yosys reads them, so the scripts have nothing to strip (a Yosys-level `attrmap` after
+    `read_verilog` does nothing: the attributes are already applied)."""
     for mode in ("proof", "rtl", "rtl_noinit"):
-        rows = lines(es.gold("chip", mode))
-        strip = "attrmap -remove full_case -remove parallel_case"
-        assert strip in rows
-        assert rows.index("hierarchy -check -top tt_um_chip") < rows.index(strip)
-        assert rows.index(strip) < rows.index("proc")
+        assert "full_case" not in es.gold("chip", mode)
+        assert "attrmap -remove full_case" not in es.gold("chip", mode)
 
 
 def test_the_clock_guard_pins() -> None:
