@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // SEEDED BUG: this counter has no reset. It relies on `initial count = 0;`, which a simulator
 // honours but real gates ignore: a flip-flop powers up as an unknown 0 or 1. RTL simulation

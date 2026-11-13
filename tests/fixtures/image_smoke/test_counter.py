@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """cocotb 2.x test for counter.v: counts while enabled, holds while not, wraps at 255."""
 
 import cocotb

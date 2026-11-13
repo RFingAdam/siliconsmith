@@ -1,6 +1,12 @@
 Siliconsmith
 Copyright 2026 Adam Engelbrecht
 
+Siliconsmith's own code is licensed under AGPL-3.0-or-later (see LICENSE). Versions up to commit f752b50 were published under Apache-2.0, and those copies stay under Apache-2.0. AGPL-3.0-or-later applies from the relicense on.
+
+The templates (src/siliconsmith/templates), the skills (src/siliconsmith/skills), docs/glossary.md and example designs are Apache-2.0. The files Siliconsmith generates in a user's project, and Siliconsmith text copied into that project, may be used under Apache-2.0 by the additional permission under AGPL-3.0 section 7 in OUTPUT-EXCEPTION.md. Designs, tests and specifications that users or their agents write belong to them.
+
+A commercial license is available from the maintainer for uses the AGPL does not fit. Open an issue at https://github.com/RFingAdam/siliconsmith/issues to ask.
+
 Third-party tools used by Siliconsmith are listed in THIRD_PARTY_LICENSES.md. They are not distributed in this repository.
 
 src/siliconsmith/worker/synth_script.py transcribes the synthesis pass order and the "AREA 0" ABC script of LibreLane 3.0.14 (Apache-2.0, Copyright 2020-2024 Efabless Corporation). LibreLane's file in turn adapts Yosys synth.cc and opt.cc (ISC, Copyright 2012 Claire Xenia Wolf); the ISC notice is in LICENSES/ISC.txt.

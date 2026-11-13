@@ -13,7 +13,7 @@ Start with digital **M0** only. See `PLAN.md` for architecture, MCP tools, and l
 **Tasks**
 - `pyproject.toml` (hatchling; package `siliconsmith`, Python ≥3.11; dependencies `mcp>=2.3,<3`, `pyyaml`, `pydantic>=2`; extras `[amaranth]` = `amaranth[builtin-yosys]>=0.5.10,<0.6`, `[myhdl]` = `myhdl>=0.11.52,<0.12`) and `uv.lock`.
 - `src/siliconsmith/{__init__,_version,cli,_imagetag}.py`, plus the seams later issues build on: `result.py` (the result envelope), `server.py` with the tool registry in `tools/__init__.py`, `runners/base.py`, `tests/conftest.py`, and one real unit test.
-- Keep `LICENSE` (Apache-2.0) and `THIRD_PARTY_LICENSES.md`. Add `LICENSES/Apache-2.0.txt`, `REUSE.toml`, `NOTICE`, and `CONTRIBUTING.md` with the GPL/LGPL rules (call GPL tools only as external processes; no vendoring) and the DCO rule (outside contributors sign off; agents never add `Signed-off-by`).
+- Keep `LICENSE` (Apache-2.0 at the time; AGPL-3.0-or-later since the relicense, see `NOTICE`) and `THIRD_PARTY_LICENSES.md`. Add `LICENSES/Apache-2.0.txt`, `REUSE.toml`, `NOTICE`, and `CONTRIBUTING.md` with the GPL/LGPL rules (call GPL tools only as external processes; no vendoring) and the contributor rule (the DCO at the time, the CLA since the relicense; agents never add `Signed-off-by`).
 - SPDX headers on all source files.
 - `.gitignore` additions: `tasks/`, `build/`, `sim_build/`, keeping `src/siliconsmith/templates/**` and `tests/fixtures/**`.
 - Replace the CI placeholder with the `ci.yml` `lint` and `unit` jobs (PLAN.md section 14); Dependabot for GitHub Actions.
@@ -449,10 +449,10 @@ Research and stretch. Design and simulation only. There is no open SAW/BAW fab i
 - [ ] Each solver is described accurately: Mason/BVD are equivalent-circuit models we implement; Elmer may do piezoelectric FEM *(to be verified in S1)*; openEMS is EM FDTD, not a piezo acoustic solver.
 - [ ] Licenses point at `THIRD_PARTY_LICENSES.md`.
 
-## [S0-2] Mason / BVD models (our Apache-2.0 code)
+## [S0-2] Mason / BVD models (our AGPL-3.0-or-later code)
 **Labels:** `track:acoustic` `milestone:S0`
 **Acceptance criteria**
-- [ ] A BVD resonator model (and Mason, if both are implemented) is written in this repo under Apache-2.0, as Python and/or an ngspice subcircuit, with SPDX headers.
+- [ ] A BVD resonator model (and Mason, if both are implemented) is written in this repo under AGPL-3.0-or-later, as Python and/or an ngspice subcircuit, with SPDX headers.
 - [ ] A sim returns input impedance and/or S-parameters over a stated frequency range for a documented parameter set (fs, fp or C0, C1, L1, R1).
 - [ ] Unit tests check the equivalent-circuit math against a closed-form point or two. No third-party unlicensed code.
 
