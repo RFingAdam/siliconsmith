@@ -15,7 +15,7 @@ import pytest
 from conftest import REPO_ROOT
 from mcp import Client
 
-from integration.helpers import hardened
+from integration.helpers import hardened, read_in_container
 from siliconsmith.runners.docker import DockerRunner
 from siliconsmith.server import build_server
 
@@ -129,14 +129,8 @@ def test_pdk_files_present(image: str) -> None:
         "[print(h+'  '+f) for f,h in json.load(open('manifest.json'))['files'].items()]\") "
         "&& find . -type f ! -name manifest.json | wc -l && cat manifest.json"
     )
-    proc = subprocess.run(
-        ["docker", "run", "--rm", "--network=none", "--entrypoint", "bash", image, "-c", script],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    count, _, manifest_text = proc.stdout.partition("\n")
+    out = read_in_container(image, script)
+    count, _, manifest_text = out.partition("\n")
     manifest = json.loads(manifest_text)
     assert manifest["open_pdks"] == PDK_OPEN_PDKS
     assert int(count) == len(manifest["files"]) == 10

@@ -527,7 +527,7 @@ def test_a_byte_outside_plain_ascii_in_code_is_not_proven(tmp_path: Path, outsid
 def test_the_event_list_rule_is_for_the_cores_that_do_not_list_signals_themselves(
     tmp_path: Path,
 ) -> None:
-    text = b"always @(a or b) begin\n  y = a & b;\nend\n"
+    text = b"always @(a or b) begin: l\n  y = a & b;\nend\n"
     rtl, netlist = inputs(tmp_path)
     (rtl / "chip.v").write_bytes(text)
     strict = equiv.check(rtl, "chip", netlist, tmp_path / "s1", yosys=FakeYosys(""))
@@ -544,7 +544,7 @@ def test_a_myhdl_core_is_judged_by_the_level_list_rule(tmp_path: Path) -> None:
     fake = FakeYosys("")
     got = equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=fake, strict_core=False)
     assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
-    assert "reads `cnt` without listing it" in got["message"] and "@always_comb" in got["message"]
+    assert "plain shape @always_comb writes" in got["message"] and "@always_comb" in got["message"]
     assert fake.calls == []
 
 

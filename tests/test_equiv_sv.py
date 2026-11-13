@@ -424,7 +424,7 @@ def test_the_reviewers_sensitivity_design_is_refused() -> None:
 
 
 def test_myhdl_style_event_lists_are_not_judged_by_the_strict_rule() -> None:
-    text = "module m;\nalways @(a, b, c) begin\n  y <= a & b;\nend\nendmodule\n"
+    text = "module m;\nalways @(a, b, c) begin: l\n  y = a & b;\nend\nendmodule\n"
     assert sv.refusal([("core.v", text)], ()) is None
     assert sv.refusal([("core.v", text)], {"core.v"}) is not None
     assert sv.refusal([("core.v", text)], (), {"core.v"}) is None  # it lists what it reads
@@ -434,7 +434,6 @@ def test_myhdl_style_event_lists_are_not_judged_by_the_strict_rule() -> None:
 def test_a_plain_function_or_task_is_refused_in_hand_written_verilog(word: str) -> None:
     refused(f"{word} [7:0] f;\n input [7:0] a;\n f = a;\n end{word}", "automatic")
     ok(f"module m; {word} automatic [7:0] f; input [7:0] a; f = a; end{word} endmodule\n")
-    assert sv.refusal([("c.v", f"module m;\n{word} f; endmodule\n")], ()) is None
 
 
 def test_the_reviewers_function_design_is_refused() -> None:
@@ -671,7 +670,7 @@ def test_wildcard_equality_and_inside_are_refused() -> None:
     refused("always @* if (a inside {2'd1, 2'd2}) y = 1; else y = 2;", "inside")  # cases9/insideop
 
 
-# -- MyHDL: a level-sensitive block must list every signal it reads ----------------------------
+# -- MyHDL: a level-sensitive block must be the plain shape @always_comb writes ----------------
 
 MYHDL_FIXTURES = REPO_ROOT / "tests" / "fixtures" / "equiv_myhdl"
 
@@ -683,21 +682,43 @@ def _core(path: Path) -> sv.Refusal | None:
 @pytest.mark.parametrize("path", sorted((MYHDL_FIXTURES / "ok").glob("*.v")), ids=lambda p: p.stem)
 def test_what_the_myhdl_front_end_writes_for_always_comb_is_accepted(path: Path) -> None:
     """Emitted by MyHDL 0.11: counters, state machines (case, enums), local variables, slices,
-    concatenations, a list of signals (`mem[0], mem[1], ...`), a for loop."""
+    concatenations, a list of signals (`mem[0], mem[1], ...`), a for loop, a ROM `case`."""
     assert _core(path) is None
 
 
+# what each reviewer core must be refused for (a part of the plain message)
+BAD = {
+    "my41": "non-blocking", "myalias": "non-blocking", "mycall": "non-blocking",
+    "mysens2": "non-blocking", "mysub": "non-blocking", "myvar": "non-blocking",
+    "myfst": "not `automatic`",  # a static function: the rule is for every front-end
+    "mylab1": "reads `cnt` without listing it",  # the label is not a signal
+    "mylab2": "not a statement", "mylab3": "named block", "mylab4": "not a statement",
+    "mydecl": "not a statement",
+    "myarr": "not a word of an array", "myarr2": "not a word of an array",
+    "mybits": "not a word of an array",  # a bit item `cnt[0]` for a plain vector
+    "myesc": "escaped identifier",
+    "mycase1": "case item that is not a number", "mycase2": "case item that is not a number",
+    "myglob": "reserved word `global`",
+    "myconcat": "not a statement MyHDL writes",
+    "myfor": "reads `cnt` without listing it",
+    "myrep": "`repeat`", "mywhile": "`while`",
+    "mylocal": "reads its local `held` before it is written",
+}  # fmt: skip
+
+
 @pytest.mark.parametrize("path", sorted((MYHDL_FIXTURES / "bad").glob("*.v")), ids=lambda p: p.stem)
-def test_the_reviewers_myhdl_dodges_are_refused_on_their_emitted_verilog(path: Path) -> None:
-    """mysens2 and the five mcp8 dodges (an alias, a variable, a plain call, a sub-package of
-    hdl/, more than 40 files) all end as `always @(b0) begin: <label> y <= cnt; end`."""
+def test_the_reviewers_cores_are_refused_with_a_clear_message(path: Path) -> None:
+    """mysens2, the five mcp8 dodges (they all emit `always @(b0) begin: label y <= cnt; end`) and
+    the mcp10 cores that a `convert()` of the agent's own writes by hand."""
     found = _core(path)
-    assert found is not None and found.code == "sim_synth"
-    assert "level-sensitive block that reads `cnt` without listing it" in found.what
-    lines = path.read_text().splitlines()
-    assert found.label in ("pick", "holder0_pick")
-    assert lines[found.line - 1].strip() == "y <= cnt;"  # the line of the read
-    assert "@always_comb" in sv.plain_message(found)
+    assert found is not None and found.code == "sim_synth", path.name
+    assert BAD[path.stem] in found.what, found.what
+    if "level-sensitive" in found.what:
+        assert "@always_comb" in sv.plain_message(found)
+
+
+def test_every_bad_core_has_an_expectation() -> None:
+    assert {p.stem for p in (MYHDL_FIXTURES / "bad").glob("*.v")} == set(BAD)
 
 
 def _my(block: str, extra: str = "") -> sv.Refusal | None:
@@ -705,83 +726,226 @@ def _my(block: str, extra: str = "") -> sv.Refusal | None:
     return sv.refusal([("m.v", text)], (), {"m.v"})
 
 
+def _lvl(body: str, items: str = "a", extra: str = "") -> sv.Refusal | None:
+    return _my(f"always @({items}) begin: l\n{body}\nend", extra)
+
+
+ARR = "reg [7:0] m [0:4-1];"
+
+
+@pytest.mark.parametrize(
+    ("body", "items", "extra"),
+    [
+        ("y = a & b;", "a, b", ""),
+        ("y = a & b;", "a or b", ""),
+        ("reg [3:0] t;\n t = a;\n y = t + b;", "a, b", ""),
+        ("reg signed [3:0] t;\n integer k;\n t = a;\n k = t;\n y = k;", "a", ""),
+        (
+            "case (sel)\n 2'b00: y = a;\n 2'b01, 2'b10: begin\n y = b;\n end\n default: y = 0;\n"
+            " endcase",
+            "sel, a, b",
+            "",
+        ),
+        ("casez (sel)\n 2'b0?: y = a;\n default: y = 0;\n endcase", "sel, a", ""),
+        ("y[3:0] = a[2:0];\n z[0] = a;", "a", ""),
+        ("y[i] = a;", "a, i", ""),
+        ("y[3:i] = a;", "a, i", ""),
+        ("y = $signed(a);", "a", ""),
+        ("y = $unsigned(a) <= b;", "a, b", ""),
+        ("y = a ? b : 8'h0f;", "a, b", ""),
+        ("y = {a, b[1:0]};", "a, b", ""),
+        ("if (a) y = 1;\n else if (b) y = 2;\n else y = 3;", "a, b", ""),
+        ("if (a) begin\n y = 1;\n end\n else begin\n y = 2;\n end", "a", ""),
+        ("y = m[s];", "m[0], m[1], m[2], m[3], s", ARR),
+        ("y = m[2];", "m[2]", ARR),
+        ("y = m[2] + m[0];", "m[2], m[0]", ARR),
+        (
+            "integer i;\n y = 0;\n for (i = 0; i < 8; i = i + 1) begin\n  if (a[i]) y = y + 1;\n"
+            " end",
+            "a, y",
+            "",
+        ),
+        ("y = a;\n z = y;", "a, y", ""),  # written and read: listed
+    ],
+)
+def test_a_level_block_of_the_plain_shape_that_lists_what_it_reads_is_accepted(
+    body: str, items: str, extra: str
+) -> None:
+    assert _lvl(body, items, extra) is None, body
+
+
 @pytest.mark.parametrize(
     "block",
     [
-        "always @(a, b) begin: l\n  y = a & b;\nend",
-        "always @(a or b) begin\n  y = a & b;\nend",
-        "always @(a, b) begin: l\n  reg [3:0] t;\n  t = a;\n  y = t + b;\nend",
-        "always @(sel, a) begin\n  case (sel)\n    2'b00: y = a;\n    default: y = 0;\n"
-        "  endcase\nend",
-        "always @(a) begin\n  y[3:0] = a[2:0];\n  z[0] <= a;\nend",  # targets are not reads
-        "always @(a, i) begin\n  y[i] = a;\nend",  # an index inside a target is a read: listed
-        "always @(a) begin\n  y = $signed(a);\nend",
-        "always @(a, b) begin\n  y = a ? b : 8'h0f;\nend",
-        "always @(m[0], m[1], s) begin\n  y = m[s];\nend",  # a list of signals, variable index
-        "always @(m[2]) begin\n  y = m[2];\nend",
-        "always @(a) begin: l\n  begin: inner\n    y = a;\n  end\nend",
-        "always @(a) begin\n  fork\n    y = a;\n  join\nend",
         "always @(posedge clk) begin\n  q <= d;\nend",
-        "always @(posedge clk, negedge rst_n) begin\n  q <= d;\nend",
+        "always @(posedge clk, negedge rst_n) begin: s\n  q <= d;\nend",
         "always @* begin\n  y = a;\nend",
         "always @(*) begin\n  y = a;\nend",
     ],
 )
-def test_a_level_block_that_lists_everything_it_reads_is_accepted(block: str) -> None:
-    extra = "reg [7:0] m [0:2-1];" if "m[" in block else ""
-    assert _my(block, extra) is None, block
+def test_edge_and_star_blocks_are_not_the_level_rule(block: str) -> None:
+    assert _my(block) is None, block
 
 
 @pytest.mark.parametrize(
-    ("block", "missing"),
+    ("body", "items", "extra", "missing"),
     [
-        ("always @(a) begin\n  y = b;\nend", "b"),
-        ("always @(a) begin\n  y = a;\n  z = y;\nend", "y"),  # written and read
-        ("always @(a) begin\n  y[b] = a;\nend", "b"),  # a target's index is a read
-        ("always @(a, b) begin\n  y = a ? b : c <= d;\nend", "c"),  # a ternary `:`, not a label
-        ("always @(a) begin\n  y = a;\n  if (a) z = k;\nend", "k"),
-        ("always @(a) begin: l\n  reg [3:0] t;\n  t = a;\n  y = t + u;\nend", "u"),
-        ("always @(a) begin\n  y = m[s];\nend", "m"),  # no declaration: `m` is not a known array
-        ("always @(a, s) begin\n  y = m[s];\nend", "m"),  # an array not listed word by word
-        ("always @(m[0], s) begin\n  y = m[s];\nend", "m"),  # missing m[1]
-        ("always @(m[0], m[1]) begin\n  y = m[1] + m[2];\nend", "m"),
-        ("always @(a) begin\n  y = a;\n  case (b)\n    0: z = a;\n  endcase\nend", "b"),
+        ("y = b;", "a", "", "b"),
+        ("y = a;\n z = y;", "a", "", "y"),  # written and read
+        ("y[b] = a;", "a", "", "b"),  # a target's index is a read
+        ("y = a ? b : c <= d;", "a, b", "", "c"),
+        ("y = a;\n if (a) z = k;", "a", "", "k"),
+        ("reg [3:0] t;\n t = a;\n y = t + u;", "a", "", "u"),
+        ("y = m[s];", "m[0], m[1], m[2], m[3]", ARR, "s"),
+        ("y = m[s];", "s", ARR, "m"),  # an array not listed word by word
+        ("y = m[s];", "m[0], s", ARR, "m"),  # m[1..3] missing
+        ("y = m[1] + m[2];", "m[0], m[1]", ARR, "m"),
+        ("y = m;", "m[0], m[1], m[2], m[3]", "reg [7:0] m [0:5-1];", "m"),  # a fifth word
+        ("y = a;\n case (b)\n 0: z = a;\n endcase", "a", "", "b"),
+        ("y = a;\n for (j = 0; j < n; j = j + 1) z = a;", "a, j", "", "n"),
+        ("y = a[idx];", "a", "", "idx"),
     ],
 )
 def test_a_level_block_that_leaves_out_a_signal_it_reads_is_refused(
-    block: str, missing: str
+    body: str, items: str, extra: str, missing: str
 ) -> None:
-    found = _my(block, "reg [7:0] m [0:2-1];" if "m[" in block and "m[2]" not in block else "")
-    assert found is not None, block
+    found = _lvl(body, items, extra)
+    assert found is not None, body
     assert f"`{missing}` without listing it" in found.what, found.what
+    assert found.label == "l"
+
+
+def test_a_plain_vector_must_be_listed_by_name_a_bit_is_not_enough() -> None:
+    found = _lvl("y = a[3];", "a[3]")
+    assert found is not None and "not a word of an array" in found.what
+    found = _lvl("y = a[3];", "a[3]", "reg [7:0] a;")
+    assert found is not None and "not a word of an array" in found.what
+
+
+# every refusal of the grammar: what it is, the block body, the list, the module-level text
+GRAMMAR = [
+    ("a non-blocking assignment", "y <= a;", "a", ""),
+    ("a non-blocking assignment", "y[1] <= a;", "a", ""),
+    ("not a statement MyHDL writes", "begin: inner\n y = a;\n end", "a", ""),
+    ("named block", "if (a) begin: inner\n y = a;\n end", "a", ""),
+    ("a statement MyHDL writes", "begin\n y = a;\n end", "a", ""),  # a bare block
+    ("a statement MyHDL writes", "disable l;", "a", ""),
+    ("a statement MyHDL writes", "fork\n y = a;\n join", "a", ""),
+    ("`while`", "while (a) y = 1;", "a", ""),
+    ("`repeat`", "repeat (3) y = a;", "a", ""),
+    ("`forever`", "forever y = a;", "a", ""),
+    ("a delay", "#1 y = a;", "a", ""),
+    ("a statement MyHDL writes", "@(a) y = a;", "a", ""),
+    ("a statement MyHDL writes", "@(posedge clk) y = a;", "a", ""),
+    ("a call `f(...)`", "y = f(a);", "a", ""),
+    ("a call `f(...)`", "f(a);", "a", ""),
+    ("a call `f(...)`", "y = a + f(1);", "a", ""),
+    ("the system function `$display`", "y = $display(a);", "a", ""),
+    ("the system function `$random`", "y = $random;", "a", ""),
+    ("reserved word `global`", "y = global;", "a", ""),
+    ("reserved word `logic`", "y = logic;", "a", ""),
+    ("not a statement MyHDL writes", "global = a;", "a", ""),
+    ("not a statement MyHDL writes", "logic = a;", "a", ""),
+    ("a level list item", "y = a;", "global", ""),
+    ("not a word of an array", "y = a;", "a[1]", ""),  # `a` is not an array
+    ("not a word of an array", "y = m[0];", "m[4]", ARR),  # past the last word
+    ("not a word of an array", "y = a;", "a[0]", "reg [7:0] a;"),  # a vector, not an array
+    (
+        "not a statement MyHDL writes",
+        "reg [3:0] t;\n t = a;\n if (a) begin\n reg [3:0] u;\n end",
+        "a",
+        "",
+    ),
+    ("a case item that is not a number", "case (a)\n b: y = 1;\n endcase", "a", ""),
+    ("a case item that is not a number", "case (a)\n y <= 8'd1: y = 1;\n endcase", "a", ""),
+    ("a case item that is not a number", "case (1'b1)\n a: y = 1;\n endcase", "a", ""),
+    ("not a statement MyHDL writes", "{y, z} = {a, a};", "a", ""),
+    ("an expression that is empty", "y = ;", "a", ""),
+    ("`;` in an expression", "y = (a;", "a", ""),
+    ("an unmatched", "y = a);", "a", ""),
+    ("`.` in an expression", "y = a.b;", "a", ""),
+    ("`=` in an expression", "y = (a = 1);", "a", ""),
+    ("`@` in an expression", "y = a @ 1;", "a", ""),
+    ("reserved word `end`", "y = a", "a", ""),
+    ("expected `=`", "y a;", "a", ""),
+    ("a range that is not plain numbers", "reg [W:0] t;\n t = a;\n y = t;", "a", ""),
+    ("declared twice", "reg t;\n reg t;\n t = a;\n y = t;", "a", ""),
+    ("declared twice", "reg l;\n l = a;\n y = l;", "a", ""),
+    (
+        "a for loop that steps another variable",
+        "integer i;\n for (i = 0; i < 2; j = j + 1) y = a;",
+        "a, j",
+        "",
+    ),
+    # a local is written before it is read, or it is static
+    ("reads its local `t` before it is written", "reg [3:0] t;\n y = t;\n t = a;", "a", ""),
+    ("reads its local `t` before it is written", "reg [3:0] t;\n t = t + a;\n y = t;", "a", ""),
+    ("only in part or conditionally", "reg [3:0] t;\n if (a) t = 1;\n y = t;", "a", ""),
+    ("only in part or conditionally", "reg [3:0] t;\n if (a) t = 1;\n t = 2;\n y = t;", "a", ""),
+    ("only in part or conditionally", "reg [3:0] t;\n t[1] = a;\n y = t;", "a", ""),
+    (
+        "reads its local `i` before it is written",
+        "integer i;\n y = a;\n for (i = 0; i < 2; i = i + 1) y = a;\n z = i;",
+        "a",
+        "",
+    ),
+    ("reads its local `i` before it is written", "integer i;\n y = i;", "a", ""),
+    ("not a statement MyHDL writes", "reg t;\n y = a;\n reg u;", "a", ""),
+]
+
+
+@pytest.mark.parametrize(
+    ("what", "body", "items", "extra"),
+    GRAMMAR,
+    ids=[f"{i}-{g[0][:24]}" for i, g in enumerate(GRAMMAR)],
+)
+def test_what_is_not_the_plain_shape_is_refused(
+    what: str, body: str, items: str, extra: str
+) -> None:
+    found = _lvl(body, items, extra)
+    assert found is not None, body
+    assert what in found.what, (found.what, body)
+    assert "@always_comb" in sv.plain_message(found) or "delay" in found.what
 
 
 @pytest.mark.parametrize(
     "block",
     [
-        "always @(a[3:0]) begin\n  y = a;\nend",  # a part select is not a signal name
-        "always @(a[i]) begin\n  y = a;\nend",
-        "always @(a & b) begin\n  y = a;\nend",
-        "always @(a, posedge clk) begin\n  y = a;\nend",  # edge and level mixed
-        "always @(posedge clk, b) begin\n  y = a;\nend",
-        "initial @(a) begin\n  y = a;\nend",  # not an always block
-        "always @a begin\n  y = a;\nend",
+        "always @(a[3:0]) begin: l\n y = a;\nend",  # a part select is not a signal name
+        "always @(a & b) begin: l\n y = a;\nend",
+        "always @(a, posedge clk) begin: l\n y = a;\nend",  # edge and level mixed
+        "always @(posedge clk, b) begin: l\n y = a;\nend",
+        "initial @(a) begin: l\n y = a;\nend",  # not an always block
+        "always @a begin: l\n y = a;\nend",
         "always @(a) y = a;",  # not `begin ... end`
-        "always @(a) begin\n  y = a;\n",  # never closed
-        "always @(a) begin\n  case (a)\n    0: y = a;\nend",  # endcase missing
-        "always @(a) begin\n  y = f(a);\nend",  # a call (MyHDL's functions are unreadable to Yosys)
-        "always @(a) begin\n  t(a);\nend",
-        "always @(a) begin\n  y = $signed(f(a));\nend",
+        "always @(a) begin\n y = a;\nend",  # unlabelled
+        "always @(a) begin: global\n y = a;\nend",  # a reserved word as the label
+        "always @(a) begin: l\n y = a;\n",  # never closed
+        "always @(a) begin: l\n case (a)\n 0: y = a;\nend",  # endcase missing
         "always @(a",  # not closed
+        "always @() begin: l\n y = a;\nend",
     ],
 )
 def test_a_level_block_the_parser_cannot_vouch_for_is_refused(block: str) -> None:
     assert _my(block) is not None, block
 
 
+def test_an_escaped_identifier_anywhere_in_a_myhdl_core_is_refused() -> None:
+    found = _my("assign \\cnt = 1'b0;\nalways @(a) begin: l\n y = a;\nend")
+    assert found is not None and "escaped identifier" in found.what
+
+
+def test_a_function_or_task_needs_automatic_in_every_front_end() -> None:
+    plain = "module m;\nfunction [7:0] f;\n input [7:0] a;\n f = a;\n endfunction\nendmodule\n"
+    for hand, core in (({"m.v"}, ()), ((), {"m.v"}), ((), ())):
+        found = sv.refusal([("m.v", plain)], hand, core)
+        assert found is not None and "automatic" in found.what
+    assert sv.refusal([("m.v", plain.replace("function [", "function automatic ["))], ()) is None
+
+
 def test_the_label_of_the_refused_block_is_named() -> None:
-    found = _my("always @(a) begin: pick\n  y = b;\nend")
-    assert found is not None and found.label == "pick" and found.line == 4
+    found = _lvl("y = b;")
+    assert found is not None and found.label == "l" and found.line == 4
 
 
 def test_the_strict_rule_still_refuses_every_level_list_in_verilog_and_amaranth() -> None:

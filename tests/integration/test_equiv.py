@@ -294,6 +294,10 @@ RTL_SEEDS = [
     ("mysens2", "myhdl", "not_proven", "guard_sim_synth_differ"),
     # Round 6: judged on the emitted Verilog, so how the Python was spelled does not matter
     ("myalias", "myhdl", "not_proven", "guard_sim_synth_differ"),  # `import always as alw`
+    # A MyHDL project whose top returns any object with a `convert()` writes its core by hand: the
+    # core is judged by its text, in the plain shape @always_comb writes or not at all
+    ("mylab4", "myhdl", "not_proven", "guard_sim_synth_differ"),  # a nested label hides a read
+    ("myfst", "myhdl", "not_proven", "guard_sim_synth_differ"),  # a static function
     # Icarus ends a `//` comment at a lone CR, Yosys and Verilator do not
     ("crhide", "verilog", "not_proven", "guard_sim_synth_differ"),
     # Verilator ends an attribute at a `*)` inside its string, Yosys does not

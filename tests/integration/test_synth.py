@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import subprocess
 import time
 from pathlib import Path
 
@@ -15,6 +14,7 @@ import pytest
 from conftest import REPO_ROOT
 from mcp import Client
 
+from integration.helpers import read_in_container
 from integration.test_emit import ENTRY, FRONTENDS, call, make_project
 from integration.test_ledger import step_states
 from integration.test_sim import counter_project
@@ -34,18 +34,12 @@ def server(tmp_path: Path, runner: DockerRunner, image: str) -> Client:
 
 
 def do_not_use_cells(image: str) -> set[str]:
-    """Every cell of the image's no_synth.cells and drc_exclude.cells."""
-    cells: set[str] = set()
-    for name in ("no_synth.cells", "drc_exclude.cells"):
-        proc = subprocess.run(
-            ["docker", "run", "--rm", "--network", "none", "--entrypoint", "cat", image,
-             f"{LISTS}/{name}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )  # fmt: skip
-        assert proc.returncode == 0, proc.stderr
-        cells |= {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
+    """Every cell of the image's no_synth.cells and drc_exclude.cells (both files, one container,
+    read with an end marker: see `read_in_container`)."""
+    text = read_in_container(
+        image, f"cat {LISTS}/no_synth.cells; echo; cat {LISTS}/drc_exclude.cells; echo"
+    )
+    cells = {ln.strip() for ln in text.splitlines() if ln.strip()}
     assert len(cells) > 200  # the lists really were read
     return cells
 
@@ -98,7 +92,8 @@ async def test_synth_counter(server: Client, tmp_path: Path, image: str, fe: str
         text = data.decode()
         used = set(CELL_INSTANCE.findall(text))
         assert any("dfxtp" in c for c in used)
-        assert not used & do_not_use_cells(image), used & do_not_use_cells(image)
+        forbidden = do_not_use_cells(image)
+        assert not used & forbidden, used & forbidden
         assert "lpflow_" not in text
         # The config files follow the spec.
         assert '"CLOCK_PERIOD": 100' in (project / "src" / "config.json").read_text()

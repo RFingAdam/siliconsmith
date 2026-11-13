@@ -44,3 +44,29 @@ def run_hardened(
         timeout=timeout,
         check=False,
     )
+
+
+END = "__SS_END__"
+
+
+def read_in_container(image: str, script: str, *, tries: int = 3) -> str:
+    """The stdout of `bash -c script` in a throw-away container, with no network.
+
+    Docker sometimes truncates the stdout of a very short-lived container when the machine is
+    busy. The script's output therefore ends with a sentinel line; if it is missing the container
+    is run again (up to `tries` times), and only then is it an error. The sentinel is removed."""
+    last = ""
+    for _ in range(tries):
+        proc = subprocess.run(
+            ["docker", "run", "--rm", "--network", "none", "--entrypoint", "bash", image, "-c",
+             f"{script}\necho {END}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )  # fmt: skip
+        last = proc.stdout + proc.stderr
+        if proc.returncode == 0 and proc.stdout.rstrip("\n").endswith(END):
+            return proc.stdout.rstrip("\n").removesuffix(END)
+    raise AssertionError(
+        f"no complete output from the container after {tries} tries: {last[-500:]}"
+    )
