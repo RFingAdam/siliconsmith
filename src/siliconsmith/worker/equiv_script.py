@@ -95,11 +95,13 @@ GUARD_CELLS = f"log {M_CELLS}\nselect -assert-none t:* t:$_* %d t:$scopeinfo %d\
 def guard_modules(name: str) -> str:
     """The netlist file may define the top module and nothing else.
 
-    A module the file defines for a sky130 cell (one the liberty read skipped, a clock gate) would
-    replace the real cell with whatever the file says. The top module and everything in it is
-    removed from the selection; a module of the file left over fails the script.
+    Run right after the file is read and BEFORE the liberty file is: then every module that
+    exists is one the file defined, and the top module (with everything in it) is removed from
+    the selection. A module the file wrote for a sky130 cell (one the liberty read skipped, a
+    clock gate) would replace the real cell with whatever the file says. This does not look at
+    `src` attributes, which the file can spell any way it likes.
     """
-    return f"log {M_MODULES}\nselect -assert-none A:src=netlist.v* tt_um_{name} %d\n"
+    return f"log {M_MODULES}\nselect -assert-none * tt_um_{name} %d\n"
 
 
 # Every flip-flop output must be a port after `expose -dff`; else some register is invisible to
@@ -109,6 +111,9 @@ GUARD_EXPOSE = (
     "expose -dff\n"
     "select -assert-none t:$*dff* t:$*DFF* %u %x:+[Q] t:$*dff* t:$*DFF* %u %d o:* %d\n"
 )
+
+
+STRIP_SYNTH_ATTRS = "attrmap -remove full_case -remove parallel_case"
 
 
 def _read_rtl(name: str) -> list[str]:
@@ -131,7 +136,14 @@ def gold(name: str, mode: str, expose: bool = False) -> str:
     """
     if mode not in ("proof", "rtl", "rtl_noinit"):
         raise ValueError(f"unknown mode {mode!r}")
-    s = [*_read_rtl(name), "proc", "flatten", DELETE_NON_HARDWARE, "opt_expr", "opt_clean"]
+    s = _read_rtl(name)
+    # `full_case` / `parallel_case` (from `(* full_case *)`, hot comments, `unique`, `priority`;
+    # Amaranth writes them on every case) tell SYNTHESIS that some selector values never happen,
+    # while a simulator keeps the old value or takes the first match. The RTL side models the
+    # simulator, so they are dropped; where synthesis used them to build other gates, the
+    # proof then finds the difference.
+    s.append(STRIP_SYNTH_ATTRS)
+    s += ["proc", "flatten", DELETE_NON_HARDWARE, "opt_expr", "opt_clean"]
     if mode == "proof":
         s += [*PRODUCTION_FSM_PASSES, "opt_clean"]
         s += [
@@ -162,10 +174,10 @@ def gate(name: str, netlist: str) -> str:
     return (
         "\n".join(
             [
-                f"read_liberty -ignore_miss_func {LIBERTY}",  # cell functions (dlclkp has none)
                 f"read_verilog {netlist}",
-                f"hierarchy -check -top tt_um_{name}",
                 guard_modules(name).rstrip("\n"),
+                f"read_liberty -ignore_miss_func {LIBERTY}",  # cell functions (dlclkp has none)
+                f"hierarchy -check -top tt_um_{name}",
                 # The netlist as Yosys understood it, before anything is changed. The host reads
                 # it for x/z constants whatever way they were spelled (`setundef` only replaces x,
                 # and Yosys's SAT reads a z as a plain 0).

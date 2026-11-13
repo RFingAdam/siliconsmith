@@ -25,8 +25,10 @@ from netlist_edit import (
     combinational_loop,
     hold_flop_on_tied_output,
     hold_flop_with_init_attribute,
+    include_directive,
     open_cell_input,
     own_cell_module,
+    own_cell_module_with_spoofed_src,
     swap_cell_type,
     z_constant,
     z_constant_spelled,
@@ -197,6 +199,8 @@ NETLIST_SEEDS = {
     "open_pin": (open_cell_input, "error", "structure"),
     # the file must not supply its own module for a library cell
     "own_cell": (own_cell_module, "error", "netlist_modules"),
+    "own_cell_src": (own_cell_module_with_spoofed_src, "error", "netlist_modules"),
+    "include": (include_directive, "error", "netlist_modules"),
     # behavioural code (a bit select) models an out-of-range index differently from a simulator
     "bit_select": (behavioural_bit_select, "error", "cells"),
 }
@@ -256,6 +260,10 @@ RTL_SEEDS = [
     # RTL that reads one way in simulation and another in synthesis
     ("synthdef", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("xoff", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # a keyword that makes synthesis build something a simulator does not run (full_case and
+    # parallel_case attributes, which Amaranth writes on every case, are modelled as the
+    # simulator sees them instead: the Amaranth seqdet in test_equiv_designs proves with them)
+    ("uniquecase", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
 
 

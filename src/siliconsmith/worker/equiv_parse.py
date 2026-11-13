@@ -62,7 +62,8 @@ GUARD_VERDICTS: dict[str, tuple[str, str, str]] = {
         "error",
         "netlist_modules",
         "the netlist file defines a module of its own besides the design (a sky130 cell written "
-        "out by hand): the check only trusts the library's cells",
+        "out by hand), or hides one behind an attribute: the check only trusts the library's "
+        "cells",
     ),
 }
 
@@ -92,13 +93,36 @@ def xz_constant(netlist_text: str) -> str | None:
 _HOT_COMMENT = re.compile(
     r"\b(?:synopsys|synthesis|pragma|cadence|altera|xilinx)\s+(?:translate|synthesis)_(?:off|on)\b"
     r"|\btranslate_(?:off|on)\b|\bsynthesis_(?:off|on)\b"
-    r"|\b(?:synopsys|synthesis)\s+(?:full|parallel)_case\b",
+    r"|\b(?:unique0?|priority)\s+(?:case[xz]?|if)\b",
     re.I,
 )
 _SYNTH_MACRO = re.compile(
     r"`\s*(?:ifdef|ifndef|elsif)\s+\(?\s*"
     r"(?:SYNTHESIS|YOSYS|FORMAL|__librelane__|__pnr__|PDK_\w*|SCL_\w*)\b"
 )
+
+
+INCLUDE = re.compile(r"`\s*include\b")
+_SRC_ATTR = re.compile(r"\(\*[^)]*\bsrc\b", re.S)
+_MODULE = re.compile(r"(?<![\w$])(?:macro)?module\s+(\\?[\w$.]+)")
+
+
+def include_directive(text: str) -> bool:
+    """True if the text has an `include: the check only reads the files it is given."""
+    return INCLUDE.search(text) is not None
+
+
+def netlist_text_problem(text: str, top: str) -> str | None:
+    """What the netlist text has that only a hand-made file has: an `include, a module besides
+    the top, or an `(* src ... *)` attribute (which could hide a module from a source check)."""
+    if include_directive(text):
+        return "an `include"
+    if _SRC_ATTR.search(text):
+        return "a `src` attribute"
+    for found in _MODULE.finditer(text):
+        if found.group(1).lstrip("\\") != top:
+            return f"a module of its own ({found.group(1)})"
+    return None
 
 
 def sim_synth_difference(rtl_text: str) -> str | None:

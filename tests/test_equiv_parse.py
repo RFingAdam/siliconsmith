@@ -123,12 +123,14 @@ def test_the_netlist_guards_name_what_they_refused(marker: str, verdict: str, re
         "/* pragma translate_off */\n",
         "//synthesis translate_off\n",
         "// SYNTHESIS TRANSLATE_OFF\n",
-        "// synopsys full_case\n",
-        "// synthesis parallel_case\n",
         "`ifdef SYNTHESIS\n",
         "`ifndef SYNTHESIS\n",
         "`  ifdef   YOSYS\n",
         "`elsif FORMAL\n",
+        "unique case (s)\n",
+        "unique0 case (s)\n",
+        "priority casez (s)\n",
+        "unique if (a)\n",
         "`ifdef __librelane__\n",
         "`ifdef __pnr__\n",
         "`ifdef PDK_sky130A\n",
@@ -146,12 +148,40 @@ def test_rtl_that_reads_differently_in_simulation_and_synthesis_is_found(text: s
         "`ifdef COCOTB_SIM\n",
         "`ifdef MY_SYNTHESIS_FLAG\n",
         "`ifdef SIMULATION\n",
+        "wire priority_hi;\n",
+        "wire [1:0] unique_id;\n",
         "assign y = a;  // translated later\n",
         "`define WIDTH 8\n",
     ],
 )
 def test_ordinary_rtl_is_not_mistaken_for_a_simulation_difference(text: str) -> None:
     assert ep.sim_synth_difference(f"module m;\n{text}endmodule\n") is None
+
+
+def test_include_is_found() -> None:
+    assert ep.include_directive('`include "other.v"\n')
+    assert ep.include_directive("`  include <x.vh>\n")
+    assert not ep.include_directive("// include the file\n")
+
+
+@pytest.mark.parametrize(
+    ("text", "found"),
+    [
+        ("module tt_um_c(a);\nendmodule\n", None),
+        ("module \\tt_um_c (a);\nendmodule\n", None),
+        (
+            "module tt_um_c(a);\nendmodule\nmodule sky130_fd_sc_hd__dlclkp_1(a);\nendmodule\n",
+            "module",
+        ),
+        ('(* src = "x.v:1" *)\nmodule tt_um_c(a);\nendmodule\n', "src"),
+        ('(* keep, src = "x.v:1" *)\nmodule tt_um_c(a);\nendmodule\n', "src"),
+        ('`include "other.v"\nmodule tt_um_c(a);\nendmodule\n', "include"),
+        ("macromodule other(a);\nendmodule\n", "module"),
+    ],
+)
+def test_the_netlist_text_may_hold_the_top_module_only(text: str, found: str | None) -> None:
+    got = ep.netlist_text_problem(text, "tt_um_c")
+    assert (got is None) if found is None else (got is not None and found in got)
 
 
 def test_no_failure_when_yosys_succeeded() -> None:

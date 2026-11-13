@@ -428,6 +428,31 @@ def test_rtl_that_reads_differently_in_simulation_and_synthesis_is_not_proven(
     assert "simulation and in synthesis" in got["message"]
 
 
+def test_an_include_in_the_rtl_is_not_proven(tmp_path: Path) -> None:
+    rtl, netlist = inputs(tmp_path)
+    (rtl / "chip.v").write_text('`include "hidden.vh"\n')
+    fake = FakeYosys("")
+    got = equiv.check(rtl, "chip", netlist, tmp_path / "scratch", yosys=fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "guard_include"
+    assert fake.calls == [] and "chip.v" in got["message"] and NOT_A_PASS in got["message"]
+
+
+@pytest.mark.parametrize(
+    "netlist",
+    [
+        "module tt_um_chip(); endmodule\nmodule sky130_fd_sc_hd__dlclkp_1(); endmodule\n",
+        '(* src = "liberty.lib:1" *)\nmodule tt_um_chip(); endmodule\n',
+        '`include "cells.v"\nmodule tt_um_chip(); endmodule\n',
+    ],
+)
+def test_a_netlist_with_a_module_of_its_own_is_an_error(tmp_path: Path, netlist: str) -> None:
+    fake = FakeYosys("")
+    rtl, path = inputs(tmp_path, netlist)
+    got = equiv.check(rtl, "chip", path, tmp_path / "scratch", yosys=fake)
+    assert got["verdict"] == "error" and got["reason"] == "netlist_modules"
+    assert got["ok"] is False and fake.calls == []
+
+
 def test_a_stage_1_time_out_is_not_proven_and_says_it_is_not_a_pass(tmp_path: Path) -> None:
     fake = FakeYosys(
         "counter_good",

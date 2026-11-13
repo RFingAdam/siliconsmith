@@ -87,8 +87,12 @@ def test_gold_modes() -> None:
 
 def test_gate_reads_the_netlist_file_and_has_every_guard_in_order() -> None:
     gate = lines(es.gate("chip", "netlist.v"))
-    assert gate[0].startswith("read_liberty -ignore_miss_func ")
-    assert gate[1] == "read_verilog netlist.v"
+    # the netlist is read FIRST: every module that exists then is one the file defined
+    assert gate[0] == "read_verilog netlist.v"
+    assert gate[1] == f"log {es.M_MODULES}"
+    assert gate[2] == "select -assert-none * tt_um_chip %d"  # nothing but the top, no `src` use
+    assert "A:src" not in "\n".join(gate)
+    assert gate[3].startswith("read_liberty -ignore_miss_func ")
     marks = [ln.removeprefix("log ") for ln in gate if ln.startswith("log GUARD")]
     assert marks == [
         es.M_MODULES,
@@ -115,12 +119,11 @@ def test_gate_reads_the_netlist_file_and_has_every_guard_in_order() -> None:
     # after flatten only plain gates (and $scopeinfo) may be left: no $shiftx, $div, ...
     assert "select -assert-none t:* t:$_* %d t:$scopeinfo %d" in gate
     assert gate.index("flatten") < gate.index("select -assert-none t:* t:$_* %d t:$scopeinfo %d")
-    # the file may define the top module only, and that is checked right after `hierarchy`
-    assert "select -assert-none A:src=netlist.v* tt_um_chip %d" in gate
-    assert gate.index("hierarchy -check -top tt_um_chip") < gate.index(
-        "select -assert-none A:src=netlist.v* tt_um_chip %d"
+    assert gate.index("read_verilog netlist.v") < gate.index("select -assert-none * tt_um_chip %d")
+    assert gate.index("select -assert-none * tt_um_chip %d") < gate.index(
+        "hierarchy -check -top tt_um_chip"
     )
-    assert gate.index("select -assert-none A:src=netlist.v* tt_um_chip %d") < gate.index("flatten")
+    assert gate.index("hierarchy -check -top tt_um_chip") < gate.index("flatten")
     assert "select -assert-none t:$tribuf t:$_TBUF_" in gate
     assert any(ln.startswith("select -assert-none t:$dffsr t:$dffsre") for ln in gate)
 
@@ -154,6 +157,18 @@ def test_the_state_check_exposes_every_flop_before_async2sync_and_fails_closed()
         script = lines(es.gold("chip", mode, expose=True))
         assert script.index("expose -dff") < script.index("async2sync")
         assert "expose -dff" not in es.gold("chip", mode)  # only the state check exposes
+
+
+def test_every_rtl_side_models_the_simulator_not_full_case_or_parallel_case() -> None:
+    """Synthesis takes `full_case` / `parallel_case` as "other selector values never happen"; a
+    simulator does not. The RTL side drops them (before `proc` turns them into logic), so the
+    proof finds the difference where synthesis used them."""
+    for mode in ("proof", "rtl", "rtl_noinit"):
+        rows = lines(es.gold("chip", mode))
+        strip = "attrmap -remove full_case -remove parallel_case"
+        assert strip in rows
+        assert rows.index("hierarchy -check -top tt_um_chip") < rows.index(strip)
+        assert rows.index(strip) < rows.index("proc")
 
 
 def test_the_clock_guard_pins() -> None:

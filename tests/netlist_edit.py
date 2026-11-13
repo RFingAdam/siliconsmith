@@ -183,3 +183,19 @@ def behavioural_bit_select(text: str, pin: str = "uio_out[0]") -> tuple[str, str
     """
     tie = _cell(text, rf"conb_1 \S+ \(\s*\.LO\({re.escape(pin)}\)")
     return _replace(text, tie, f"assign {pin} = ui_in[ui_in[2:0]];"), f"{pin} = ui_in[ui_in[2:0]]"
+
+
+def own_cell_module_with_spoofed_src(text: str) -> tuple[str, str]:
+    """`own_cell_module` with a `src` attribute on the module that names the netlist file's top:
+    a check that finds foreign modules by their `src` attribute would be fooled."""
+    edited, _ = own_cell_module(text)
+    edited = edited.replace(
+        "module sky130_fd_sc_hd__dlclkp_1",
+        '(* src = "tt_um_counter.v:1" *)\nmodule sky130_fd_sc_hd__dlclkp_1',
+    )
+    return edited, "dlclkp_1 defined by the netlist file, with a spoofed src attribute"
+
+
+def include_directive(text: str) -> tuple[str, str]:
+    """Start the netlist with an `include of another file."""
+    return '`include "cells.v"\n' + text, "an include line in the netlist"

@@ -25,7 +25,7 @@ and turns what they find into one verdict.
     reason       None for equivalent; else a machine code: rtl_initial_value,
                  initial_values, power_up_dependent, unreadable_counterexample, base_case,
                  unproven_points, unpaired_outputs, time_limit, guard_clocking, guard_tristate,
-                 guard_async_set_reset, guard_sim_synth_differ, structure, cells,
+                 guard_async_set_reset, guard_sim_synth_differ, guard_include, structure, cells,
                  netlist_modules, xz_constant,
     method       "equiv_induct" | "k-induction length L" | None
     message      one or two plain-English sentences; not_proven ends with "This is NOT a pass."
@@ -457,10 +457,27 @@ def _check(
             "undefined. A correct netlist has none.",
         )
 
+    # the netlist file is a flat list of library cells: no include, no module of its own
+    if (odd := equiv_parse.netlist_text_problem(text, f"tt_um_{name}")) is not None:
+        return r.verdict(
+            "error",
+            "netlist_modules",
+            f"The netlist file has {odd}: it must hold the design's one module and library "
+            "cells only.",
+        )
+
     # the RTL must read the same in simulation and in synthesis (the proof reads it the way the
     # synthesis does: `ifdef SYNTHESIS and translate_off are honoured, a simulator reads the rest)
     for fname in ("project.v", f"{name}.v"):
         rtl_text = (scratch / fname).read_text(encoding="utf-8", errors="replace")
+        if equiv_parse.include_directive(rtl_text):
+            return r.verdict(
+                "not_proven",
+                "guard_include",
+                f"Could not prove equivalence: the RTL ({fname}) uses `include. The check only "
+                "reads project.v and the design file, so it cannot see what an included file "
+                "does. Put the code in the design file.",
+            )
         if (diff := equiv_parse.sim_synth_difference(rtl_text)) is not None:
             return r.verdict(
                 "not_proven",
