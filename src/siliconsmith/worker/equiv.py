@@ -21,9 +21,14 @@ and turns what they find into one verdict.
 PROVEN: the netlist implements the RTL as Yosys reads it, once comments, attributes and macros are
 out of the way (synthesis did not change the logic; an `x` in the RTL is a don't-care). BEST
 EFFORT: `equiv_sv.refusal` refuses (`not_proven`, reason `guard_sim_synth_differ`) the common
-constructs that a simulator and Yosys read differently. NOT detected: an out-of-range index or a
-division by zero, a constant that is x to a simulator steering a case inside a block, the values
-inside a generate loop or module copy, and anything that depends on simulation event order;
+constructs that a simulator and Yosys read differently, and `_tree_checks` what is judged on
+Verilator's syntax tree (an impure function, a combinational block that can read a signal before
+it writes it on some path, a parameter with an x or z bit, a different elaboration). NOT
+detected: an out-of-range index or a division by zero, a constant that is x to a simulator
+steering a case inside a block, the values inside a generate loop or module copy, a constant
+expression that Yosys evaluates differently from a simulator (a size cast, an unbased `'1` or
+`$rtoi` inside a localparam, an untyped localparam whose value overflows), and anything else that
+depends on simulation event order;
 gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour.
 
 ## Verdict
@@ -40,7 +45,8 @@ gate-level simulation (`run_tests` with `gl=true`) is the check against simulati
                  netlist_modules, xz_constant,
     method       "equiv_induct" | "k-induction length L" | None
     message      one or two plain-English sentences; not_proven ends with "This is NOT a pass."
-    seconds      {stage1, initdep, base, stage4, total}: seconds per stage that ran
+    seconds      {tree, elab, stage1, initdep, base, stage4, total}: seconds per stage that ran
+                 (tree: Verilator's syntax tree, elab: Yosys's elaboration of the RTL)
     stage1       {status, proven, unproven, unproven_signals, unpaired_outputs} or None
     base         {status, run, cycle, differs} or None
     first_mismatch  {cycle, differs: [{signal, rtl, netlist}]} or None. Cycle 1 is power-up with
@@ -332,45 +338,28 @@ def _stage1(r: _Run, name: str, seq: int) -> dict[str, Any]:
 # -- stage 3 ----------------------------------------------------------------------------------
 
 
-def _power_up_difference_is_real(
-    r: _Run, points: list[equiv_script.Point], base: dict[str, Any]
-) -> bool | dict[str, Any]:
-    """The X run found outputs that the RTL defines and the netlist does not match. True if some
-    defined power-up state of the netlist really changes them; False if the X run was only too
-    pessimistic (see `equiv_script.confirm_script`); else a verdict (the run cannot be read)."""
-    inputs = {k: v for k, v in base["inputs"].items() if v is not None}
-    if (
-        base["cycle"] != 1
-        or not inputs
-        or any(re.fullmatch(r"[01]+", v) is None for v in inputs.values())
-    ):
-        return True  # only the power-up cycle is re-checked; anything else stands as found
-    labels = {p.label: i for i, p in enumerate(points)}
-    pins = [str(d["signal"]) for d in base["differs"]]
-    which = sorted(labels[x] for x in pins if x in labels and x.startswith(equiv_script.OUTPUTS))
-    script = equiv_script.confirm_script(points, which, {k: int(v, 2) for k, v in inputs.items()})
-    code, log = r.yosys(r.scratch, script, "baseconfirm", r.clock.left())
-    if code == 0 and equiv_parse.SAT_FAILED in log:
-        return True
-    if code == 0 and log.count(equiv_parse.SAT_PROVED) == 1:
-        return False
-    return r.failed(
-        equiv_parse.guard_failure(code, log)
-        or {
+def _no_model(what: str, exc: Exception) -> dict[str, Any]:
+    return {
+        "status": "fail",
+        "failure": {
             "verdict": "error",
             "reason": "yosys_failed",
-            "message": "the power-up confirmation printed no clear result",
+            "message": f"{what} cannot be built: {exc}",
             "detail": [],
         },
-        "Could not confirm the power-up difference",
-    )
+    }
 
 
 def _base(r: _Run, points: list[equiv_script.Point], steps: int) -> dict[str, Any]:
     """Base case of the stage-1 induction (X run and DEF run). `status`: ok | cex | fail."""
     il = (r.scratch / "equiv.il").read_text(encoding="utf-8", errors="replace")
-    (r.scratch / "base.il").write_text(equiv_parse.base_model(il, points), encoding="utf-8")
-    code, log = r.yosys(r.scratch, equiv_script.base_script(points, steps), "base", r.clock.left())
+    try:
+        model, wires = equiv_parse.base_model(il, points)
+    except ValueError as exc:  # a state whose power-up value cannot be set: never a pass
+        return _no_model("the base case", exc)
+    (r.scratch / "base.il").write_text(model, encoding="utf-8")
+    script = equiv_script.base_script(points, steps, wires)
+    code, log = r.yosys(r.scratch, script, "base", r.clock.left())
     if code != 0:
         failure = equiv_parse.guard_failure(code, log) or {
             "verdict": "error",
@@ -399,8 +388,16 @@ def _base(r: _Run, points: list[equiv_script.Point], steps: int) -> dict[str, An
 def _miter(
     r: _Run, tag: str, golds: str, gates: str, init: str, induct: str, depth: int
 ) -> dict[str, Any]:
-    """One `sat` run on a miter. `status`: cex | proven | no_cex | fail."""
-    script = equiv_script.miter(golds, gates, tag, init, induct, depth)
+    """One `sat` run on a miter. `status`: cex | proven | no_cex | fail. `init` "per_side" (a
+    bounded search only): the power-up of the base case, RTL registers x and netlist flip-flops
+    any defined value (`_per_side`), else every flip-flop `undef` or `zero`."""
+    if init == "per_side":
+        script_or_end = _per_side(r, tag, golds, gates, depth)
+        if isinstance(script_or_end, dict):
+            return script_or_end
+        script = script_or_end
+    else:
+        script = equiv_script.miter(golds, gates, tag, init, induct, depth)
     code, log = r.yosys(r.scratch, script, tag, r.clock.left())
     if "model found for base case: FAIL" in log:
         return {"status": "cex", **equiv_parse.parse_cex(log)}
@@ -434,6 +431,33 @@ def _miter(
         "detail": [],
     }
     return {"status": "fail", "failure": failure}
+
+
+def _per_side(r: _Run, tag: str, golds: str, gates: str, depth: int) -> str | dict[str, Any]:
+    """Write the miter (`miter.il`), add the power-up wires of each side (`miter_ff.il`) and
+    return the script of the bounded search; or how `_miter` ends when that cannot be done."""
+    for stale in ("miter.il", "miter_ff.il"):  # a file left by an earlier run is never read
+        (r.scratch / stale).unlink(missing_ok=True)
+    code, log = r.yosys(
+        r.scratch, equiv_script.miter_model(golds, gates), f"{tag}_model", r.clock.left()
+    )
+    if code is None:
+        return {"status": "no_cex", "covered": 0, "stopped": "time limit"}
+    if code != 0:
+        failure = equiv_parse.guard_failure(code, log) or {
+            "verdict": "error",
+            "reason": "yosys_failed",
+            "message": "the miter for the check from reset could not be built",
+            "detail": [],
+        }
+        return {"status": "fail", "failure": failure}
+    try:
+        il = (r.scratch / "miter.il").read_text(encoding="utf-8", errors="replace")
+        model, wires = equiv_parse.miter_model(il)
+    except (OSError, ValueError) as exc:
+        return _no_model("the check from reset", exc)
+    (r.scratch / "miter_ff.il").write_text(model, encoding="utf-8")
+    return equiv_script.miter_bmc(tag, wires, depth)
 
 
 def _mismatch(got: dict[str, Any]) -> dict[str, Any] | None:
@@ -515,8 +539,6 @@ def _comb_order(scratch: Path, sources: list[tuple[str, str]], name: str) -> tup
     for fname, text in sources:
         copy = copies[fname] if copies[fname] is not None else equiv_sv.clean(text)
         (folder / fname).write_bytes(str(copy).encode("latin-1"))
-    # -fno-dfg: Verilator's dataflow pass would fold a one-assignment `always` into the code that
-    # reads it, and the block would have no node at its keyword for the position cross-check
     command = [
         "verilator", "--lint-only", "-Wall", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
         "-Wno-DECLFILENAME", "--top-module", f"tt_um_{name}", "project.v", f"{name}.v",
@@ -561,41 +583,51 @@ def _comb_order(scratch: Path, sources: list[tuple[str, str]], name: str) -> tup
 
 
 def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str, Any] | None:
-    """A `not_proven` (or `error`) verdict if Verilator's reading of the RTL cannot be trusted or
-    shows an impure function, else None.
+    """A `not_proven` (or `error`) verdict if Verilator's reading of the RTL cannot be trusted,
+    shows an impure function or a combinational block that can read a signal before it writes
+    it, else None.
 
     A simulator's `always @*` does not re-run when a signal read only inside a called function
     changes; synthesis inlines the function. Scope cannot be judged from tokens, so Verilator
     resolves the names (`--json-only` writes its syntax tree, `equiv_tree` reads it) on the
     cleaned RTL that Yosys reads, with the top module and flags of the always_comb pass. It runs
-    only if the RTL has a `function`, a `task` or an always block. In this order, and like the
-    always_comb pass it must not pass by giving up:
+    for every design (a parameter with an x bit needs no block or function to matter: a generate
+    `case` of continuous assignments is enough). In this order, and like the always_comb pass it
+    must not pass by giving up:
 
     1. Verilator: the run takes longer than the emit lint may: `time_limit`; a failing exit code,
        no readable tree, or a node the walker does not understand: `guard_sim_synth_differ`,
        naming the first error. Verilator cannot be started at all: inconclusive, logged, nothing
        is refused (it cannot happen in practice: the worker runs inside the toolchain image,
        which holds Verilator, and the emit lint that ran before this check would have failed).
-    2. Yosys elaborates the same cleaned RTL to RTLIL (only if Verilator gave a tree). A failure
+    2. `equiv_tree.xz_parameter`: no parameter, localparam or genvar-derived constant may have an
+       x or z bit (`1/0`): the tools can elaborate it differently.
+    3. Yosys elaborates the same cleaned RTL to RTLIL (only if Verilator gave a tree). A failure
        or a time out is the verdict of `equiv_parse.guard_failure`, never a pass.
-    3. `equiv_elab.unmatched`: every block and call Yosys keeps must be in Verilator's tree
-       (they can elaborate a constant that is x, such as `1/0`, differently), and no function
-       is called by a hierarchical name.
-    4. `equiv_tree.impure_function`: a function may read only its arguments.
+    4. `equiv_elab.unmatched`: every block and call Yosys keeps must be in Verilator's tree
+       (they can elaborate a constant that is x, such as `1/0`, differently; Verilator drops a
+       call that a constant makes dead), and no function is called by a hierarchical name.
+    5. `equiv_tree.impure_function`: a function may read only its arguments.
+    6. `equiv_tree.early_read`: a combinational block may not read a signal before it writes it
+       on any path through the block (the ALWCOMBORDER pass, `_comb_order`, runs after this as
+       a second line).
     """
-    if not any(equiv_sv.needs_tree(text) for _, text in sources):
-        return None
     cleaned = {fname: equiv_sv.clean(text) for fname, text in sources}
     folder = r.scratch / "func_tree"
     folder.mkdir(parents=True, exist_ok=True)
     for fname, text in cleaned.items():
         (folder / fname).write_bytes(text.encode("latin-1"))
     top = f"tt_um_{name}"
+    # -fno-dfg: Verilator's dataflow pass would fold a one-assignment `always` into the code that
+    # reads it, and the block would have no node at its keyword for the position cross-check
+    # (nor statements for the read-before-write walk)
     command = [
         "verilator", "--json-only", "-fno-dfg", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
         "-Wno-DECLFILENAME", "--top-module", top, "project.v", f"{name}.v",
     ]  # fmt: skip
+    t0 = time.monotonic()
     run = _run_verilator(command, folder)
+    r.timed("tree", t0)
     if run is None:
         log.warning(
             "verilator could not be started: the Verilator-based checks "
@@ -624,9 +656,13 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     try:
         tree = json.loads((folder / "obj_dir" / f"V{top}.tree.json").read_text("latin-1"))
         meta = json.loads((folder / "obj_dir" / f"V{top}.tree.meta.json").read_text("latin-1"))
+        unknown = equiv_tree.xz_parameter(tree, meta, list(cleaned))
         found = equiv_tree.impure_function(tree, meta, list(cleaned))  # judged after Yosys
+        early = equiv_tree.early_read(tree, meta, list(cleaned))  # judged after purity
     except (OSError, ValueError, equiv_tree.TreeError, RecursionError) as exc:
         return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
+    if unknown is not None:  # the root cause of a different elaboration: named first
+        return refuse("guard_sim_synth_differ", f"{unknown.sentence}.")
 
     # Yosys's elaboration of the same text, to see which blocks it keeps
     elab = r.scratch / "elab"
@@ -650,6 +686,8 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         return refuse("guard_sim_synth_differ", differ)
     if found is not None:
         return refuse("guard_sim_synth_differ", f"{found.sentence}.")
+    if early is not None:
+        return refuse("guard_sim_synth_differ", f"{early.sentence}.")
     return None
 
 
@@ -816,8 +854,8 @@ def _check(
             return done
 
     if proven1:
-        return _proven_path(r, name, s1, points, flops, rtl, gate, seq, cycles)
-    return _kinduction_path(r, s1, rtl, gate, cycles)
+        return _proven_path(r, name, s1, points, flops, gate, seq, cycles)
+    return _kinduction_path(r, name, s1, rtl, gate, cycles)
 
 
 MEMORY_HINT = (
@@ -902,7 +940,6 @@ def _proven_path(
     s1: dict[str, Any],
     points: list[equiv_script.Point],
     flops: bool,
-    rtl: str,
     gate: str,
     seq: int,
     cycles: int,
@@ -916,13 +953,7 @@ def _proven_path(
     if base["status"] == "fail":
         return r.failed(base["failure"], "Could not check the base case")
     x_outputs = base["status"] == "cex" and base["run"] == "X" and base["outputs_differ"]
-    pessimistic = False
     if x_outputs:
-        real = _power_up_difference_is_real(r, points, base)
-        if isinstance(real, dict):
-            return real
-        pessimistic = not real
-    if x_outputs and not pessimistic:
         r.out["first_mismatch"] = {"cycle": base["cycle"], "differs": base["differs"]}
         pins = [d for d in base["differs"] if str(d["signal"]).startswith(equiv_script.OUTPUTS)]
         r.out["trace"] = [
@@ -937,11 +968,15 @@ def _proven_path(
             "not_equivalent",
             None,
             f"At {_when(base['cycle'])}: {_points(base['differs'])}. The RTL defines these "
-            "values but the netlist does not match them for some power-up state (x means the "
-            "value depends on the power-up state: a register that reset does not set).",
+            "values even with every register powering up x, but the netlist differs from them for "
+            "some power-up state of its flip-flops (the netlist values shown are for one such "
+            "state).",
         )
     t4 = time.monotonic()
-    ref = _miter(r, "bmc", rtl, gate, "undef", "base", cycles)
+    # The RTL without its initial values: stage 2 showed they change nothing from cycle 2 on, and
+    # an `init` would fix a power-up value that the RTL's x power-up must leave open.
+    noinit = equiv_script.stash(equiv_script.gold(name, "rtl_noinit"), name, "gold")
+    ref = _miter(r, "bmc", noinit, gate, "per_side", "base", cycles)
     r.timed("stage4", t4)
     if ref["status"] == "fail":
         return r.failed(ref["failure"], "Could not run the check from reset")
@@ -960,12 +995,9 @@ def _proven_path(
     r.out["cycles_covered"] = ref["covered"]
     if base["status"] == "cex":
         what = (
-            f"the power-up (x) run could not show that the netlist matches the RTL at "
-            f"{_when(base['cycle'])}: {_points(base['differs'])} (it spreads x gate by gate), "
-            "and no defined power-up state was found that makes an output differ"
-            if pessimistic
-            else f"internal signal(s) {_points(base['differs'])} differ from the RTL at "
-            f"{_when(base['cycle'])} for some power-up state"
+            f"internal signal(s) {_points(base['differs'])} differ from the RTL at "
+            f"{_when(base['cycle'])} for some power-up state of the netlist's flip-flops, although "
+            "the RTL defines them with every register at x"
             if base["run"] == "X"
             else f"{_points(base['differs'])} differ from the RTL at {_when(base['cycle'])} when "
             "the netlist's registers power up equal to the RTL registers they are paired with; "
@@ -1008,9 +1040,17 @@ def _x_hint(fm: dict[str, Any]) -> str:
 
 
 def _kinduction_path(
-    r: _Run, s1: dict[str, Any], rtl: str, gate: str, cycles: int
+    r: _Run, name: str, s1: dict[str, Any], rtl: str, gate: str, cycles: int
 ) -> dict[str, Any]:
-    """Stage 1 did not prove every point: k-induction on the outputs, twice (stage 4)."""
+    """Stage 1 did not prove every point: k-induction on the outputs, twice (stage 4).
+
+    The first run starts every flip-flop of both sides at x, and x spreads through the netlist
+    gate by gate: a mux whose two inputs are equal gives x for an x select, where every real
+    power-up state gives the same value. So a difference found there whose netlist bits are all
+    x is not reported as it is: the bounded search with the per-side power-up of the referee
+    (RTL registers x, netlist flip-flops any defined value: exact) runs over the same cycles,
+    and only a difference it finds is `not_equivalent`. A netlist bit that is defined there and
+    differs is a difference for every power-up state."""
     t4 = time.monotonic()
     res: dict[str, dict[str, Any]] = {}
     runs: tuple[tuple[str, str, str], ...] = (
@@ -1032,6 +1072,18 @@ def _kinduction_path(
             fm = _mismatch(got)
             if fm is None:
                 return _unreadable_cex(r, got, "from reset")
+            if tag == "kind_x" and all(d["netlist"] in ("x", None) for d in fm["differs"]):
+                # only x spreading shows it: look again with each flip-flop at a defined value
+                noinit = equiv_script.stash(equiv_script.gold(name, "rtl_noinit"), name, "gold")
+                got = _miter(r, "kind_x_check", noinit, gate, "per_side", "base", cycles)
+                res[tag] = {k: v for k, v in got.items() if k not in ("trace", "failure")}
+                if got["status"] == "fail":
+                    return r.failed(got["failure"], "Could not run the check from reset")
+                if got["status"] != "cex":  # not confirmed: the induction did not close
+                    continue
+                fm = _mismatch(got)
+                if fm is None:
+                    return _unreadable_cex(r, got, "from reset")
             r.out.update(first_mismatch=fm, trace=_trace(got["trace"], fm))
             if tag == "kind_x":
                 return r.verdict(

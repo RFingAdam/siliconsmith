@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 from siliconsmith.worker import equiv_script as es
@@ -267,9 +268,95 @@ def equiv_points(equiv_json: str) -> tuple[list[es.Point], int, int]:
     return points, len(ffq["_gold"]), len(ffq["_gate"])
 
 
-def base_model(equiv_il: str, points: list[es.Point]) -> str:
-    """`equiv.il` plus a named wire for each side of every point (`eqa_i`, `eqb_i`)."""
-    end = equiv_il.rstrip().rfind("\nend")
+# The flip-flops the guards let through (`GUARD_CLOCK`): the RTL side's `$dff` (rising edge) and
+# the netlist side's `$_DFF_P_`. Any other cell with state is refused by the power-up models.
+FLIP_FLOPS = frozenset({"$dff", "$_DFF_P_"})
+_STATEFUL = re.compile(
+    r"dff|latch|mem|anyinit|anyconst|anyseq|allconst|allseq|initstate|fsm|^\$_?ff_?$|^\$_?sr(_|$)",
+    re.I,
+)
+_CELL = re.compile(r"^  cell (\S+) (\S+)$")
+_WIRE = re.compile(r"^  wire (?:.* )?(\S+)$", re.M)
+SIDES = ("gold", "gate")
+
+
+def side_by_suffix(cell: str) -> str | None:
+    """The side of a cell of the stage-1 model: `equiv_make` names them `<name>_gold`/`_gate`."""
+    return next((k for k in SIDES if cell.endswith(f"_{k}")), None)
+
+
+def side_by_prefix(cell: str) -> str | None:
+    r"""The side of a cell of a flattened miter: `flatten` names them after the instance first
+    (`\gold.core.r`, `$flatten\gate.\_093_.$auto$...`)."""
+    head, dot, _ = cell.removeprefix("$flatten").removeprefix("\\").partition(".")
+    return head if dot and head in SIDES else None
+
+
+def flip_flops(il: str, side_of: Callable[[str], str | None]) -> dict[str, list[tuple[str, int]]]:
+    """The Q of every flip-flop of a one-module RTLIL model, as signal text with its width, for
+    each side (`side_of` reads the side from the cell name). Raises ValueError when the power-up
+    value of some state cannot be set: a cell with state that is not one of `FLIP_FLOPS` (a
+    latch, a memory, another flip-flop type), a flip-flop of neither side or without a Q or
+    width, an `init` attribute (it would fix a power-up value) or more than one module."""
+    if len(re.findall(r"^module ", il, re.M)) != 1:
+        raise ValueError("the proof model is not one module")
+    if re.search(r"^\s*attribute \\init ", il, re.M):
+        raise ValueError("the proof model has an initial value")
+    found: dict[str, list[tuple[str, int]]] = {k: [] for k in SIDES}
+    cell: tuple[str, str] | None = None
+    q: str | None = None
+    width: int | None = None
+    for line in il.splitlines():
+        start = _CELL.match(line)
+        if start is not None:
+            cell, q = (start.group(1), start.group(2)), None
+            width = 1 if cell[0] == "$_DFF_P_" else None
+            if cell[0] not in FLIP_FLOPS and _STATEFUL.search(cell[0]):
+                raise ValueError(f"the proof model has a cell with state it cannot set: {cell[0]}")
+        elif cell is None:
+            continue
+        elif line.startswith("    connect \\Q "):
+            q = line[len("    connect \\Q ") :].strip()
+        elif cell[0] == "$dff" and line.startswith("    parameter \\WIDTH "):
+            width = int(line.split()[-1])
+        elif line == "  end":
+            if cell[0] in FLIP_FLOPS:
+                side = side_of(cell[1])
+                if side is None or not q or not width:
+                    raise ValueError(f"a flip-flop of the proof model cannot be read: {cell[1]}")
+                found[side].append((q, width))
+            cell = None
+    return found
+
+
+def _power_up_wires(
+    il: str, add: list[str], side_of: Callable[[str], str | None]
+) -> tuple[str, dict[str, str]]:
+    """`il` plus the lines `add` and, for each side with flip-flops, one wire that holds the Q
+    of every flip-flop of that side. Returns the model and `{side: wire name}` (a name the model
+    does not use yet). Raises ValueError like `flip_flops`."""
+    used = set(_WIRE.findall(il))
+    wires: dict[str, str] = {}
+    lines = list(add)
+    for side, flops in flip_flops(il, side_of).items():
+        if not flops:
+            continue
+        name, n = f"ff_{side}", 0
+        while f"\\{name}" in used:
+            n += 1
+            name = f"ff_{side}_{n}"
+        wires[side] = name
+        lines += [
+            f"  wire width {sum(w for _, w in flops)} \\{name}",
+            f"  connect \\{name} {{ {' '.join(q for q, _ in flops)} }}",
+        ]
+    end = il.rstrip().rfind("\nend")
+    return il[:end] + "\n" + "\n".join(lines) + il[end:], wires
+
+
+def base_model(equiv_il: str, points: list[es.Point]) -> tuple[str, dict[str, str]]:
+    """`equiv.il` plus a named wire for each side of every point (`eqa_i`, `eqb_i`) and the
+    power-up wires of `_power_up_wires` (stage 3, `es.base_script`)."""
     add: list[str] = []
     for i, p in enumerate(points):
         add += [
@@ -278,7 +365,13 @@ def base_model(equiv_il: str, points: list[es.Point]) -> str:
             f"  connect \\eqa_{i} {p.a}",
             f"  connect \\eqb_{i} {p.b}",
         ]
-    return equiv_il[:end] + "\n" + "\n".join(add) + equiv_il[end:]
+    return _power_up_wires(equiv_il, add, side_by_suffix)
+
+
+def miter_model(miter_il: str) -> tuple[str, dict[str, str]]:
+    """The flattened miter (`miter.il`) plus the power-up wires of `_power_up_wires` (the
+    referee of stage 4, `es.miter_bmc`)."""
+    return _power_up_wires(miter_il, [], side_by_prefix)
 
 
 # -- stage 3: the base case ------------------------------------------------------------------

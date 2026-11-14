@@ -234,12 +234,74 @@ def test_a_package_scoped_call_is_anchored_at_the_function_name() -> None:
     assert ee.anchor(text, 2, 14) == ee.Anchor("call", "mix", 2, 19)
 
 
-def test_an_array_element_is_no_call() -> None:
+def test_an_array_element_is_anchored_as_an_array_and_needs_its_calls() -> None:
     # Yosys turns `assign q = taps[i];` into a process of its own, at the array name
     text = "module m;\n  assign q = taps [i];\nendmodule"
-    assert ee.anchor(text, 2, 14) == ee.Anchor("other", "taps", 2, 14)
-    both = ee.unmatched(tree(), META, il("core.v:2.14-2.22"), {"core.v": text})
-    assert both is None
+    assert ee.anchor(text, 2, 14) == ee.Anchor("array", "taps", 2, 14)
+    assert ee.unmatched(tree(), META, il("core.v:2.14-2.22"), {"core.v": text}) is None
+    text = "module m;\n  assign m[f(i)] = g(a);\nendmodule"
+    found = ee.anchor(text, 2, 10)
+    assert found == ee.Anchor("array", "m", 2, 10)
+    calls = ee.initializer_calls(text, found)
+    assert [(c.word, c.line, c.col) for c in calls] == [("f", 2, 12), ("g", 2, 20)]
+    rtlil = il("core.v:2.10-2.24")
+    assert ee.unmatched(tree(call(2, 12), call(2, 20)), META, rtlil, {"core.v": text}) is None
+    got = ee.unmatched(tree(call(2, 12)), META, rtlil, {"core.v": text})
+    assert got is not None and "call of `g` at core.v, line 2" in got
+
+
+PORTS = "module m;\n  sub u (.a(x),\n    .q(arr[0]),\n    .r(f(b)));\nendmodule"
+
+
+def test_a_port_connection_is_anchored_at_its_name_from_the_blanks_before_it() -> None:
+    assert ee.anchor(PORTS, 3, 4) == ee.Anchor("port", "q", 3, 6)  # on the blanks before `.q(`
+    assert ee.anchor(PORTS, 3, 5) == ee.Anchor("port", "q", 3, 6)  # on the dot
+    assert ee.anchor(PORTS, 2, 40) == ee.Anchor("port", "q", 3, 6)  # past the end of the row
+    assert ee.anchor(PORTS, 2, 10) == ee.Anchor("port", "a", 2, 11)  # right after `(`
+    # Only after `(` or `,`: anything else before the dot is not a port connection.
+    assert ee.anchor("x = (a)  .q(b);", 1, 8) is None
+
+
+def test_the_calls_of_a_port_connection_must_be_in_the_tree() -> None:
+    rtlil = il("core.v:4.4-4.13")
+    found = ee.anchor(PORTS, 4, 4)
+    assert found == ee.Anchor("port", "r", 4, 6)
+    assert [(c.word, c.line, c.col) for c in ee.initializer_calls(PORTS, found)] == [("f", 4, 8)]
+    assert ee.unmatched(tree(call(4, 8)), META, rtlil, {"core.v": PORTS}) is None
+    got = ee.unmatched(tree(), META, rtlil, {"core.v": PORTS})
+    assert got is not None and "call of `f` at core.v, line 4" in got
+    assert "EN && f(a)" in got and "generate" in got  # the dead-call advice
+
+
+def test_a_call_or_a_value_split_over_lines_is_read_past_the_line_end() -> None:
+    text = (
+        "module m;\n  assign y = rd\n    (ui_in);\n  assign z = g\n    .f(a);\n"
+        "  wire w\n    = h(a);\nendmodule"
+    )
+    assert ee.anchor(text, 2, 14) == ee.Anchor("call", "rd", 2, 14)
+    assert ee.anchor(text, 4, 14) == ee.Anchor("call", "g", 4, 14)  # and the dotted rule refuses it
+    found = ee.anchor(text, 6, 8)
+    assert found == ee.Anchor("decl", "w", 6, 8)
+    assert [(c.word, c.line, c.col) for c in ee.initializer_calls(text, found)] == [("h", 7, 7)]
+
+
+def test_the_value_scan_counts_brackets() -> None:
+    text = "module m;\n  wire [7:0] x = f(a, g(b)), y = h(c);\n  sub u (.q(k(d)));\nendmodule"
+    found = ee.anchor(text, 2, 14)
+    assert found == ee.Anchor("decl", "x", 2, 14)
+    # the `,` inside f(...) does not end the value, the one after it does: not `h`
+    assert [(c.word, c.col) for c in ee.initializer_calls(text, found)] == [("f", 18), ("g", 23)]
+    port = ee.anchor(text, 3, 10)
+    assert port == ee.Anchor("port", "q", 3, 11)
+    # the `)` that closes the port list ends the value
+    assert [(c.word, c.col) for c in ee.initializer_calls(text, port)] == [("k", 13)]
+
+
+def test_an_escaped_name_in_a_value_is_a_name_not_a_call() -> None:
+    text = "module m;\n  wire w = \\my(a) + f(b), v = g(c);\nendmodule"
+    found = ee.anchor(text, 2, 8)
+    assert found == ee.Anchor("decl", "w", 2, 8)
+    assert [(c.word, c.col) for c in ee.initializer_calls(text, found)] == [("f", 21)]
 
 
 def test_a_hierarchical_call_is_still_a_call_for_the_position_check() -> None:
@@ -291,7 +353,8 @@ def test_a_dotted_call_in_a_file_that_is_not_ours_is_not_judged() -> None:
 
 
 def test_a_position_that_cannot_be_placed_fails_closed() -> None:
-    assert ee.unmatched(HAVE, META, il("core.v:1.1-1.5"), CLEAN) is None  # `module`: no kind
+    got = ee.unmatched(HAVE, META, il("core.v:1.1-1.5"), CLEAN)  # `module`: no known kind
+    assert got is not None and "cannot place a block that Yosys keeps (core.v, line 1)" in got
     got = ee.unmatched(HAVE, META, il("core.v:2.1-2.2"), CLEAN)  # blanks only
     assert got is not None and "cannot place a block that Yosys keeps (core.v, line 2)" in got
 

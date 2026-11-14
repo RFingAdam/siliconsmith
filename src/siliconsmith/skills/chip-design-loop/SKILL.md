@@ -55,7 +55,7 @@ An x on a pin has two usual causes: an input the test never drove (`ui_in`, `uio
 
 `check_equivalence` synthesizes again by itself, then a proof program (Yosys) compares the gates with your RTL. A small design takes about 10 seconds, big ones a minute or more. Read the first line of the summary, then run `status`.
 
-"Equivalent" means: every output value the RTL defines matches the gates, for every power-up state of the flip-flops. Where the RTL says x (do not care) the gates may do anything. Registers without a reset are only compared for a consistent power-up. It catches a register in the gates that reset never sets.
+"Equivalent" means: every output value the RTL defines matches the gates, for every power-up state of the flip-flops (every 0/1 start value of each gate flip-flop, exactly). Where the RTL says x (do not care) the gates may do anything. Registers without a reset are only compared for a consistent power-up. It catches a register in the gates that reset never sets.
 
 A register that keeps an initial value (`reg x = 0`, `initial`, Amaranth `init=`) which reset does not set comes back `not_equivalent` (`rtl_initial_value`) or not proven (`initial_values`): reset it with `rst_n`.
 
@@ -69,15 +69,17 @@ It does not catch bugs in the RTL itself, including a wrong reset in the RTL: bo
 
 "Equivalent" means synthesis did not change your logic: the gates match the RTL as Yosys reads it. A simulator reads some constructs differently, so the check refuses the common ones as not proven (`guard_sim_synth_differ`) and names them: macros and `ifdef`, `include`, `bit`/`int`, `unique`/`priority`, `casex`, `===`, x or z literals, `#` delays and a `lint_off` of a race warning.
 
-It cannot see an out-of-range index or a division by zero (x in a simulator, some value in the gates), a constant that is x to a simulator steering a case inside a block, or the values inside a generate loop or module copy, a localparam that Yosys reads differently from a simulator, or anything that depends on the order a simulator runs events. Gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour: run both.
+It cannot see an out-of-range index or a division by zero (x in a simulator, some value in the gates), a constant that is x to a simulator steering a case inside a block, or the values inside a generate loop or module copy, a localparam that Yosys reads differently from a simulator (an untyped `localparam` whose value overflows), or anything else that depends on the order a simulator runs events.
+Gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour: run both.
+
+A state machine that synthesis re-encodes can end as not proven (`unproven_points`): a limit of the proof, not a bug in the design.
 
 ## Writing RTL the equivalence check accepts
 
 Write `always @(*)` (a list of level signals is refused) and `function automatic`.
-Write every signal of a combinational block before you read it (a simulator does not rerun the block for its own write; `y = t; t = cnt;` is refused, in a loop too).
-A `function` may read only its arguments (pass the rest in) and a `task` is refused; so is a hierarchical function call (`g.f(a)`).
-Do not steer a generate branch or an instance with a constant that is x to a simulator (`1/0`): the tools choose differently, and the check refuses an always block (any keyword) or function call that Yosys elaborates and Verilator does not. A function must not read a hierarchical name (`g.k`). Choose with a generate `if`, not with a parameter inside a ternary that holds a call (`EN ? f(a) : a`): Verilator folds that call away and the check refuses it.
-The check cannot see, in hand-written Verilog, a read and a write that happen in that order only across loop iterations (Verilator cannot see it); gate-level simulation is the check for that.
+Write every signal of a combinational block at the top of the block, before any `if`, `case` or loop. A block that can read a signal before it writes it on some path (a branch, a case item or a loop pass that does not write it first) is refused: a simulator does not rerun the block for its own write, the gates do.
+A `function` may read only its arguments (pass the rest in), every argument must be an `input` (return the value; Icarus cannot compile an `output` argument) and a `task` is refused; so is a hierarchical function call (`g.f(a)`) and a hierarchical name in a function (`g.k`; a member of an argument or local, such as `p.lo` of a struct `p`, is fine unless `p` is also a label, module, instance or call name, or declared inside an `if`).
+Give every parameter a defined value: one with an x or z bit (`1/0`, `5 % 0`, `0 ** -1`) is refused. Give a number of 2**31 or more a size (`32'd3000000000`). Choose with a generate `if`, not with a constant inside an expression that holds a call (`EN ? f(a) : a`, `EN && f(a)`, `f(a) & {8{EN}}`): Verilator folds that call away, and outside an always block the check refuses it.
 In MyHDL the core must be the plain single module MyHDL writes, and a level-sensitive block must have the plain shape `@always_comb` writes and list every signal it reads; otherwise it is refused, so use `@always_comb`.
 Use a parameter, not a macro.
 

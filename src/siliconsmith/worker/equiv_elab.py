@@ -19,6 +19,15 @@ must have a node of the same kind at the same position in Verilator's tree, or t
 (a generate branch or module that Yosys uses and Verilator dropped). A generate branch that is
 really not taken by both tools is no problem: neither has its blocks.
 
+Each process position is read in the cleaned text (`anchor`), looking past blanks and line ends
+(`rd\n(ui_in)` is a call), and must be one of a few known kinds: an always block, an `initial`
+or `final` (no requirement), a declaration with a value, a function or task call, an element of
+an array, or a `.name(` port connection. A declaration, an array element or a port connection
+has a process of its own, and every call in its value must have a call node in Verilator's tree
+(a call that Verilator removes as dead code, such as `EN ? f(a) : a`, `EN && f(a)` or
+`f(a) & {8{EN}}` with a constant `EN`, does not). Any other position cannot be placed and is a
+refusal: never a pass.
+
 A hierarchical function call (`g.f(a)`) is refused too: it can resolve to a different function
 in a generate branch that the two tools choose differently, and positions would not show it.
 
@@ -54,7 +63,9 @@ _SRC_PART = re.compile(r"^(.+):(\d+)\.(\d+)-(\d+)\.(\d+)$")
 _PROCESS = re.compile(r"^\s*process\s")
 _ATTRIBUTE = re.compile(r"^\s*attribute\s")
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*", re.ASCII)
-_CALL = re.compile(r"(?<![A-Za-z0-9_$'])([A-Za-z_][A-Za-z0-9_$]*)\s*\(", re.ASCII)
+_CALL = re.compile(r"(?<![A-Za-z0-9_$'\\])([A-Za-z_][A-Za-z0-9_$]*)\s*\(", re.ASCII)
+_ESCAPED_CALL = re.compile(r"(?<![^\s(\[{,;=?:~!&|^+\-*/%<>])(\\\S+)\s+\(", re.ASCII)
+ASCII_BLANKS = " \t\r\n"
 _IDENT_AT_END = re.compile(r"(?<![A-Za-z0-9_$])[A-Za-z_][A-Za-z0-9_$]*$", re.ASCII)
 ALWAYS_WORDS = frozenset({"always", "always_comb", "always_ff", "always_latch"})
 NO_REQUIREMENT = frozenset({"initial", "final"})  # they matter to neither check
@@ -96,6 +107,31 @@ def processes(rtlil: str) -> list[Process]:
     return found
 
 
+def _offset(text: str, line: int, col: int) -> int:
+    """The index in `text` of a 1-based line and column."""
+    return sum(len(row) + 1 for row in text.split("\n")[: line - 1]) + col - 1
+
+
+def _line_col(text: str, at: int) -> tuple[int, int]:
+    return text.count("\n", 0, at) + 1, at - (text.rfind("\n", 0, at) + 1) + 1
+
+
+_PORT = re.compile(r"\.\s*(\\\S+|[A-Za-z_][A-Za-z0-9_$]*)\s*\(", re.ASCII)
+
+
+def _port(text: str, at: int) -> Anchor | None:
+    """A `.name(` port connection at `at` or after the blanks and line ends that follow it, as
+    the start of an instance's port (the last thing before it, past blanks, is `(` or `,`)."""
+    start = at
+    while start < len(text) and text[start] in ASCII_BLANKS:
+        start += 1
+    found = _PORT.match(text, start)
+    before = text[:start].rstrip(ASCII_BLANKS)
+    if found is None or not before or before[-1] not in "(,":
+        return None
+    return Anchor("port", found.group(1), *_line_col(text, found.start(1)))
+
+
 def anchor(text: str, line: int, col: int, zero_width: bool = False) -> Anchor | None:
     """The word that a Yosys source position points at in the cleaned text, or None.
 
@@ -104,18 +140,26 @@ def anchor(text: str, line: int, col: int, zero_width: bool = False) -> Anchor |
     (`zero_width`: Yosys puts an `always_comb`, `always_latch` or `initial` at the spot just after
     the keyword, which may be the start of an escaped name), an identifier that ENDS right before
     it is; the anchor is then that identifier at its own start. A line counts columns from 1, a
-    tab as one column. Kinds: `always` for the four always keywords, `skip` for `initial` and
-    `final`, `decl` for a declared name with a value (`reg x = 0;` is a process of its own,
-    starting at the name), `call` for a name followed by `(`, `.` or `::` (a function or task call
-    outside an always block gets its own process, starting at the name, or at the package or
-    scope name; for `pkg::f(a)` the anchor is `f`, where Verilator puts it), `other` for any
-    other name (an element of a register array that Yosys turns into registers, for one)."""
+    tab as one column. What follows the word is looked for past blanks and line ends. Kinds:
+
+    * `always` for the four always keywords, `skip` for `initial` and `final`;
+    * `decl`: a declared name with a value (`reg x = 0;` is a process of its own, starting at the
+      name); `=` follows;
+    * `call`: a function or task call outside an always block (a process of its own, starting at
+      the name, or at the package or scope name): `(`, `.` or `::` follows; for `pkg::f(a)` the
+      anchor is `f`, where Verilator puts it;
+    * `array`: an element of a register or wire array that Yosys turns into a process (`[`
+      follows);
+    * `port`: a `.name(` port connection that the position starts at, or is on the blanks before
+      (Yosys makes a process for an output port connected to an element of a wire array; a
+      connection over several lines can have a column past the end of its row, which is read as
+      the end of the row);
+    * `other`: anything else (the caller cannot place it)."""
     lines = text.split("\n")
     if not 1 <= line <= len(lines) or col < 1:
         return None
     row = lines[line - 1]
-    if col > len(row) + 1:
-        return None
+    col = min(col, len(row) + 1)
     here = row[col - 1 :]
     started: tuple[str, int] | None = None
     if here.startswith("\\"):
@@ -140,15 +184,16 @@ def anchor(text: str, line: int, col: int, zero_width: bool = False) -> Anchor |
             if tail is not None:
                 started = (tail.group(0), tail.start() + 1)
     if started is None:
-        return None
+        return _port(text, _offset(text, line, col)) if not here or here[0] in " \t\r." else None
     word_text, start = started
-    rest = row[start - 1 + len(word_text) :]
+    end = _offset(text, line, start) + len(word_text)
+    rest = text[end:]
     scoped = re.match(r"\s*::\s*", rest)
     if scoped is not None:
         member = _IDENT.match(rest[scoped.end() :])
         if member is None:
             return None
-        return Anchor("call", member.group(0), line, start + len(word_text) + scoped.end())
+        return Anchor("call", member.group(0), *_line_col(text, end + scoped.end()))
     if word_text in ALWAYS_WORDS:
         kind = "always"
     elif word_text in NO_REQUIREMENT:
@@ -157,17 +202,21 @@ def anchor(text: str, line: int, col: int, zero_width: bool = False) -> Anchor |
         kind = "decl"
     elif re.match(r"\s*[(.]", rest):
         kind = "call"
+    elif re.match(r"\s*\[", rest):
+        kind = "array"
     else:
         kind = "other"
     return Anchor(kind, word_text, line, start)
 
 
 def initializer_calls(text: str, found: Anchor) -> list[Anchor]:
-    """The calls in the value of a declaration (`reg [7:0] x = f(a), y = 3;`: those of `x = ...`,
-    up to the `,` or `;` that ends it). Yosys gives such a declaration one process, anchored at
-    the declared name, that holds its calls; Verilator has a call node for each."""
-    lines = text.split("\n")
-    base = sum(len(row) + 1 for row in lines[: found.line - 1]) + found.col - 1 + len(found.word)
+    """The calls after an anchor, up to the `,` or `;` that ends its value, or the bracket that
+    closes around it: the value of a declaration (`reg [7:0] x = f(a), y = 3;`: those of
+    `x = ...`), the index and value of an array element (`assign m[f(i)] = g(a);`) or the
+    expression of a port connection (`.q(f(a))`). Yosys gives each of them one process, anchored
+    at the name, that holds its calls; Verilator has a call node for each. Brackets are counted,
+    and an escaped name runs to the next blank, whatever it holds."""
+    base = _offset(text, found.line, found.col) + len(found.word)
     end = len(text)
     depth = 0
     at = base
@@ -180,16 +229,19 @@ def initializer_calls(text: str, found: Anchor) -> list[Anchor]:
             depth += 1
         elif text[at] in ")]}":
             depth -= 1
+            if depth < 0:
+                end = at
+                break
         elif depth <= 0 and text[at] in ",;":
             end = at
             break
         at += 1
     calls = []
     for call in _CALL.finditer(text, base, end):
-        start = call.start(1)
-        col = start - (text.rfind("\n", 0, start) + 1) + 1
-        calls.append(Anchor("call", call.group(1), text.count("\n", 0, start) + 1, col))
-    return calls
+        calls.append(Anchor("call", call.group(1), *_line_col(text, call.start(1))))
+    for call in _ESCAPED_CALL.finditer(text, base, end):
+        calls.append(Anchor("call", call.group(1), *_line_col(text, call.start(1))))
+    return sorted(calls, key=lambda c: (c.line, c.col))
 
 
 def _unplaceable(file: str, line: int) -> str:
@@ -206,7 +258,8 @@ def _missing(what: str, file: str, line: int) -> str:
         f"Yosys and Verilator elaborate the RTL differently: Yosys keeps the {what} at {file}, "
         f"line {line}, which Verilator's elaboration does not have (a generate branch or module "
         "instance chosen by a constant that is x to Yosys and a simulator, such as `1/0`, or a "
-        "call that Verilator removes as dead code, such as `EN ? f(a) : a` with a constant `EN`). "
+        "call that Verilator removes as dead code, such as `EN ? f(a) : a`, `EN && f(a)` or "
+        "`f(a) & {8{EN}}` with a constant `EN`). "
         "The checks of functions and of combinational blocks read Verilator's elaboration, so "
         "they cannot vouch for it. Give the constant a defined value, or choose with a generate "
         "`if` instead of a constant inside an expression."
@@ -239,19 +292,19 @@ def unmatched(tree: Any, meta: Any, rtlil: str, cleaned: dict[str, str]) -> str 
     for span in dict.fromkeys(processes(rtlil)):
         file, line, col = span[:3]
         found = anchor(cleaned[file], line, col, span[3:] == span[1:3]) if file in cleaned else None
-        if found is None:
-            where = order.index(file) if file in cleaned else len(order)
+        where = order.index(file) if file in cleaned else len(order)
+        if found is None or found.kind == "other":
             problems.append((where, line, col, _unplaceable(file, line)))
         elif found.kind == "always" and (found.word, file, found.line, found.col) not in always:
-            problems.append((order.index(file), line, col, _missing("always block", file, line)))
+            problems.append((where, line, col, _missing("always block", file, line)))
         elif found.kind == "call" and (file, found.line, found.col) not in calls:
             what = f"call of `{found.word}`"
-            problems.append((order.index(file), line, col, _missing(what, file, line)))
-        elif found.kind == "decl":
+            problems.append((where, line, col, _missing(what, file, line)))
+        elif found.kind in ("decl", "array", "port"):
             for inner in initializer_calls(cleaned[file], found):
                 if (file, inner.line, inner.col) not in calls:
                     what = f"call of `{inner.word}`"
                     problems.append(
-                        (order.index(file), inner.line, inner.col, _missing(what, file, inner.line))
+                        (where, inner.line, inner.col, _missing(what, file, inner.line))
                     )
     return min(problems)[3] if problems else None

@@ -205,15 +205,43 @@ def test_base_script_has_the_x_run_and_the_def_run_with_ties_on_tied_points_only
         es.Point("uo_out[0]", "\\a", "\\b", True),
         es.Point("uo_out[1]", "\\c", "\\d", False),
     ]
-    script = es.base_script(points, 7)
+    script = es.base_script(points, 7, {"gold": "ff_gold", "gate": "ff_gate"})
     x_run, def_run = script.split("log BASE-DEF")
     assert "read_rtlil base.il" in x_run and "log BASE-X" in x_run
-    assert "sat -seq 7 -set-init-undef -enable_undef -set-def-inputs -set-at 1 rst_n 0" in x_run
+    # RTL registers x, netlist flip-flops any defined value, and nothing else fixed.
+    assert (
+        "sat -seq 7 -set-all-undef-at 1 ff_gold -set-def-at 1 ff_gate -enable_undef "
+        "-set-def-inputs -set-at 1 rst_n 0"
+    ) in x_run
+    assert "-set-init" not in x_run
     assert "-prove-x eqa_0 eqb_0 -prove-x eqa_1 eqb_1" in x_run
     assert "-prove-skip" not in x_run and "-set-at 1 eqa" not in x_run
     assert "-set-init-def -prove-skip 1 -set-at 1 eqa_0 eqb_0 -enable_undef" in def_run
     assert "eqa_1 eqb_1 -enable" not in def_run  # only the tied point
     assert "-show eqa_0,eqb_0,eqa_1,eqb_1,rst_n,ui_in,uio_in" in def_run
+
+
+def test_the_power_up_options_follow_the_sides_with_flip_flops() -> None:
+    assert es.power_up({"gold": "ff_gold", "gate": "ff_gate_1"}) == (
+        "-set-all-undef-at 1 ff_gold -set-def-at 1 ff_gate_1"
+    )
+    assert es.power_up({"gate": "ff_gate"}) == "-set-def-at 1 ff_gate"
+    assert es.power_up({}) == ""
+    assert "-set-init" not in es.base_script([], 3, {}).split("log BASE-DEF")[0]
+
+
+def test_the_referee_writes_the_miter_then_searches_with_the_per_side_power_up() -> None:
+    model = es.miter_model("G\n", "T\n")
+    assert model.startswith("G\nT\n") and "sat" not in model
+    assert model.endswith(f"{es.MITER}\nhierarchy -top miter\nwrite_rtlil miter.il\n")
+    bmc = es.miter_bmc("bmc", {"gold": "ff_gold", "gate": "ff_gate"}, 32)
+    assert bmc.startswith("read_rtlil miter_ff.il\nhierarchy -top miter\n")
+    assert (
+        "sat -tempinduct -tempinduct-baseonly -maxsteps 32 -enable_undef -set-def-inputs "
+        "-set-all-undef-at 1 ff_gold -set-def-at 1 ff_gate -set-at 1 in_rst_n 0 -seq 1 "
+        "-prove trigger 0 -show-ports -dump_vcd cex_bmc.vcd miter"
+    ) in bmc
+    assert "-set-init" not in bmc
 
 
 def test_miter_scripts_per_kind_of_run() -> None:
@@ -237,3 +265,12 @@ def test_scripts_never_use_the_banned_api_words() -> None:
     text = es.stage1("chip", "netlist.v", 5) + es.gold("chip", "rtl") + es.gate("chip", "n.v")
     for banned in ("FastMCP", "BinaryValue", "cocotb.runner", "units="):
         assert banned not in text
+
+
+def test_the_elaboration_reads_the_rtl_like_the_proof_and_writes_it_unprocessed() -> None:
+    """C5: exactly the `_read_rtl` lines and `write_rtlil`: no `proc` (it would turn the processes
+    whose positions are compared into cells) and nothing else that could change them."""
+    assert (
+        es.elaboration("chip") == "\n".join([*es._read_rtl("chip"), "write_rtlil elab.il"]) + "\n"
+    )
+    assert "proc" not in es.elaboration("chip")

@@ -267,3 +267,266 @@ def test_placed_nodes_fails_closed() -> None:
         list(et.placed_nodes([], META))
     with pytest.raises(et.TreeError):
         list(et.placed_nodes({}, {}))
+
+
+# -- x and z parameters (xz_parameter) -----------------------------------------------------------
+
+
+def const(name: str, line: int = 1) -> dict[str, Any]:
+    return {"type": "CONST", "name": name, "loc": f"e,{line}:9,{line}:12"}
+
+
+def param(name: str, value: str, line: int, **more: Any) -> dict[str, Any]:
+    return var(f"({name})", name, line, varType="LPARAM", isParam=True,
+               valuep=[const(value, line)], **more)  # fmt: skip
+
+
+@pytest.mark.parametrize("value", ["32'hxxxxxxxx", "4'b10z1", "1'bx", "32'sbxxxx"])
+def test_a_parameter_with_an_x_or_z_bit_is_named(value: str) -> None:
+    got = et.xz_parameter(module(param("Q", "32'h1", 2), param("K", value, 4)), META, OURS)
+    assert got is not None and got.name == "K" and (got.file, got.line) == ("core.v", 4)
+    assert "computes the parameter `K` with an x or z bit" in got.sentence
+    assert "`1/0`" in got.sentence and "Give it a defined value" in got.sentence
+
+
+@pytest.mark.parametrize("kind", [{"varType": "GPARAM"}, {"varType": "GENVAR", "isParam": False}])
+def test_a_generate_parameter_or_genvar_counts_too(kind: dict[str, Any]) -> None:
+    node = var("(G)", "G", 3, valuep=[const("32'hx", 3)], **kind)
+    got = et.xz_parameter(module(node), META, OURS)
+    assert got is not None and got.name == "G"
+
+
+def test_a_folded_constant_with_an_x_bit_is_found_and_a_named_parameter_wins_on_its_line() -> None:
+    got = et.xz_parameter(module(const("8'bxxxxxxxx", 6)), META, OURS)
+    assert got is not None and got.name == "" and "computes a constant" in got.sentence
+    both = module(const("8'bxxxxxxxx", 6), param("P", "8'hx", 6))
+    got = et.xz_parameter(both, META, OURS)
+    assert got is not None and got.name == "P"
+
+
+def test_defined_values_a_z_label_and_other_files_are_fine() -> None:
+    assert et.xz_parameter(module(param("W", "32'sh8", 2), const("8'h1f", 3)), META, OURS) is None
+    assert et.xz_parameter(module(const("4'b1z0z", 3)), META, OURS) is None  # a casez label
+    value = const("32'hx", 2) | {"loc": "d,2:9,2:12"}
+    other = var("(X)", "X", 2, varType="LPARAM", valuep=[value]) | {"loc": "d,2:1,2:4"}
+    assert et.xz_parameter(module(other), META, OURS) is None
+
+
+def test_the_first_by_file_order_then_line() -> None:
+    late = param("A", "1'bx", 9)
+    early = param("B", "1'bx", 3)
+    early["loc"] = "f,3:1,3:4"  # project.v comes first in OURS
+    got = et.xz_parameter(module(late, early), META, OURS)
+    assert got is not None and (got.name, got.file) == ("B", "project.v")
+    with pytest.raises(et.TreeError):
+        et.xz_parameter([], META, OURS)
+
+
+# -- read before write in a combinational block (early_read) -------------------------------------
+
+
+def dtype(addr: str, rng: str | None = "7:0") -> dict[str, Any]:
+    node: dict[str, Any] = {"type": "BASICDTYPE", "addr": addr, "keyword": "logic"}
+    return node | ({"range": rng} if rng is not None else {})
+
+
+TYPES = [dtype("(D8)"), dtype("(D1)", None), dtype("(D2)", "1:0")]
+T = var("(T)", "t", 2, varType="VAR", dtypep="(D8)")
+Y = var("(Y)", "y", 2, varType="VAR", dtypep="(D8)")
+A = var("(I)", "a", 2, varType="PORT", dtypep="(D8)")
+S = var("(Z)", "s", 2, varType="PORT", dtypep="(D2)")
+_N = iter(range(10**6))
+
+
+def r(to: str, name: str, line: int, access: str = "RD") -> dict[str, Any]:
+    return ref(f"(v{next(_N)})", to, name, line, access=access)
+
+
+def w(to: str, name: str, line: int) -> dict[str, Any]:
+    return r(to, name, line, "WR")
+
+
+def sel(inner: dict[str, Any], lsb: int | dict[str, Any], width: int) -> dict[str, Any]:
+    low = const(f"32'h{lsb:x}") if isinstance(lsb, int) else lsb
+    return {"type": "SEL", "fromp": [inner], "lsbp": [low], "widthConst": width}
+
+
+def assign(lhs: dict[str, Any], rhs: dict[str, Any], kind: str = "ASSIGN") -> dict[str, Any]:
+    return {"type": kind, "lhsp": [lhs], "rhsp": [rhs]}
+
+
+def if_(cond: dict[str, Any], then: list[Any], other: list[Any] | None = None) -> dict[str, Any]:
+    return {"type": "IF", "condp": [cond], "thensp": then, "elsesp": other or []}
+
+
+def item(stmts: list[Any], *labels: str) -> dict[str, Any]:
+    return {"type": "CASEITEM", "condsp": [const(x) for x in labels], "stmtsp": stmts}
+
+
+def case(*items: dict[str, Any], kwd: str = "case") -> dict[str, Any]:
+    expr = r("(Z)", "s", 3) | {"dtypep": "(D2)"}
+    return {"type": "CASE", "kwd": kwd, "exprp": [expr], "itemsp": list(items)}
+
+
+def comb(*stmts: dict[str, Any], keyword: str = "always_comb", **more: Any) -> dict[str, Any]:
+    return {"type": "ALWAYS", "keyword": keyword, "loc": "e,2:3,2:9", "stmtsp": list(stmts), **more}
+
+
+def early(*stmts: dict[str, Any], **more: Any) -> et.EarlyRead | None:
+    tree = module(*TYPES, T, Y, A, S, comb(*stmts, **more))
+    return et.early_read(tree, META, OURS)
+
+
+def write_t_first() -> dict[str, Any]:
+    return assign(w("(T)", "t", 3), r("(I)", "a", 3))
+
+
+def read_t(line: int = 9) -> dict[str, Any]:
+    return assign(w("(Y)", "y", line), r("(T)", "t", line))
+
+
+def test_a_read_after_the_write_is_fine_and_before_it_is_refused() -> None:
+    assert early(write_t_first(), read_t()) is None
+    got = early(read_t(3), assign(w("(T)", "t", 4), r("(I)", "a", 4)))
+    assert got is not None and (got.name, got.file, got.line) == ("t", "core.v", 3)
+    assert "on some path through the block" in got.sentence
+    assert "Write each signal at the top of the block" in got.sentence
+
+
+def test_a_variable_the_block_does_not_write_may_be_read_anywhere() -> None:
+    assert early(assign(w("(Y)", "y", 3), r("(I)", "a", 3))) is None
+
+
+def test_an_if_keeps_only_what_both_branches_write() -> None:
+    cond = r("(I)", "a", 3)
+    both = if_(cond, [write_t_first()], [write_t_first()])
+    assert early(both, read_t()) is None
+    got = early(if_(cond, [write_t_first()]), read_t())  # no else: the old t on that path
+    assert got is not None and got.line == 9
+    got = early(if_(cond, [write_t_first()], [assign(w("(Y)", "y", 5), r("(I)", "a", 5))]),
+                read_t())  # fmt: skip
+    assert got is not None
+
+
+def test_a_case_keeps_what_every_item_writes_and_a_case_that_may_not_match_nothing() -> None:
+    every = [item([write_t_first()], v) for v in ("2'h0", "2'h1", "2'h2", "2'h3")]
+    assert early(case(*every), read_t()) is None  # the labels cover every value of `s`
+    assert early(case(item([write_t_first()], "2'h0"), item([write_t_first()])), read_t()) is None
+    # rcasenodef: no default and labels that do not cover `s`: nothing in the case may run
+    got = early(case(*every[:3]), read_t())
+    assert got is not None and got.line == 9
+    got = early(case(every[0], item([])), read_t())  # the default does not write it
+    assert got is not None
+
+
+def test_a_casez_label_with_wildcards_covers_every_value_it_matches() -> None:
+    assert early(case(item([write_t_first()], "2'b1?"), item([write_t_first()], "2'b0?"),
+                      kwd="casez"), read_t()) is None  # fmt: skip
+    # in a plain case a z label never matches: not a full case
+    got = early(case(item([write_t_first()], "2'b1z"), item([write_t_first()], "2'b0z")), read_t())
+    assert got is not None
+
+
+def test_constant_selects_count_bit_by_bit() -> None:
+    low = assign(sel(w("(T)", "t", 3), 0, 4), r("(I)", "a", 3))
+    high = assign(sel(w("(T)", "t", 4), 4, 4), r("(I)", "a", 4))
+    assert early(low, high, read_t()) is None  # pieces that add up to all of t
+    assert early(low, assign(w("(Y)", "y", 9), sel(r("(T)", "t", 9), 0, 4))) is None  # the low bits
+    got = early(low, assign(w("(Y)", "y", 9), sel(r("(T)", "t", 9), 4, 4)))  # rpieceread
+    assert got is not None and got.name == "t"
+    got = early(low, read_t())
+    assert got is not None
+
+
+def test_a_variable_select_and_a_nonblocking_write_add_nothing() -> None:
+    varsel = assign(sel(w("(T)", "t", 3), r("(I)", "a", 3), 8), r("(I)", "a", 3))
+    assert early(varsel, read_t()) is not None
+    nba = assign(w("(T)", "t", 3), r("(I)", "a", 3), "ASSIGNDLY")
+    assert early(nba, read_t()) is not None  # rnbacomb
+
+
+def test_a_concatenation_target_writes_every_part() -> None:
+    both = {"type": "CONCAT", "lhsp": [w("(T)", "t", 3)], "rhsp": [w("(Y)", "y", 3)]}
+    assert early(assign(both, r("(I)", "a", 3)), read_t()) is None
+
+
+def test_a_loop_body_starts_from_what_was_written_before_and_adds_nothing_after() -> None:
+    body = [{"type": "LOOPTEST", "condp": [r("(I)", "a", 4)]}, read_t(5), write_t_first()]
+    got = early({"type": "LOOP", "stmtsp": body})  # vloopit: a later pass reads the old t
+    assert got is not None and got.line == 5
+    assert early(write_t_first(), {"type": "LOOP", "stmtsp": body}) is None  # written before
+    loop = {"type": "LOOP", "stmtsp": [write_t_first()]}
+    assert early(loop, read_t()) is not None  # the loop may run zero times
+    with pytest.raises(et.TreeError):
+        early({"type": "LOOP", "stmtsp": [], "elsesp": [write_t_first()]})
+
+
+def test_a_disable_keeps_what_every_way_out_of_the_block_wrote() -> None:
+    go = {"type": "JUMPGO", "blockp": "(J)"}
+    jump = {"type": "JUMPBLOCK", "addr": "(J)",
+            "stmtsp": [if_(r("(I)", "a", 3), [go]), write_t_first()]}  # fmt: skip
+    got = early(jump, read_t())  # rbreak: the jump skips the write
+    assert got is not None
+    with pytest.raises(et.TreeError):
+        early({"type": "JUMPGO", "blockp": "(nowhere)"})
+
+
+def test_an_output_argument_never_counts_as_written() -> None:
+    """Round 13 w01ifctl: Verilator writes `if (c) y = f(a, t); else y = 0;` as a ternary, so a
+    call can sit on one path of a statement. `equiv_sv` refuses such arguments; the walk counts
+    none of them as surely written (and an inout actual is not a read it could check)."""
+    task = {"type": "TASKREF", "name": "fill", "taskp": "(F)",
+            "argsp": [{"type": "ARG", "exprp": [w("(T)", "t", 3)]}]}  # fmt: skip
+    assert early({"type": "STMTEXPR", "exprp": [task]}, read_t()) is not None
+    call = {"type": "FUNCREF", "name": "f", "taskp": "(F)",
+            "argsp": [{"type": "ARG", "exprp": [w("(T)", "t", 3)]}]}  # fmt: skip
+    ternary = {"type": "COND", "condp": [r("(I)", "a", 3)], "thenp": [call],
+               "elsep": [{"type": "CONST", "name": "8'h0"}]}  # fmt: skip
+    assert early(assign(w("(Y)", "y", 3), ternary), read_t()) is not None
+
+
+def test_a_named_block_local_and_a_hierarchical_read_are_judged_too() -> None:
+    begin = {"type": "BEGIN", "declsp": [var("(L)", "l", 3, dtypep="(D1)")],
+             "stmtsp": [read_t(4), write_t_first()]}  # fmt: skip
+    assert early(begin) is not None
+    xref = r("(T)", "t", 4) | {"type": "VARXREF", "dotted": "top"}
+    got = early(assign(w("(Y)", "y", 4), xref), write_t_first())  # h06selfdot: `top.t`
+    assert got is not None and got.name == "t"
+
+
+def test_only_combinational_blocks_are_walked() -> None:
+    late = (read_t(3), write_t_first())
+    for keyword in ("always_ff", "always_latch", "cont_assign"):
+        assert early(*late, keyword=keyword) is None
+    edge = [{"type": "SENTREE", "sensesp": [{"type": "SENITEM", "edgeType": "POS"}]}]
+    assert early(*late, keyword="always", sentreep=edge) is None
+    level = [{"type": "SENTREE", "sensesp": [{"type": "SENITEM", "edgeType": "CHANGED"}]}]
+    assert early(*late, keyword="always", sentreep=level) is not None  # MyHDL's @(a, b)
+    assert early(*late, keyword="always") is not None  # @*
+    with pytest.raises(et.TreeError):
+        early(*late, keyword="always_strange")
+    odd = [{"type": "SENTREE", "sensesp": [{"type": "SENITEM", "edgeType": "ODD"}]}]
+    with pytest.raises(et.TreeError):
+        early(*late, keyword="always", sentreep=odd)
+
+
+@pytest.mark.parametrize(
+    "stmt",
+    [
+        {"type": "WAIT"},
+        {"type": "FORK"},
+        assign(w("(T)", "t", 3), r("(I)", "a", 3)) | {"timingControlp": [{"type": "DELAY"}]},
+        {"type": "BEGIN", "declsp": [{"type": "TYPEDEF"}], "stmtsp": []},
+        case(item([write_t_first()])) | {"notParallelp": [{"type": "CONST"}]},
+    ],
+)
+def test_a_statement_the_walk_does_not_know_raises(stmt: dict[str, Any]) -> None:
+    with pytest.raises(et.TreeError):
+        early(stmt)
+
+
+def test_an_unresolved_or_strange_reference_raises() -> None:
+    with pytest.raises(et.TreeError):
+        early(assign(w("(nothing)", "t", 3), r("(I)", "a", 3)))
+    with pytest.raises(et.TreeError):
+        early(write_t_first(), assign(w("(Y)", "y", 4), r("(T)", "t", 4, access="ODD")))

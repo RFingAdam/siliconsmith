@@ -262,6 +262,56 @@ def test_numbers_without_x_or_z_are_fine() -> None:
     ok("wire [7:0] x_ok, z_ok, xz;\n")  # names that hold x or z
 
 
+@pytest.mark.parametrize(
+    "lit",
+    ["2147483648", "2_147_483_648", "4294967295", "3000000000", "4294967296", "'sd2147483648",
+     "'d3000000000", "'hFFFFFFFF", "'sh80000000", "' sd 2147483648",
+     "'b1_0000000_00000000_00000000_00000000"],
+)  # fmt: skip
+def test_an_unsized_number_of_2_to_the_31_or_more_is_refused(lit: str) -> None:
+    """Round 13 w40bigfold/w42impfold: Verilator reads `2147483648` as a negative 32-bit value,
+    Yosys and Icarus as a wider positive one, so `if (2147483648 > 0)` takes another branch in
+    the tree the order and purity checks judge."""
+    found = refused(f"always @* if ({lit} > 0) y = 1; else y = 0;", "unsized number")
+    assert "Give it a size" in sv.plain_message(found)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "assign o = 2147483647 + 32'd2147483648 + 32'sd4294967295 + 33'h1FFFFFFFF;",
+        "assign o = 32 'd 3000000000 ^ 'h7FFFFFFF ^ 'd2147483647;",
+        "localparam real R = 3000000000.0, E = 2e10, F = 1.5e+10;",
+        "wire w2147483648; wire [31:0] v = 8'd255;",
+        'initial $display("4294967296"); // 4294967296',
+    ],
+)
+def test_sized_small_and_real_numbers_are_fine(text: str) -> None:
+    ok(f"module m;\n{text}\nendmodule\n")
+
+
+@pytest.mark.parametrize(
+    ("header", "word"),
+    [
+        ("function automatic [7:0] f(input [7:0] a, output [7:0] o);", "output"),
+        ("function automatic void f(input [7:0] a, output [3:0] h, output [3:0] l);", "output"),
+        ("function automatic void f(inout [7:0] v);", "inout"),
+        ("function automatic void f(ref logic [7:0] v);", "ref"),
+        ("function automatic void f(const ref logic [7:0] v);", "ref"),
+        ("function automatic [7:0] f;\n input [7:0] a;\n output [7:0] o;", "output"),
+    ],
+)
+def test_a_function_argument_that_is_not_an_input_is_refused(header: str, word: str) -> None:
+    """Round 13 w01ifctl, inoutif: Icarus cannot compile such a function, and the order check
+    cannot follow a value a call writes back (Verilator turns `if (c) y = f(a, t);` into a
+    ternary, and an inout actual is read before the call)."""
+    found = refused(f"{header}\n f = a;\nendfunction", f"function with an `{word}` argument")
+    assert "Return the value instead" in sv.plain_message(found)
+    ok("module m (input [7:0] a, output [7:0] o, inout [7:0] io);\n"
+       "function automatic [7:0] f(input [7:0] v); f = ~v; endfunction\n"
+       "assign o = f(a);\nendmodule\n")  # fmt: skip
+
+
 def test_the_reviewers_x_designs_are_refused() -> None:
     refused("always @* if (ui_in[1:0] == 2'bx1) y = 8'd1; else y = 8'd2;", "x digit")  # ifx
     refused("always @* casex (ui_in[1:0]) 2'b1x: y = 8'd1; default: y = 8'd0; endcase", "casex")
@@ -513,6 +563,8 @@ def test_every_message_has_a_plain_hint() -> None:
         "always @(a) y = a;",
         "function f; endfunction",
         '$readmemh("f", m);',
+        "function automatic void f(output o); o = 1; endfunction",
+        "assign y = 2147483648;",
     ):
         found = sv.refusal([("d.v", f"module m;\n{text}\nendmodule\n")])
         assert found is not None, text
@@ -1227,17 +1279,72 @@ def test_a_hierarchical_name_inside_a_function_is_refused() -> None:
     )
     ok = "function automatic [7:0] rd(input [7:0] d); rd = d ^ 8'd1; endfunction\nassign w = g.k;"
     assert sv.refusal([("d.v", f"module m;\n{ok}\nendmodule\n")], None) is None  # outside: fine
+    # S3: a function body ends at its own `endfunction` (non-greedy): `g.k` between two functions
+    # is outside both
+    two = f"{ok}\nfunction automatic [7:0] q(input [7:0] d); q = d; endfunction"
+    assert sv.refusal([("d.v", f"module m;\n{two}\nendmodule\n")], None) is None
+
+
+STRUCT = "typedef struct packed { logic [3:0] hi; logic [3:0] lo; } pair_t;\n"
+HIER = "a hierarchical name inside a function (a dotted name that is not a member of an argument"
+
+
+@pytest.mark.parametrize(
+    "function",
+    [
+        "function automatic [7:0] swap(input pair_t p); swap = {p.lo, p.hi}; endfunction",  # n45
+        "function automatic [3:0] f(input pair_t p, input [1:0] s); f = p . lo; endfunction",
+        "function automatic [3:0] f; input pair_t p; f = p.hi; endfunction",  # non-ANSI
+        "function automatic [3:0] f(input [7:0] x); pair_t q; q = x; f = q.lo; endfunction",
+        "function automatic [3:0] f(input [7:0] x); begin pair_t q, r; q = x; r = q; f = r.hi;"
+        " end endfunction",
+        "function automatic [$clog2(8):0] f(input pair_t p); f = p.lo; endfunction",
+    ],
+)
+def test_a_member_of_an_argument_or_local_inside_a_function_is_fine(function: str) -> None:
+    ok(f"module m;\n{STRUCT}{function}\nendmodule\n")
+
+
+@pytest.mark.parametrize(
+    ("function", "extra"),
+    [
+        ("function automatic [3:0] f(input pair_t p); f = g.k; endfunction", ""),
+        ("function automatic [3:0] f(input pair_t p); f = g\n.k; endfunction", ""),
+        # `p` is an argument, but also a generate block: the tools may read `p.lo` differently
+        (
+            "function automatic [3:0] f(input pair_t p); f = p.lo; endfunction",
+            "generate if (1) begin : p localparam lo = 1; end endgenerate",
+        ),
+        # ... or an instance name
+        ("function automatic [3:0] f(input pair_t p); f = p.lo; endfunction", "sub p (.a(b));"),
+        # a local declared deeper than the top of the body is not seen: refused, never passed
+        (
+            "function automatic [3:0] f(input [7:0] x); if (x[0]) begin pair_t q; q = x;"
+            " f = q.lo; end else f = 0; endfunction",
+            "",
+        ),
+        # the port list is the one after the name, not a `(` inside the range
+        ("function automatic [$clog2(g)-1:0] f(input pair_t p); f = g.k; endfunction", ""),
+        ("function automatic [3:0] f(input [7:0] x); f = f.x; endfunction", ""),  # its own name
+        ("function automatic [3:0] f(input [7:0] x); f = m.x; endfunction", ""),  # the module
+    ],
+)
+def test_a_dotted_name_that_is_not_a_member_of_an_argument_or_local_is_refused(
+    function: str, extra: str
+) -> None:
+    refused(f"{STRUCT}{function}\n{extra}", HIER)
 
 
 def test_a_glued_begin_after_a_star_block_gets_a_blank() -> None:
     assert sv.always_comb_copy("always@(*)begin y = a; end") == "always_comb begin y = a; end"
 
 
-def test_what_cannot_be_seen_across_loop_iterations_is_not_detected() -> None:
+def test_an_order_across_loop_iterations_is_not_a_token_refusal() -> None:
     """vloopit: hand-written `always @*` that reads `t` in iteration 0 and writes it in 1. A
     simulator keeps the old t; Verilator's ALWCOMBORDER cannot see an order that only exists across
-    iterations. NOT refused here, and listed under what is not detected (the gate-level simulation
-    is the check); the MyHDL parser refuses the same shape."""
+    iterations. Not refused by the tokens: the path-sensitive walk on Verilator's tree refuses it
+    (`equiv_tree.early_read`, a loop pass that reads `t` before it writes it); the MyHDL parser
+    refuses the same shape."""
     path = REPO_ROOT / "tests" / "fixtures" / "equiv_designs" / "vloopit" / "verilog.v"
     assert sv.refusal([("vloopit.v", path.read_text())]) is None
 
@@ -1282,23 +1389,3 @@ def test_the_normal_accumulator_and_loops_over_signals_written_first_are_accepte
     body: str,
 ) -> None:
     assert _lvl(body, "a, b, t, y, z, j, k") is None, body
-
-
-@pytest.mark.parametrize(
-    ("text", "want"),
-    [
-        ("module m; endmodule", False),
-        ("function automatic f(input a); f = a; endfunction", True),
-        ("task automatic t; endtask", True),
-        ('initial $display("function task");  // function\n', False),
-        ("always @* y = a;", True),
-        ("always @ ( * ) y = a;", True),
-        ("always @(posedge clk) y <= a;", True),
-        ("always_comb y = a;", True),
-        ("always_latch if (e) y = a;", True),
-        ("always_ff @(posedge clk) y <= a;", True),
-        ("// always_comb\n", False),
-    ],
-)
-def test_needs_tree_finds_the_blocks_that_the_tree_checks_judge(text: str, want: bool) -> None:
-    assert sv.needs_tree(text) is want

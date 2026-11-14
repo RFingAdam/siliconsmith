@@ -24,12 +24,15 @@ orchestration is in `equiv.py`. Stdlib only: this runs in the container.
    (`depth` cycles) looks for the output it changes: found is `not_equivalent`, not found is
    `not_proven` (never a pass).
 3. The base case of the stage-1 induction, on the stage-1 model itself (`equiv.il`), for cycles
-   1..seq+2, in two runs: every flip-flop powers up `x` (X), and every flip-flop powers up defined,
-   a netlist flip-flop equal to the RTL register it is paired with (DEF). Stages 1 and 3 together
-   are a complete induction proof.
+   1..seq+2, in two runs: every RTL register powers up `x` and every netlist flip-flop powers up
+   with any defined value, as on a chip (X); and every flip-flop powers up defined, a netlist
+   flip-flop equal to the RTL register it is paired with (DEF). Stages 1 and 3 together are a
+   complete induction proof.
 4. A referee from reset that does not depend on name pairing or on the `fsm` pass: the RTL as
-   written against the netlist, a bounded search (`depth` cycles) with `x` power-up; or
-   k-induction twice (`kind_x`, `kind_zero`) when stage 1 did not prove everything.
+   written (initial values removed: stage 2 showed they change nothing) against the netlist, a
+   bounded search (`depth` cycles) with the power-up of stage 3 (RTL registers `x`, netlist
+   flip-flops any defined value); or k-induction twice (`kind_x`, `kind_zero`, every flip-flop
+   `x`, then every flip-flop 0) when stage 1 did not prove everything.
 
 Cycle 1 is power-up with `rst_n` low; outputs are compared from cycle 2 on.
 
@@ -42,6 +45,7 @@ production script changes them and this file does not.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from siliconsmith.worker import synth_script
@@ -275,42 +279,37 @@ class Point:
     tie: bool  # the netlist flop may power up equal to the RTL register (DEF run)
 
 
-def base_script(points: list[Point], steps: int) -> str:
+def power_up(wires: Mapping[str, str]) -> str:
+    """The power-up of the X run and the referee, as `sat` options: every RTL register `x`
+    (`-set-all-undef-at 1`), every netlist flip-flop ANY defined value (`-set-def-at 1`), as on
+    a chip. `wires`: `{side: wire}`, the wire holding every flip-flop output of that side
+    (`equiv_parse._power_up_wires`; a side with no flip-flop has none). No `-set-init-*`
+    option, so nothing else is fixed. A netlist value is then never an x that only comes from
+    spreading x gate by gate: it is the exact value for some power-up state, and every value
+    the RTL defines must equal it for every one of them."""
+    opt = {"gold": "-set-all-undef-at", "gate": "-set-def-at"}
+    return " ".join(f"{opt[side]} 1 {wires[side]}" for side in ("gold", "gate") if side in wires)
+
+
+def base_script(points: list[Point], steps: int, wires: Mapping[str, str]) -> str:
     """Base case of the stage-1 induction (stage 3): the X run and the DEF run.
 
-    The model `base.il` is `equiv.il` plus one named wire per side of every point (see
-    `equiv.write_base_model`). Users of a matched signal read the RTL value, as in `equiv_induct`.
+    The model `base.il` is `equiv.il` plus one named wire per side of every point and the
+    power-up wires `wires` (`equiv_parse.base_model`). Users of a matched signal read the RTL
+    value, as in `equiv_induct`. X run: `power_up`. DEF run: every flip-flop powers up defined,
+    a netlist flip-flop equal to the RTL register it is paired with.
     """
     prove = " ".join(f"-prove-x eqa_{i} eqb_{i}" for i in range(len(points)))
     show = ",".join(f"eqa_{i},eqb_{i}" for i in range(len(points)))
     ties = " ".join(f"-set-at 1 eqa_{i} eqb_{i}" for i, p in enumerate(points) if p.tie)
     script = "read_rtlil base.il\nhierarchy -top equiv\n"
-    for tag, extra in (("X", "-set-init-undef"), ("DEF", f"-set-init-def -prove-skip 1 {ties}")):
+    for tag, extra in (("X", power_up(wires)), ("DEF", f"-set-init-def -prove-skip 1 {ties}")):
         script += (
             f"log {BASE_PREFIX}{tag}\n"
             f"sat -seq {steps} {extra} -enable_undef -set-def-inputs -set-at 1 rst_n 0 {prove} "
             f"-show {show},rst_n,ui_in,uio_in -dump_vcd base_{tag.lower()}.vcd equiv\n"
         )
     return script
-
-
-def confirm_script(points: list[Point], which: list[int], inputs: dict[str, int]) -> str:
-    """Is a power-up difference that the X run found at cycle 1 a real one? The X run spreads x
-    gate by gate, which is pessimistic for logic that splits a signal and joins it again: an
-    output can be x in the netlist although its value does not depend on the power-up state. This
-    run takes the inputs of the X run's counterexample (`inputs`: name to value), gives every
-    register of both sides ANY defined power-up value (`-set-init-def`, no ties) and proves that
-    the points `which` (the ones the RTL defines in the X run) are equal at cycle 1. A difference
-    here is a power-up state that really changes the netlist's value."""
-    prove = " ".join(f"-prove eqa_{i} eqb_{i}" for i in which)
-    show = ",".join(f"eqa_{i},eqb_{i}" for i in which)
-    fixed = " ".join(f"-set-at 1 {name} {value}" for name, value in inputs.items())
-    return (
-        "read_rtlil base.il\nhierarchy -top equiv\n"
-        f"log {BASE_PREFIX}CONFIRM\n"
-        f"sat -seq 1 -set-init-def -enable_undef -set-def-inputs {fixed} {prove} "
-        f"-show {show},rst_n,ui_in,uio_in equiv\n"
-    )
 
 
 # induct: base (bounded search only), xstep (k-induction, x states allowed in the step: matches
@@ -320,6 +319,26 @@ SAT_MODE = {
     "xstep": "-tempinduct",
     "defstep": "-tempinduct -tempinduct-def",
 }
+
+
+MITER = "miter -equiv -flatten -make_outputs -ignore_gold_x gold gate miter"
+
+
+def miter_model(golds: str, gates: str) -> str:
+    """The referee of stage 4, step 1: build the miter of two stashed designs and write it
+    (`miter.il`), so that `equiv_parse.miter_model` can add the power-up wires of each side."""
+    return golds + gates + both() + f"{MITER}\nhierarchy -top miter\nwrite_rtlil miter.il\n"
+
+
+def miter_bmc(tag: str, wires: Mapping[str, str], depth: int) -> str:
+    """The referee of stage 4, step 2: a bounded search from reset (`depth` cycles) on
+    `miter_ff.il` with the per-side `power_up`. As `miter`, outputs from cycle 2 on."""
+    return (
+        "read_rtlil miter_ff.il\nhierarchy -top miter\n"
+        f"sat {SAT_MODE['base']} -maxsteps {depth} -enable_undef -set-def-inputs "
+        f"{power_up(wires)} -set-at 1 in_rst_n 0 -seq 1 -prove trigger 0 -show-ports "
+        f"-dump_vcd cex_{tag}.vcd miter\n"
+    )
 
 
 def miter(golds: str, gates: str, tag: str, init: str, induct: str, depth: int) -> str:
@@ -334,7 +353,7 @@ def miter(golds: str, gates: str, tag: str, init: str, induct: str, depth: int) 
         + both()
         + "\n".join(
             [
-                "miter -equiv -flatten -make_outputs -ignore_gold_x gold gate miter",
+                MITER,
                 "hierarchy -top miter",
                 f"sat {SAT_MODE[induct]} -maxsteps {depth} -enable_undef -set-def-inputs "
                 f"-set-init-{init} -set-at 1 in_rst_n 0 -seq 1 -prove trigger 0 -show-ports "

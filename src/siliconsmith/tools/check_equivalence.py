@@ -344,10 +344,9 @@ _GUARD_HINTS = {
         "Reset every register that feeds an output with rst_n, then call check_equivalence again."
     ),
     "base_case": (
-        "Reset every register that feeds an output with rst_n, then call check_equivalence again. "
-        "If they are all reset and the message says the power-up (x) run could not show a match, "
-        "the proof was too cautious about logic that picks between register bits at power-up: "
-        "rely on gate-level simulation (run_tests with gl=True)."
+        "Reset every register that feeds the signals the message names with rst_n, then call "
+        "check_equivalence again. If they are all reset, run gate-level simulation (run_tests "
+        "with gl=True) from reset: the netlist differs inside the design for some power-up state."
     ),
     "initial_values": (
         "Reset those registers with rst_n instead of giving them an initial value (`reg x = 0`, "
@@ -632,24 +631,36 @@ constructs differently from Yosys. The tool refuses the common ones as not prove
 them: macros and `include, bit/int types, unique/priority, casex, ===, x or z literals, delays \
 (#), characters outside plain ASCII, a lint_off of a race warning, every level-sensitive \
 always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational block that \
-reads a signal before it writes it (in @* blocks found by Verilator's always_comb check; in \
-MyHDL blocks checked directly, loops included), a function that reads anything other than \
-its arguments and any task, an always block (any keyword) or function call that Yosys \
-elaborates and Verilator does not (a generate branch or instance chosen by a constant that is \
-x to Yosys and a simulator, such as 1/0), a hierarchical function call (g.f(a)) or a \
-hierarchical name inside a function, a MyHDL core that is not the plain single module MyHDL \
-writes (generate, instances, a second module, odd arrays), \
+can read a signal before it writes it on some path through the block (a branch, a case item \
+or a loop pass that does not write it first: write each signal at the top of the block), a \
+parameter, localparam or genvar value with an x or z bit (1/0, 5 % 0, 0 ** -1; with or \
+without an always block), an unsized number of 2**31 or more (2147483648: Verilator reads it as \
+negative, Yosys and Icarus as positive; write 32'd2147483648), a function argument that is not \
+an input (output, inout, ref: Icarus cannot compile one either; return the value), a function \
+that reads anything other than its arguments and any task, an always block (any keyword) or \
+function call that Yosys elaborates and Verilator does not (a generate branch or instance \
+chosen by a constant that is x to Yosys and a simulator, or a call outside an always block \
+that a constant makes dead code: EN ? f(a) : a, EN && f(a) or f(a) & {8{EN}} with a constant \
+EN in an assign, a declaration or a port; choose with a generate \
+if instead), a hierarchical function call (g.f(a)) or a hierarchical name (a dotted name that \
+is not a member of an argument or of a local declared at the top of the function, or whose \
+first name is also a label, module, instance or call name) inside a function, a MyHDL core \
+that is not the plain single module MyHDL writes (generate, instances, a second module, odd \
+arrays), \
 a MyHDL level-sensitive block that is not the plain shape @always_comb writes and does not \
 list every signal it reads (use @always_comb), a carriage return that no line feed follows, \
 and a function without automatic. It does NOT detect an out-of-range index or a division by \
 zero (x in a simulator, some value in the gates), a constant that is x to a simulator \
 steering a case inside a block, or the values inside a generate loop or module copy, a \
 constant expression that Yosys evaluates differently from a simulator (a size cast, an \
-unbased '1 or $rtoi inside a localparam), in hand-written Verilog a read and a write that \
-happen in that order only across loop iterations (Verilator cannot see it), or other effects \
-of simulation event order: run gate-level simulation (run_tests with gl=True) as well.\n\
+unbased '1 or $rtoi inside a localparam, an untyped localparam whose value overflows), or \
+other effects of simulation event order: run gate-level simulation (run_tests with gl=True) \
+as well. A state machine that synthesis re-encodes can end as not proven (unproven points).\n\
 What it checks: every output value the RTL defines must match for every power-up state of \
-the chip's flip-flops (an x or default-don't-care in the RTL means any value is accepted); \
+the chip's flip-flops, exactly (each netlist flip-flop takes any 0/1 value while the RTL \
+registers are x; an x or default-don't-care in the RTL means any value is accepted; when the \
+fallback k-induction finds a difference only with every flip-flop at x, it is searched for \
+again that way and only reported if found); \
 registers that nothing resets are only compared for a consistent power-up (the RTL simulation \
 shows x there); an RTL register that keeps an initial value (reg x = 0, initial blocks, Amaranth \
 reset_less or init) which reset does not set is reported, as not equivalent when it shows on a pin \

@@ -220,13 +220,82 @@ def test_equiv_points_of_the_counter() -> None:
 
 def test_base_model_adds_one_wire_pair_per_point_inside_the_module() -> None:
     il = log("counter_good", "equiv.il")
-    points, _, _ = ep.equiv_points(log("counter_good", "equiv.json"))
-    model = ep.base_model(il, points)
+    points, n_gold, n_gate = ep.equiv_points(log("counter_good", "equiv.json"))
+    model, wires = ep.base_model(il, points)
     assert model.count("  wire \\eqa_") == 24 and model.count("  wire \\eqb_") == 24
     assert "  connect \\eqa_0 " + points[0].a in model
     assert "  connect \\eqb_23 " + points[23].b in model
     assert model.rstrip().endswith("end")
     assert model.rfind("connect \\eqb_23") < model.rstrip().rfind("\nend")  # inside the module
+    # One wire per side that holds the output of every flip-flop of that side.
+    assert wires == {"gold": "ff_gold", "gate": "ff_gate"}
+    flops = ep.flip_flops(il, ep.side_by_suffix)
+    assert sum(w for _, w in flops["gold"]) == 8 and sum(w for _, w in flops["gate"]) == 8
+    assert "  wire width 8 \\ff_gold\n  connect \\ff_gold { " in model
+    assert "  wire width 8 \\ff_gate\n  connect \\ff_gate { " in model
+    assert model.rfind("connect \\ff_gate") < model.rstrip().rfind("\nend")
+    assert n_gold and n_gate
+
+
+def test_a_power_up_wire_never_takes_a_name_the_model_already_has() -> None:
+    il = log("counter_good", "equiv.il").replace(
+        "module \\equiv\n", "module \\equiv\n  wire \\ff_gold\n  wire width 3 \\ff_gold_1\n", 1
+    )
+    _, wires = ep.base_model(il, [])
+    assert wires == {"gold": "ff_gold_2", "gate": "ff_gate"}
+
+
+def test_sides_are_read_from_the_cell_names() -> None:
+    assert ep.side_by_suffix("$procdff$16_gold") == "gold"
+    assert ep.side_by_suffix("\\_093__gate") == "gate"
+    assert ep.side_by_suffix("$procdff$16") is None
+    assert ep.side_by_prefix("$flatten\\gold.\\core.$procdff$16") == "gold"
+    assert ep.side_by_prefix("\\gold.core.cnt_reg") == "gold"
+    assert ep.side_by_prefix("$flatten\\gate.\\_093_.$auto$liberty.cc:255:create_ff$1519") == "gate"
+    assert ep.side_by_prefix("\\gold") is None  # a scope cell of the instance itself
+    assert ep.side_by_prefix("\\golden.x") is None and ep.side_by_prefix("$auto$x") is None
+
+
+def test_the_miter_model_gets_the_power_up_wires_of_both_sides() -> None:
+    il = (
+        "module \\miter\n  wire width 2 \\gold.r\n  wire \\gate.q\n"
+        "  cell $dff $flatten\\gold.$procdff$1\n    parameter \\WIDTH 2\n"
+        "    connect \\Q \\gold.r\n  end\n"
+        "  cell $_DFF_P_ $flatten\\gate.\\_1_.$auto$ff\n    connect \\Q \\gate.q\n  end\n"
+        "end\n"
+    )
+    model, wires = ep.miter_model(il)
+    assert wires == {"gold": "ff_gold", "gate": "ff_gate"}
+    assert "  wire width 2 \\ff_gold\n  connect \\ff_gold { \\gold.r }" in model
+    assert "  wire width 1 \\ff_gate\n  connect \\ff_gate { \\gate.q }\nend\n" in model
+    # A side without flip-flops gets no wire (and no power-up option).
+    _, only_gate = ep.miter_model(il.replace("$dff", "$and"))
+    assert only_gate == {"gate": "ff_gate"}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "  cell $dlatch \\gold.l\n  end\n",
+        "  cell $aldff \\gold.l\n  end\n",
+        "  cell $_SDFF_PP0_ \\gate.s\n  end\n",
+        "  cell $mem_v2 \\gold.m\n  end\n",
+        "  cell $anyinit \\gold.a\n  end\n",
+        "  cell $_FF_ \\gold.f\n  end\n",
+        "  cell $_DFF_P_ \\other.f\n    connect \\Q \\x\n  end\n",  # neither side
+        "  cell $_DFF_P_ \\gate.f\n  end\n",  # no Q
+        "  cell $dff \\gold.f\n    connect \\Q \\x\n  end\n",  # no width
+        "  attribute \\init 1'1\n  wire \\gold.w\n",  # an initial value
+    ],
+)
+def test_a_state_whose_power_up_cannot_be_set_raises(bad: str) -> None:
+    with pytest.raises(ValueError):
+        ep.miter_model(f"module \\miter\n{bad}end\n")
+
+
+def test_more_than_one_module_raises() -> None:
+    with pytest.raises(ValueError):
+        ep.miter_model("module \\miter\nend\nmodule \\gold\nend\n")
 
 
 # -- tables and counterexamples ------------------------------------------------------------------

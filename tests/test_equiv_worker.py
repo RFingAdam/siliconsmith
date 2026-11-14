@@ -28,6 +28,29 @@ FIX = REPO_ROOT / "tests" / "fixtures" / "equiv"
 FIXTURES_MYHDL = REPO_ROOT / "tests" / "fixtures" / "equiv_myhdl"
 NOT_A_PASS = "This is NOT a pass."
 
+# What the referee's first call writes (`miter.il`, `equiv_script.miter_model`): a flattened miter
+# with one RTL register (`gold.`) and one netlist flip-flop (`gate.`).
+MITER_IL = """module \\miter
+  wire input 1 \\in_clk
+  wire width 8 \\gold.core.cnt
+  wire width 8 \\gold.core.d
+  wire \\gate._1_.IQ
+  wire \\gate._1_.D
+  cell $dff $flatten\\gold.\\core.$procdff$16
+    parameter \\WIDTH 8
+    parameter \\CLK_POLARITY 1'1
+    connect \\Q \\gold.core.cnt
+    connect \\D \\gold.core.d
+    connect \\CLK \\in_clk
+  end
+  cell $_DFF_P_ $flatten\\gate.\\_1_.$auto$liberty.cc:255:create_ff$1519
+    connect \\Q \\gate._1_.IQ
+    connect \\D \\gate._1_.D
+    connect \\C \\in_clk
+  end
+end
+"""
+
 
 class FakeYosys:
     """Stands in for `equiv.run_yosys`: each tag gets (exit code, scenario, log file)."""
@@ -37,7 +60,9 @@ class FakeYosys:
         self.answers = answers
         self.calls: list[tuple[str, float]] = []
         self.gate_read = "module \\tt_um_chip\n  wire width 1 \\a\n  connect \\a 1'0\nend\n"
-        self.elab_il = "module \\tt_um_chip\nend\n"  # what the "elab" call writes (no process)
+        # what the "elab" call writes (no process); None: it writes nothing
+        self.elab_il: str | None = "module \\tt_um_chip\nend\n"
+        self.miter_il: str | None = MITER_IL  # what the referee's "*_model" call writes
 
     def __call__(self, cwd: Path, script: str, tag: str, timeout: float) -> tuple[int | None, str]:
         self.calls.append((tag, timeout))
@@ -45,8 +70,13 @@ class FakeYosys:
         if timeout <= 0:  # like the real runner: no time left, nothing runs
             return None, ""
         answer = self.answers.get(tag)
-        if tag == "elab":  # the elaboration for the Verilator cross-check
+        if tag == "elab" and self.elab_il is not None:  # for the Verilator cross-check
             (cwd / "elab.il").write_text(self.elab_il)
+        if tag == "elab":
+            answer = answer or (0, "inline", "")
+        if tag.endswith("_model"):  # the referee's miter, before its power-up wires are added
+            if self.miter_il is not None:
+                (cwd / "miter.il").write_text(self.miter_il)
             answer = answer or (0, "inline", "")
         if answer is None:
             raise AssertionError(f"unexpected Yosys call {tag!r}; calls so far: {self.calls}")
@@ -108,8 +138,8 @@ def test_the_counter_is_proven_by_induction(tmp_path: Path) -> None:
     assert got["method"] == "equiv_induct" and got["first_mismatch"] is None
     assert got["stage1"]["proven"] == 24 and got["base"] == {"status": "ok"}
     assert got["cycles_covered"] == 32 and got["internal_inconsistency"] is False
-    assert fake.tags == ["equiv", "base", "bmc"]
-    assert set(got["seconds"]) == {"stage1", "base", "stage4", "total"}
+    assert fake.tags == ["equiv", "base", "bmc_model", "bmc"]
+    assert set(got["seconds"]) == {"tree", "stage1", "base", "stage4", "total"}
     assert len(got["netlist_sha256"]) == 64
     assert "24 matched points proven by induction" in got["message"]
     assert "7 cycles" in got["message"]  # the base case covers seq + 2 cycles
@@ -128,13 +158,34 @@ def test_every_call_runs_in_the_private_scratch_folder_with_its_own_time_limit(
     go(tmp_path, fake, budget_s=50.0, deadline_s=1000.0)
     assert all(t <= 50.0 for _, t in fake.calls)
     scratch = tmp_path / "scratch"
-    assert {p.name for p in scratch.glob("*.ys")} == {"equiv.ys", "base.ys", "bmc.ys"}
+    assert {p.name for p in scratch.glob("*.ys")} == {
+        "equiv.ys",
+        "base.ys",
+        "bmc_model.ys",
+        "bmc.ys",
+    }
     assert (scratch / "netlist.v").read_text() == "module tt_um_chip(); endmodule\n"
     assert (scratch / "project.v").is_file() and (scratch / "chip.v").is_file()
     assert (scratch / "base.il").is_file()
     # The scripts the check ran are the ones of equiv_script.
     assert "equiv_simple -seq 5" in (scratch / "equiv.ys").read_text()
     assert "read_verilog netlist.v" in (scratch / "equiv.ys").read_text()
+    # The base case: RTL registers x, netlist flip-flops any defined value, nothing else fixed.
+    base = (scratch / "base.ys").read_text()
+    x_run = base.split("BASE-DEF")[0]
+    assert "-set-all-undef-at 1 ff_gold -set-def-at 1 ff_gate" in x_run
+    assert "-set-init" not in x_run and "-set-init-def" in base.split("BASE-DEF")[1]
+    model = (scratch / "base.il").read_text()
+    assert "\\ff_gold" in model and "\\ff_gate" in model
+    # The referee: the miter as written, then the same power-up on the miter with its wires.
+    assert "write_rtlil miter.il" in (scratch / "bmc_model.ys").read_text()
+    assert "attrmap -remove init" in (scratch / "bmc_model.ys").read_text()  # no initial values
+    bmc = (scratch / "bmc.ys").read_text()
+    assert "read_rtlil miter_ff.il" in bmc and "-set-init" not in bmc
+    assert "-set-all-undef-at 1 ff_gold -set-def-at 1 ff_gate" in bmc
+    ff = (scratch / "miter_ff.il").read_text()
+    assert "  wire width 8 \\ff_gold\n  connect \\ff_gold { \\gold.core.cnt }" in ff
+    assert "  wire width 1 \\ff_gate\n  connect \\ff_gate { \\gate._1_.IQ }" in ff
 
 
 def test_the_overall_deadline_caps_every_call(tmp_path: Path) -> None:
@@ -165,60 +216,101 @@ def test_both_k_inductions_closing_is_equivalent(tmp_path: Path) -> None:
 
 
 def test_a_base_case_x_difference_on_an_output_is_not_equivalent(tmp_path: Path) -> None:
+    """The X run gives every netlist flip-flop a defined power-up value, so a difference it finds
+    on an output is real for that power-up state: `not_equivalent`, with no second run."""
     fake = FakeYosys(
         "counter_m0442",
         equiv=(0, "counter_m0442", "equiv.log"),
         base=(0, "counter_m0442", "base.log"),
-        baseconfirm=(0, "inline", "SAT proof finished - model found: FAIL!\n"),
     )
     got = go(tmp_path, fake)
     assert got["verdict"] == "not_equivalent" and got["ok"] is False
-    assert fake.tags == ["equiv", "base", "baseconfirm"]  # confirmed: no referee needed
+    assert fake.tags == ["equiv", "base"]  # no referee needed
     mismatch = got["first_mismatch"]
     assert mismatch["cycle"] == 1
     assert {"signal": "uio_oe[0]", "rtl": "0", "netlist": "x"} in mismatch["differs"]
     assert "cycle 1 (power-up, with rst_n low)" in got["message"]
     assert "uio_oe[0] (RTL 0, netlist x)" in got["message"]
-    assert "reset does not set" in got["message"]
+    assert "for some power-up state of its flip-flops" in got["message"]
     row = got["trace"][0]
     assert row["cycle"] == 1 and row["inputs"]["rst_n"] == "0"
     assert row["rtl"]["uio_oe[0]"] == "0" and row["netlist"]["uio_oe[0]"] == "x"
     assert all(k.startswith(("uo_out", "uio_out", "uio_oe")) for k in row["rtl"])  # pins only
 
 
-def test_an_x_difference_that_no_defined_power_up_state_shows_is_not_proven_not_a_difference(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("cell", "why"),
+    [
+        ("  cell $dlatch $d_gold\n    connect \\Q \\q_gold\n  end\n", "cannot set"),
+        ("  cell $mem_v2 $m_gold\n  end\n", "cannot set"),
+        ("  cell $_DFF_P_ $f\n    connect \\Q \\q\n  end\n", "cannot be read"),  # no side
+        ("  cell $dff $f_gold\n    connect \\Q \\q_gold\n  end\n", "cannot be read"),  # width
+        ("  attribute \\init 1'0\n  wire \\q_gold\n", "initial value"),
+    ],
+)
+def test_a_state_whose_power_up_cannot_be_set_is_an_error_never_a_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cell: str, why: str
 ) -> None:
-    """c1/p67: the X run spreads x gate by gate and calls an output x that does not depend on the
-    power-up state. The confirming run (any defined power-up value) finds no difference, so the
-    verdict is never `not_equivalent` on the X run alone."""
-    fake = FakeYosys(
-        "counter_m0442",
-        equiv=(0, "counter_m0442", "equiv.log"),
-        base=(0, "counter_m0442", "base.log"),
-        baseconfirm=(0, "inline", "SAT proof finished - no model found: SUCCESS!\n"),
-        bmc=(0, "counter_good", "bmc.log"),
-    )
+    il = (FIX / "counter_good" / "equiv.il").read_text()
+    end = il.rstrip().rfind("\nend")
+    bad = il[:end] + "\n" + cell + il[end + 1 :]
+    real_copy = shutil.copy
+
+    def copy(src: Path, dst: Path) -> Any:
+        got = real_copy(src, dst)
+        if Path(dst).name == "equiv.il":
+            Path(dst).write_text(bad)
+        return got
+
+    monkeypatch.setattr(shutil, "copy", copy)
+    fake = FakeYosys("counter_good", equiv=(0, "counter_good", "equiv.log"))
     got = go(tmp_path, fake)
-    assert got["verdict"] == "not_proven" and got["reason"] == "base_case" and not got["ok"]
-    assert fake.tags == ["equiv", "base", "baseconfirm", "bmc"]
-    assert "no defined power-up state was found" in got["message"]
-    script = (tmp_path / "scratch/baseconfirm.ys").read_text()
-    assert "-set-init-def" in script and "-set-at 1 rst_n 0" in script and "-prove eqa_" in script
-    assert "-set-at 1 ui_in" in script  # the inputs of the X run's counterexample stay fixed
+    assert got["verdict"] == "error" and not got["ok"] and fake.tags == ["equiv"]
+    assert why in got["message"]
 
 
-def test_an_unreadable_confirming_run_is_an_error_never_a_difference_or_a_pass(
-    tmp_path: Path,
+@pytest.mark.parametrize("miter_il", [None, "module \\miter\nend\nmodule \\other\nend\n"])
+def test_a_referee_model_that_cannot_be_read_is_an_error_never_a_pass(
+    tmp_path: Path, miter_il: str | None
 ) -> None:
     fake = FakeYosys(
-        "counter_m0442",
-        equiv=(0, "counter_m0442", "equiv.log"),
-        base=(0, "counter_m0442", "base.log"),
-        baseconfirm=(0, "inline", "nothing useful\n"),
+        "counter_good",
+        equiv=(0, "counter_good", "equiv.log"),
+        base=(0, "counter_good", "base.log"),
     )
+    fake.miter_il = miter_il  # not written, or two modules
     got = go(tmp_path, fake)
     assert got["verdict"] == "error" and not got["ok"]
+    assert fake.tags == ["equiv", "base", "bmc_model"]
+
+
+def test_a_stale_referee_model_is_never_read(tmp_path: Path) -> None:
+    """A `miter.il` left in the scratch folder by an earlier call is deleted first."""
+    fake = FakeYosys(
+        "counter_good",
+        equiv=(0, "counter_good", "equiv.log"),
+        base=(0, "counter_good", "base.log"),
+    )
+    fake.miter_il = None
+    (tmp_path / "scratch").mkdir()
+    (tmp_path / "scratch" / "miter.il").write_text(MITER_IL)
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "error" and fake.tags == ["equiv", "base", "bmc_model"]
+
+
+@pytest.mark.parametrize(("code", "verdict"), [(None, "not_proven"), (1, "error")])
+def test_a_referee_model_call_that_fails_or_runs_out_of_time_is_never_a_pass(
+    tmp_path: Path, code: int | None, verdict: str
+) -> None:
+    fake = FakeYosys(
+        "counter_good",
+        equiv=(0, "counter_good", "equiv.log"),
+        base=(0, "counter_good", "base.log"),
+        bmc_model=(code, "inline", "ERROR: boom\n"),
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == verdict and not got["ok"]
+    assert fake.tags == ["equiv", "base", "bmc_model"]
 
 
 def test_a_difference_found_from_reset_names_the_bit_the_cycle_and_the_trace(
@@ -228,11 +320,16 @@ def test_a_difference_found_from_reset_names_the_bit_the_cycle_and_the_trace(
         "counter_good",
         equiv=(0, "counter_m0115", "equiv.log"),
         kind_x=(0, "counter_m0115", "kind_x.log"),
+        # its netlist bit is x (every flip-flop starts x): confirmed by the per-side search
+        kind_x_check=(0, "counter_m0115", "kind_x.log"),
         kind_zero=None,
     )
     got = go(tmp_path, fake)
     assert got["verdict"] == "not_equivalent" and got["reason"] is None
-    assert fake.tags == ["equiv", "kind_x"]  # the counterexample ended it
+    # the confirmed counterexample ended it
+    assert fake.tags == ["equiv", "kind_x", "kind_x_check_model", "kind_x_check"]
+    assert "-set-init-undef" not in (tmp_path / "scratch" / "kind_x_check.ys").read_text()
+    assert "read_rtlil miter_ff.il" in (tmp_path / "scratch" / "kind_x_check.ys").read_text()
     mismatch = got["first_mismatch"]
     assert mismatch["cycle"] >= 2
     assert mismatch["differs"][0]["signal"].startswith(("uo_out[", "uio_out[", "uio_oe["))
@@ -245,6 +342,24 @@ def test_a_difference_found_from_reset_names_the_bit_the_cycle_and_the_trace(
         "uio_in",
     }
     assert len(trace) <= equiv.MAX_EQUIV_TRACE
+
+
+def test_an_x_only_difference_with_every_flip_flop_at_x_must_be_confirmed(tmp_path: Path) -> None:
+    """Round 13 n23v: with every flip-flop x, a mux2 whose inputs are equal gives x for an x
+    select, where every real power-up state gives the same value. The per-side search (netlist
+    flip-flops at any defined value) finds no difference: not proven, never not equivalent."""
+    fake = FakeYosys(
+        "counter_good",
+        equiv=(0, "counter_m0115", "equiv.log"),
+        kind_x=(0, "counter_m0115", "kind_x.log"),  # uo_out[5]: RTL 0, netlist x
+        kind_x_check=(0, "counter_good", "bmc.log"),  # the per-side search: no difference
+        kind_zero=(0, "counter_m0043", "kind_zero.log"),
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "unproven_points"
+    assert fake.tags == ["equiv", "kind_x", "kind_x_check_model", "kind_x_check", "kind_zero"]
+    assert got["first_mismatch"] is None and got["cycles_covered"] == 32
+    assert "first 32 cycles from reset" in got["message"]
 
 
 def test_the_referee_finding_a_difference_after_a_clean_base_case_is_never_a_pass(
@@ -291,7 +406,8 @@ def test_initial_values_that_reset_overwrites_let_the_check_go_on(tmp_path: Path
         bmc=(0, "counter_good", "bmc.log"),
     )
     got = go(tmp_path, fake)
-    assert got["verdict"] == "equivalent" and fake.tags == ["equiv", "initstate", "base", "bmc"]
+    assert got["verdict"] == "equivalent"
+    assert fake.tags == ["equiv", "initstate", "base", "bmc_model", "bmc"]
     script = (tmp_path / "scratch" / "initstate.ys").read_text()
     assert "expose -dff" in script and "-prove-skip 1" in script  # the state at cycle 2
 
@@ -1071,12 +1187,29 @@ def purity(
     return (got["reason"], sentence.removesuffix(f" {NOT_A_PASS}")), argvs
 
 
-def test_no_function_task_or_star_block_means_no_purity_run(
+def test_a_design_of_continuous_assignments_only_gets_the_tree_checks_too(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    text = "module tt_um_chip();\n  // a function in a comment\n  wire a;\nendmodule\n"
-    got, argvs = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), text=text)
-    assert got is None and argvs == []
+    """Round 13 g08/x01genxassign: `localparam Q = 1 / Z;` steering a generate `case` of plain
+    `assign`s. No always block, function or task, and the x parameter must still be refused."""
+    text = (
+        "module tt_um_chip(input [7:0] a, output [7:0] y);\n  localparam integer Z = 0;\n"
+        "  localparam integer Q = 1 / Z;\n  case (Q)\n    (1 / Z) + 1: begin : g assign y = a; "
+        "end\n    default: begin : g assign y = ~a; end\n  endcase\nendmodule\n"
+    )
+    tree = {"type": "NETLIST", "modulesp": [
+        {"type": "MODULE", "addr": "(M)", "name": "tt_um_chip", "loc": "e,1:1,1:7"},
+        {"type": "VAR", "addr": "(Q)", "name": "Q", "varType": "LPARAM", "isParam": True,
+         "loc": "e,3:22,3:23", "valuep": [{"type": "CONST", "name": "32'hxxxxxxxx",
+                                           "loc": "e,3:26,3:31"}]},
+    ]}  # fmt: skip
+    fake = fake_elab("")
+    got, argvs = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(tree), text=text, fake=fake
+    )
+    assert len(argvs) == 1 and "--json-only" in argvs[0]  # the tree was built
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert "computes the parameter `Q` with an x or z bit" in got[1]
 
 
 def test_an_impure_function_is_not_proven_with_one_clean_sentence(
@@ -1188,6 +1321,21 @@ def test_a_failing_elaboration_or_an_unreadable_result_is_never_a_pass(
     assert "could not read the elaboration of the RTL" in got[1]
 
 
+def test_a_stale_elaboration_is_never_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An `elab.il` left by an earlier run is deleted before Yosys runs: a Yosys that writes
+    nothing (exit 0) is unreadable, never the old file's clean result."""
+    stale = tmp_path / "s" / "elab" / "elab.il"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("module \\tt_um_chip\nend\n")  # no process: would match anything
+    fake = fake_elab("")
+    fake.elab_il = None
+    got, _ = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, text=STAR_TEXT, fake=fake
+    )
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert "could not read the elaboration of the RTL" in got[1] and not stale.exists()
+
+
 def test_yosys_does_not_run_when_verilator_gave_no_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1216,7 +1364,7 @@ def test_a_divergent_elaboration_stops_check_before_stage_1_and_a_matched_one_go
     got = equiv.check(rtl, "chip", netlist, tmp_path / "s1", yosys=fake)
     assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
     assert "elaborate the RTL differently" in got["message"] and fake.tags == ["elab"]
-    assert got["seconds"]["elab"] >= 0
+    assert got["seconds"]["elab"] >= 0 and got["seconds"]["tree"] >= 0
 
     monkeypatch.setattr(equiv, "_run_verilator", verilator(json.dumps(STAR_TREE)))
     fake = fake_elab(STAR_IL, equiv=(1, "inline", "ERROR: stop here\n"))
@@ -1289,3 +1437,88 @@ def test_check_refuses_an_impure_function_before_any_proof(
     assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
     assert "the function `rd` (chip.v, line 3) reads `cnt` (line 4)" in got["message"]
     assert fake.tags == ["elab"]
+
+
+# The star_core block `y = t; t = cnt;` as Verilator's tree: t is read before it is written.
+EARLY_TREE = {
+    "type": "NETLIST",
+    "modulesp": [
+        {"type": "BASICDTYPE", "addr": "(D)", "keyword": "logic", "range": "7:0"},
+        {"type": "VAR", "addr": "(T)", "name": "t", "dtypep": "(D)", "loc": "e,1:1,1:2"},
+        {"type": "VAR", "addr": "(Y)", "name": "y", "dtypep": "(D)", "loc": "e,1:1,1:2"},
+        {"type": "VAR", "addr": "(C)", "name": "cnt", "dtypep": "(D)", "loc": "e,1:1,1:2"},
+        {
+            "type": "ALWAYS",
+            "addr": "(A)",
+            "keyword": "always",
+            "loc": "e,2:3,2:9",
+            "stmtsp": [
+                {
+                    "type": "ASSIGN",
+                    "lhsp": [{"type": "VARREF", "varp": "(Y)", "access": "WR", "loc": "e,3:5,3:6"}],
+                    "rhsp": [{"type": "VARREF", "varp": "(T)", "access": "RD", "loc": "e,3:9,3:10",
+                              "name": "t"}],
+                },
+                {
+                    "type": "ASSIGN",
+                    "lhsp": [{"type": "VARREF", "varp": "(T)", "access": "WR", "loc": "e,4:5,4:6"}],
+                    "rhsp": [{"type": "VARREF", "varp": "(C)", "access": "RD",
+                              "loc": "e,4:9,4:12"}],
+                },
+            ],
+        },
+    ],
+}  # fmt: skip
+STAR_RTL = "module tt_um_chip();\n  always @* begin\n    y = t;\n    t = cnt;\n  end\nendmodule\n"
+
+
+def test_a_read_before_a_write_on_some_path_is_refused_after_a_matched_elaboration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = fake_elab(STAR_IL)
+    got, _ = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(EARLY_TREE), text=STAR_RTL,
+        fake=fake,
+    )  # fmt: skip
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert got[1].startswith("the RTL (chip.v, line 3) has a combinational block that can read `t`")
+    assert "on some path through the block" in got[1] and fake.tags == ["elab"]
+    # a block written in the right order passes
+    good = json.loads(json.dumps(EARLY_TREE))
+    good["modulesp"][4]["stmtsp"].reverse()
+    got, _ = purity(
+        tmp_path / "x", monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(good), text=STAR_RTL,
+        fake=fake_elab(STAR_IL),
+    )  # fmt: skip
+    assert got is None
+
+
+def test_a_statement_the_walk_does_not_know_is_never_a_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    odd = json.loads(json.dumps(EARLY_TREE))
+    odd["modulesp"][4]["stmtsp"].append({"type": "WAIT"})
+    got, _ = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(odd), text=STAR_RTL,
+        fake=fake_elab(STAR_IL),
+    )  # fmt: skip
+    assert got is not None and "no usable syntax tree" in got[1]
+
+
+def test_an_x_parameter_is_refused_first_without_running_the_elaboration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = json.loads(json.dumps(EARLY_TREE))
+    tree["modulesp"].append(
+        {"type": "VAR", "addr": "(Q)", "name": "Q", "varType": "LPARAM", "isParam": True,
+         "loc": "e,1:3,1:4", "valuep": [{"type": "CONST", "name": "32'hxxxxxxxx",
+                                         "loc": "e,1:7,1:10"}]}
+    )  # fmt: skip
+    fake = fake_elab(STAR_IL)
+    got, _ = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(tree), text=STAR_RTL,
+        fake=fake,
+    )  # fmt: skip
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert "computes the parameter `Q` with an x or z bit" in got[1]
+    assert fake.calls == []  # the root cause, before Yosys elaborates anything

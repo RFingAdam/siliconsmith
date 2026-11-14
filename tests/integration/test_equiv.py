@@ -343,10 +343,35 @@ RTL_SEEDS = [
     ("concatgen", "verilog", "not_proven", "guard_sim_synth_differ"),  # `{y, t} = {t, ui_in}`
     ("svescw", "verilog", "not_proven", "guard_sim_synth_differ"),  # `always_comb\y` and `\;`
     ("hierk", "verilog", "not_proven", "guard_sim_synth_differ"),  # function reads `g.k`
-    # swpick: an output picked by a 4-way switch on ui_in that does not depend on the power-up
-    # state, but whose gates spread x in the X run. Once reported as "NOT equivalent" (false):
-    # now the power-up difference must be confirmed, and an unconfirmed one is only not proven
-    ("swpick", "verilog", "not_proven", "base_case"),
+    # Round 12: a combinational block that can read a signal before it writes it on SOME path
+    # (judged path by path on Verilator's tree: ALWCOMBORDER only sees the text order)
+    ("c01brorder", "verilog", "not_proven", "guard_sim_synth_differ"),  # in one `if` branch
+    ("c04caseorder", "verilog", "not_proven", "guard_sim_synth_differ"),  # in one case item
+    ("c06namedlocalbr", "verilog", "not_proven", "guard_sim_synth_differ"),  # a named-block local
+    ("c10combsv", "verilog", "not_proven", "guard_sim_synth_differ"),  # in an always_comb
+    ("c13partbr", "verilog", "not_proven", "guard_sim_synth_differ"),  # half written on one path
+    # vloopit: a loop that reads `t` in one pass and writes it in a later one (it used to be
+    # pinned as not detected: Verilator's ALWCOMBORDER cannot see it, the path walk does)
+    ("vloopit", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # a parameter with an x or z bit (`1/0`) is refused before anything is judged on it
+    ("a04foldcomb", "verilog", "not_proven", "guard_sim_synth_differ"),  # picks the bad order
+    ("e04splitcall", "verilog", "not_proven", "guard_sim_synth_differ"),  # `rd\n(ui_in)` too
+    ("g07genxcase", "verilog", "not_proven", "guard_sim_synth_differ"),  # a generate `case` on x
+    ("hiersplit", "verilog", "not_proven", "guard_sim_synth_differ"),  # `g\n.rd(ui_in)`
+    # Round 13: the same with plain `assign`s only (no always block, function or task: the tree
+    # checks used to be skipped), through a parameter override, `$clog2(1/0)` and `5 % 0`
+    ("xgenassign", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("xsubover", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("xclog", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("xmodx", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # a function argument that is not an input: on one path of an `if` (Verilator's ternary), and
+    # an inout read before the block writes it
+    ("fnoutif", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("fninout", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # an unsized number of 2**31 or more: Verilator folds `2147483648 > 0` to false, Yosys and
+    # Icarus to true, so the order and purity checks judged the branch the proof does not use
+    ("bigfold", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("bigimpure", "verilog", "not_proven", "guard_sim_synth_differ"),
     # Icarus ends a `//` comment at a lone CR, Yosys and Verilator do not
     ("crhide", "verilog", "not_proven", "guard_sim_synth_differ"),
     # Verilator ends an attribute at a `*)` inside its string, Yosys does not
@@ -543,19 +568,50 @@ async def test_no_combinational_read_before_write_in_the_counter(
         assert comb_order_in_container(image, project, "counter") == "None", fe
 
 
-async def test_a_read_and_a_write_across_loop_iterations_in_verilog_is_not_detected(
+# Normal designs that must be proven equivalent, on every front-end they have. swpick: an output
+# picked by a 4-way switch from a register; the old power-up run spread x through the netlist
+# gate by gate and called it "NOT equivalent", then "not proven". n52: sub-module instances joined
+# by a wire array (`.q(stage[0])`, a process Yosys anchors at the port). n45: a function that
+# reads the members of a packed struct argument (`p.hi`). pieces: combinational blocks built
+# piece by piece before they are read (constant selects, full case and casez without default,
+# a loop accumulator, a named-block local, array elements, struct members).
+EQUIVALENT = ["swpick", "n52", "n45", "pieces"]
+EQUIVALENT_CASES = [
+    (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
+]
+
+
+@pytest.mark.parametrize(
+    ("design", "fe"), EQUIVALENT_CASES, ids=[f"{d}-{f}" for d, f in EQUIVALENT_CASES]
+)
+async def test_equiv_normal_designs_are_equivalent(
+    server: Client, tmp_path: Path, design: str, fe: str
+) -> None:
+    async with server as client:
+        await design_project(client, tmp_path, design, fe)
+        result = await call(client, "check_equivalence", project=design)
+        details = result["details"]
+        print(f"\n{design}-{fe}: {details.get('verdict')} {details.get('reason')}")
+        assert result["ok"] is True, result["summary"]
+        assert details["verdict"] == "equivalent" and details["method"] == "equiv_induct", details
+        assert "tree" in details["seconds"], details["seconds"]  # the tree checks ran
+
+
+async def test_an_x_that_only_spreads_through_the_netlist_is_never_not_equivalent(
     server: Client, tmp_path: Path
 ) -> None:
-    """vloopit, PINNED AS NOT DETECTED: hand-written `always @*` whose loop reads `t` in iteration
-    0 and writes it in iteration 1. A simulator keeps the old `t`, the gates use the new one, so
-    the two differ; but Verilator's ALWCOMBORDER cannot see an order that only exists across loop
-    iterations, and the check has no other way to see it. It is listed under what the check does
-    not detect (gate-level simulation is the check for that). If this test starts to fail
-    because the check now refuses the design, update the docs and this test."""
+    """Round 13 n23v: a correct state machine (stage 1 leaves the shift register unproven, so the
+    k-induction runs) plus an unreset mode bit `c` that picks between two input pins. With every
+    flip-flop x, the mux shows x where every real power-up state gives the same value; the
+    per-side search finds no difference, so it is not proven (it used to be "NOT equivalent")."""
     async with server as client:
-        await design_project(client, tmp_path, "vloopit", "verilog")
-        result = await call(client, "check_equivalence", project="vloopit")
-        assert result["details"]["verdict"] == "equivalent", result["summary"]
+        await design_project(client, tmp_path, "n23v", "verilog")
+        result = await call(client, "check_equivalence", project="n23v")
+        details = result["details"]
+        print(f"\nn23v: {details.get('verdict')} {details.get('reason')}: {details.get('message')}")
+        assert details["verdict"] == "not_proven", details
+        assert details["reason"] in ("unproven_points", "time_limit"), details
+        assert details["first_mismatch"] is None, details
 
 
 # -- the function-purity check on Verilator's syntax tree (round 10) -----------------------------
@@ -678,12 +734,6 @@ PURE_CASES = {
         "      reg [7:0] u;\n      u = a;\n      f = u;\n    end\n  endfunction\n"
         "  always @(*) y = f(ui_in);"
     ),
-    "a void function that only writes its own outputs": MOD.format(
-        "  reg [3:0] h, l;\n"
-        "  function automatic void split(input [7:0] v, output [3:0] hi, output [3:0] lo);\n"
-        "    hi = v[7:4];\n    lo = v[3:0];\n  endfunction\n"
-        "  always @(*) begin\n    split(ui_in, h, l);\n    y = {l, h};\n  end"
-    ),
     "recursion on its own argument": MOD.format(
         "  function automatic [7:0] f(input [7:0] a);\n"
         "    f = (a == 8'd0) ? 8'd0 : a + f(a - 8'd1);\n  endfunction\n"
@@ -698,6 +748,17 @@ PURE_CASES = {
 }
 
 IMPURE_CASES = {
+    # pure, but an output argument is refused by the token rules (`equiv_sv`) before the tree is
+    # read, and the read-before-write walk never counts one as written (round 13 w01ifctl)
+    "a void function that writes its outputs, read after the call": (
+        MOD.format(
+            "  reg [3:0] h, l;\n"
+            "  function automatic void split(input [7:0] v, output [3:0] hi, output [3:0] lo);\n"
+            "    hi = v[7:4];\n    lo = v[3:0];\n  endfunction\n"
+            "  always @(*) begin\n    split(ui_in, h, l);\n    y = {l, h};\n  end"
+        ),
+        "can read `l` before it writes it",
+    ),
     "a function that writes a module signal": (
         MOD.format(
             "  function automatic [7:0] f(input [7:0] a);\n    begin\n      cnt = a;\n"

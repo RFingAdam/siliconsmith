@@ -16,7 +16,10 @@ named) instead of a verdict. What it does NOT spot is left to gate-level simulat
 * an out-of-range index or a division by zero (x in a simulator, some value in the gates, because
   an x in the RTL is a don't-care), a constant that is x to a simulator steering a case inside a
   block, and the values inside a generate loop or module copy;
-* anything that depends on the order in which a simulator runs events.
+* a constant expression that Yosys evaluates differently from a simulator: a size cast, an
+  unbased `'1` or `$rtoi` inside a localparam, an untyped `localparam` whose value overflows
+  (`localparam K = 8'hff + 1`: the tools can size it differently);
+* anything else that depends on the order in which a simulator runs events.
 
 ## What this module does
 
@@ -44,6 +47,10 @@ In every file:
   anywhere but as the label of an item of a `casez` (innermost case is a `casez`, outside the
   header, at bracket depth 0, after `;` `,` `end` `endcase` or the header `)`, before `,` or `:`):
   there they are wildcards for both a simulator and synthesis;
+* an unsized number of 2**31 or more (a plain decimal `2147483648` or a based number without a
+  size, `'hFFFFFFFF`): Verilator reads `2147483648` as a negative 32-bit value, Yosys and Icarus
+  as a wider positive one, so the checks judged on Verilator's tree (`equiv_tree`) could follow
+  another branch than the proof (`if (2147483648 > 0)`); a size (`32'd2147483648`) is fine;
 * every character outside printable ASCII, tab, CR and LF that is not in a comment (the tools
   disagree about where an escaped identifier ends and what counts as a blank);
 * delay controls (`#`), except a parameter list in exactly two shapes:
@@ -54,9 +61,14 @@ In every file:
   runs with every warning fatal, and that is what finds a blocking race or an x in a case item.
 
 * `function` without `automatic` (any front-end): a simulator keeps the local variables of a plain
-  function between calls; a `function` that reads anything but its own arguments, locals,
-  parameters and pure functions (a simulator's `@*` does not see it; judged on Verilator's
-  syntax tree in `equiv_tree`, not here); every `task`.
+  function between calls; a function argument that is not an input (`output`, `inout` or `ref`
+  inside a function: Icarus cannot compile one, and a call on one path of a statement writes it
+  on that path only, which the order check cannot follow); a `function` that reads anything but
+  its own arguments, locals, parameters and pure functions (a simulator's `@*` does not see it;
+  judged on Verilator's syntax tree in `equiv_tree`, not here); every `task`; a hierarchical
+  name inside a function (a dotted name that is not a member of an argument or local: `g.k`,
+  also split over lines; `p.lo` of an argument or local `p` is fine unless `p` is also a block
+  label, module, instance or call name of the file).
 
 Only in a core file that lists no level signals itself (strict: Verilog and Amaranth; never
 `project.v`, which the tool writes):
@@ -71,8 +83,10 @@ plain single module MyHDL writes (see `_Module`), its level-sensitive blocks exa
 `@always_comb` writes, listing every signal they read and reading none before writing it (see
 `_Block`); anything else is refused and the advice is `@always_comb`.
 
-A combinational block that reads a signal before it writes it is also refused for every front-end,
-by Verilator (`always_comb` copy, ALWCOMBORDER): see `equiv._comb_order` and `always_comb_copy`.
+A combinational block that can read a signal before it writes it on some path through the block
+is also refused for every front-end, on Verilator's syntax tree (`equiv_tree.early_read`), and
+again by Verilator's own lint (`always_comb` copy, ALWCOMBORDER): see `equiv._tree_checks`,
+`equiv._comb_order` and `always_comb_copy`.
 
 In every file, a CR that no LF follows (Icarus ends a `//` comment there, the others do not) and
 an attribute whose string holds `*)` (Verilator ends the attribute there) are refused.
@@ -309,11 +323,30 @@ def always_comb_copy(text: str) -> str | None:
 _FUNCTION_BODY = re.compile(r"\bfunction\b.*?\bendfunction\b", re.S | re.ASCII)
 _DOTTED = re.compile(r"(?<![\w$'])[A-Za-z_][\w$]*\s*\.\s*[A-Za-z_]", re.ASCII)
 _DIRECTIVE = re.compile(r"``|`([A-Za-z_]\w*)?", re.ASCII)
+_DECLARES = re.compile(
+    r"(?:input|output|inout|ref|const|var|static|automatic|reg|logic|wire|integer|signed|"
+    r"unsigned|bit|byte|shortint|int|longint|real|realtime|time)\b",
+    re.ASCII,
+)
+# Names that open a scope a dotted name can reach into: a block label (`begin : g`, `g : begin`),
+# a module, interface or program, an instance, an array of instances or a call (any word before
+# a `(`, possibly after `[...]`: more than the instances, never fewer).
+_SCOPES = (
+    re.compile(r"\b(?:begin|fork)\s*:\s*([A-Za-z_][\w$]*)", re.ASCII),
+    re.compile(r"(?<![\w$'])([A-Za-z_][\w$]*)\s*:\s*(?:begin|fork)\b", re.ASCII),
+    re.compile(r"\b(?:module|macromodule|interface|program)\s+([A-Za-z_][\w$]*)", re.ASCII),
+    re.compile(r"(?<![\w$'])([A-Za-z_][\w$]*)\s*(?:\[[^\]]*\]\s*)*\(", re.ASCII),
+)
 _WORD = re.compile(r"(?<![\w$'])[A-Za-z_][\w$]*", re.ASCII)
 _BASED = re.compile(
     r"(?<![\w$])(?:\d[\d_]*\s*)?'\s*[sS]?\s*([bBoOdDhH])\s*([0-9a-fA-FxXzZ?_]+)", re.ASCII
 )
 _UNBASED = re.compile(r"'[xXzZ](?![\w])", re.ASCII)
+# a plain decimal number: not part of a word, a real (`1.5`, `2e9`) or the size of a based literal
+_DECIMAL = re.compile(r"(?<![\w$'.])\d[\d_]*(?![\w$.]|\s*')", re.ASCII)
+_RADIX = {"b": 2, "o": 8, "d": 10, "h": 16}
+UNSIZED_MAX = (1 << 31) - 1  # the largest unsized number every tool reads the same way
+ARGUMENT_DIRECTIONS = frozenset({"output", "inout", "ref"})
 _LINT_OFF = re.compile(r"verilator\s+lint_off\b([^\n*]*)", re.I | re.ASCII)
 
 
@@ -330,6 +363,83 @@ def _word_before(scan: str, pos: int) -> tuple[str, int]:
     while k >= 0 and scan[k] in _ID_CHARS:
         k -= 1
     return scan[k + 1 : end], k + 1
+
+
+def _scope_names(scan: str) -> set[str]:
+    """Every name in the file that may open a scope (`_SCOPES`): a dotted name whose head is one
+    of them is never taken for a member of a function's argument or local."""
+    return {m.group(1) for pattern in _SCOPES for m in pattern.finditer(scan)}
+
+
+def _split_top(text: str, sep: str) -> list[str]:
+    """`text` split at every `sep` outside brackets, parentheses and braces."""
+    parts, depth, last = [], 0, 0
+    for k, c in enumerate(text):
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == sep and depth == 0:
+            parts.append(text[last:k])
+            last = k + 1
+    return [*parts, text[last:]]
+
+
+def _declared(item: str) -> str | None:
+    """The name a declaration item declares (`input pair_t p`, `logic [3:0] a [0:1] = 0`): the
+    last word before any default value, after the unpacked ranges are cut off."""
+    item = _split_top(item, "=")[0].rstrip()
+    while item.endswith("]"):
+        k = item.rfind("[")
+        if k < 0:
+            return None
+        item = item[:k].rstrip()
+    found = re.search(r"(?<![\w$'])([A-Za-z_][\w$]*)$", item, re.ASCII)
+    return found.group(1) if found else None
+
+
+def _port_list(body: str) -> int | None:
+    """Where the port list of a function header starts: the first `(` outside a range (`[...]`,
+    which may hold `$clog2(N)`) before the `;` that ends the header; None for a header without one
+    (`function automatic [7:0] f;` with `input` statements)."""
+    depth = 0
+    for k, c in enumerate(body):
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+        elif depth == 0 and c == ";":
+            return None
+        elif depth == 0 and c == "(":
+            return k
+    return None
+
+
+def _function_names(body: str) -> set[str]:
+    """The arguments and the locals of one function (`function ... endfunction`, tokenized):
+    the items of its port list, and the names of every statement of its body that starts with a
+    declaration word (`input`, `logic`, `integer`, ...) or with a type and a name (`pair_t q;`).
+    A local declared deeper (inside an `if`) is not found: its dotted names are refused."""
+    names: set[str] = set()
+    rest = body
+    start = _port_list(body)
+    head_end = _balanced(body, start, "(", ")") if start is not None else None
+    if start is not None and head_end is not None:
+        ports = body[start + 1 : head_end - 1]
+        names |= {n for item in _split_top(ports, ",") if (n := _declared(item)) is not None}
+        rest = body[head_end:]
+    statements = _split_top(rest, ";")[1:]  # the first one ends the function header
+    for statement in statements:
+        statement = re.sub(r"^\s*(?:begin\b(?:\s*:\s*[A-Za-z_][\w$]*)?\s*)*", "", statement)
+        words = re.match(r"([A-Za-z_][\w$]*)\s*(?:\[[^\]]*\]\s*)*([A-Za-z_][\w$]*)?", statement)
+        if words is None:
+            continue
+        typed = words.group(2) is not None and words.group(1) not in RESERVED
+        if _DECLARES.fullmatch(words.group(1)) or typed:
+            names |= {
+                n for item in _split_top(statement, ",") if (n := _declared(item)) is not None
+            }
+    return names
 
 
 def _skip_blank(scan: str, k: int) -> int:
@@ -1121,16 +1231,13 @@ def _myhdl_level_blocks(scan: str) -> tuple[int, str, str] | None:
     return _judge_levels(module)
 
 
-_TREE_WORDS = frozenset({"function", "task", "always", "always_comb", "always_latch", "always_ff"})
-
-
-def needs_tree(text: str) -> bool:
-    """True if the RTL has a `function`, a `task` or any always block (`always`, `always_comb`,
-    `always_latch`, `always_ff`; found in the tokenized text, so a comment or a string never
-    counts): the blocks that the purity and order checks judge on Verilator's syntax tree, and
-    that the elaboration cross-check (`equiv_elab`) must see in both tools."""
-    _, scan, _ = lex(text)
-    return any(m.group(0) in _TREE_WORDS for m in _WORD.finditer(scan))
+def _value(digits: str, base: str) -> int:
+    """The value of the digits of a number in base `b`, `o`, `d` or `h` (-1 if they are not
+    digits of that base: the tools reject such a number themselves)."""
+    try:
+        return int(digits.replace("_", ""), _RADIX[base.lower()])
+    except ValueError:
+        return -1
 
 
 def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusal | None:
@@ -1161,10 +1268,21 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
             return refuse("a `task` (it can write any signal, and `@*` does not see it)", m.start())
         if word == "function" and not re.match(r"\s*automatic\b", scan[m.end() :], re.ASCII):
             return refuse("a `function` that is not `automatic`", m.start())
+    scopes = _scope_names(scan)
     for body in _FUNCTION_BODY.finditer(scan):
-        dotted = _DOTTED.search(body.group(0))
-        if dotted is not None:
-            return refuse("a hierarchical name inside a function", body.start() + dotted.start())
+        for m in _WORD.finditer(body.group(0)):
+            if m.group(0) in ARGUMENT_DIRECTIONS:
+                return refuse(
+                    f"a function with an `{m.group(0)}` argument", body.start() + m.start()
+                )
+        own = _function_names(body.group(0)) - scopes
+        for dotted in _DOTTED.finditer(body.group(0)):
+            if dotted.group(0).split(".", 1)[0].strip() not in own:
+                return refuse(
+                    "a hierarchical name inside a function (a dotted name that is not a member of "
+                    "an argument or local)",
+                    body.start() + dotted.start(),
+                )
     for task in SYSTEM_TASKS:
         at = scan.find(task)
         if at >= 0:
@@ -1183,6 +1301,13 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
             return refuse(f"a literal with an x digit (`{shown}`)", m.start())
         if re.search(r"[zZ?]", digits) and not _wildcard_ok(scan, cases, m.start(), m.end()):
             return refuse(f"a literal with a z or ? digit (`{shown}`)", m.start())
+        if not shown[0].isdigit() and _value(digits, m.group(1)) > UNSIZED_MAX:
+            return refuse(f"the unsized number `{shown}` (2**31 or more)", m.start())
+    based = [(m.start(), m.end()) for m in _BASED.finditer(scan)]
+    for m in _DECIMAL.finditer(scan):
+        inside = any(start <= m.start() < end for start, end in based)
+        if not inside and _value(m.group(0), "d") > UNSIZED_MAX:
+            return refuse(f"the unsized number `{m.group(0)}` (2**31 or more)", m.start())
     for m in re.finditer(r"#", scan):
         if not _parameter_list(scan, m.start()):
             return refuse("a delay (`#`)", m.start())
@@ -1248,6 +1373,12 @@ _ADVICE = (
     ("hierarchical name", "Pass the value in as an argument: Verilator and Yosys can resolve a "
      "hierarchical name to different things in a generate branch, and a simulator does not rerun "
      "an `always @*` when it changes."),
+    ("function with an", "Return the value instead (several values as one concatenation): "
+     "Icarus cannot compile a function argument that is not an input, and the check does not "
+     "follow a value that a call writes back through one."),
+    ("unsized number", "Give it a size (`32'd3000000000`): Verilator reads an unsized number of "
+     "2**31 or more as a negative 32-bit value, Yosys and Icarus as a wider positive one, so "
+     "the checks judged on Verilator's reading can take another branch than the proof."),
     ("automatic", "Write `function automatic`: a simulator keeps the local variables of a plain "
      "function between calls."),
     ("$", "Remove it: it reads a file or an option the check does not have."),
