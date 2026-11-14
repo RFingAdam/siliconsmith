@@ -69,7 +69,8 @@ It does not catch bugs in the RTL itself, including a wrong reset in the RTL: bo
 
 "Equivalent" means synthesis did not change your logic: the gates match the RTL as Yosys reads it. A simulator reads some constructs differently, so the check refuses the common ones as not proven (`guard_sim_synth_differ`) and names them: macros and `ifdef`, `include`, `bit`/`int`, `unique`/`priority`, `casex`, `===`, x or z literals, `#` delays and a `lint_off` of a race warning.
 
-It cannot see an out-of-range index or a division by zero applied to a signal (x in a simulator, some value in the gates), a call of your function inside an expression that returns x for constant arguments, a function that reads its own local before writing it, a localparam that Yosys reads differently from a simulator (an untyped `localparam` whose value overflows), or anything else that depends on the order a simulator runs events.
+It cannot see an index computed from a signal that goes outside the range or a division by a signal that is 0 (x in a simulator, some value in the gates), a call of your function inside an expression that returns x for constant arguments, a function that reads its own local before writing it, or anything else that depends on the order a simulator runs events.
+Nor does it see a constant that Yosys reads differently from a simulator (an untyped `localparam` whose value overflows, `$rtoi` in any constant expression: a localparam or a generate condition); only a parameter on which the simulator and Verilator disagree is refused.
 An `initial` value on a register that reset does not set is missed when its next value in the reset cycle depends on another register's power-up value.
 Gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour: run both.
 
@@ -79,14 +80,15 @@ A state machine that synthesis re-encodes can end as not proven (`unproven_point
 
 Write `always @(*)` (a list of level signals is refused) and `function automatic`.
 Write every signal of a combinational block at the top of the block, before any `if`, `case` or loop. A block that can read a signal before it writes it on some path (a branch, a case item or a loop pass that does not write it first) is refused: a simulator does not rerun the block for its own write, the gates do.
-A `function` may read only its arguments (pass the rest in), every argument must be an `input` (return the value; Icarus cannot compile an `output` argument) and a `task` is refused; so is a hierarchical function call (`g.f(a)`) and a hierarchical name in a function (`g.k`; a member of an argument or local, such as `p.lo` of a struct `p`, is fine unless `p` is also a label, module, instance or call name, or declared inside an `if`).
+A `function` may read only its arguments (pass the rest in), every argument must be an `input` (return the value; Icarus cannot compile an `output` argument) and a `task` is refused; so is a hierarchical function call (`g.f(a)`) and a hierarchical name in a function (`g.k`; a member of an argument or local, such as `p.lo` of a struct `p`, is fine unless `p` is also a label, module, instance or call name (the port name in a connection such as `.p(p)` does not count), or declared inside an `if`).
 In MyHDL the core must be the plain single module MyHDL writes, and a level-sensitive block must have the plain shape `@always_comb` writes and list every signal it reads; otherwise it is refused, so use `@always_comb`.
 Use a parameter, not a macro.
 
 ## Constants the equivalence check accepts
 
-Give every parameter a defined value. One with an x or z bit (`1/0`, `5 % 0`, `0 ** -1`, `A[6]` of a 4-bit `A`, a function that returns x) is refused, and so is any other constant that comes out x (`8'd5 / 8'd0`), a constant index outside the declared range, and RTL that Icarus (`iverilog -g2012`) cannot compile.
-In a generate `if`, `case` or `for` condition, a `/` or `%` by anything but a nonzero number, a `**` unless its base is a nonzero number or its exponent a number of 0 or more, and a call of your own function are refused: compute the value in a localparam first (`localparam AW = clog2(DEPTH);`, then `if (AW == 4)`).
+Give every parameter a defined value. One with an x or z bit (`1/0`, `5 % 0`, `0 ** -1`, `A[6]` of a 4-bit `A`, a function that returns x) is refused, and so is any other constant that comes out x (`8'd5 / 8'd0`), a constant index outside the declared range (even on a signal, such as `ui_in[9]`, and even in a branch that a constant never selects), and RTL that Icarus (`iverilog -g2012`) cannot compile.
+A parameter that the simulator (Icarus) and Verilator work out to different values is refused too: a select outside the range inside a constant function is x to the simulator, and an `if` or `!` there turns the x into 0 or 1. Keep every select inside the declared range.
+In a generate `if`, `case` or `for` condition, a `/` or `%` by anything but a plain nonzero number (a localparam is not one: `W / B` is refused), a `**` unless its base is a plain nonzero number or its exponent a plain number of 0 or more, and a call of your own function are refused: compute the value in a localparam first (`localparam AW = clog2(DEPTH);`, then `if (AW == 4)`; `localparam LANES = WIDTH / LANE;`, then `i < LANES`).
 Give a number of 2**31 or more a size (`32'd3000000000`). Choose with a generate `if`, not with a constant inside an expression that holds a call (`EN ? f(a) : a`, `EN && f(a)`, `f(a) & {8{EN}}`): Verilator folds that call away, and outside an always block the check refuses it.
 
 ## Too big for the tile

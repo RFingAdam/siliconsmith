@@ -323,8 +323,95 @@ def xz_parameter(tree: Any, meta: Any, ours: list[str]) -> Unknown | None:
     )
 
 
+# -- the value of every parameter ----------------------------------------------------------------
+
+# A parameter's declaration (`(file, line, name)`) and its values, one per module instance, as
+# `(width, value)`; None when some value is not a plain number (as `equiv_icarus.Values`).
+ParamKey = tuple[str, int, str]
+ParamValues = dict[ParamKey, list[tuple[int, int]] | None]
+_PLAIN_CONST = re.compile(r"^(\d+)'s?([bodh])([0-9a-fA-F_]+)$")
+
+
+def _instances(tree: dict[str, Any]) -> dict[str, tuple[dict[str, Any], int]]:
+    """`{addr: (module, instances)}` for every module and package of Verilator's elaborated
+    tree. Verilator makes one copy of a module per set of parameter values and shares it between
+    the instances that use the same set, so the count goes through every level: the top module
+    (`level` 1) and a package once, every other module once per instance (CELL) inside each
+    instance of the module that holds it. A module nothing instantiates counts 0. A tree with
+    modules must have exactly one top module, or no value would count."""
+    modules = tree.get("modulesp")
+    if not isinstance(modules, list) or not all(isinstance(m, dict) for m in modules):
+        raise TreeError("the tree has no readable list of modules")
+    tops = [m for m in modules if m.get("type") == "MODULE" and m.get("level") == 1]
+    if len(tops) != 1 and any(m.get("type") == "MODULE" for m in modules):
+        raise TreeError("the tree does not have exactly one top module (level 1)")
+    by_addr = {str(m.get("addr")): m for m in modules}
+    parents: dict[str, list[str]] = {addr: [] for addr in by_addr}
+    for addr, module in by_addr.items():
+        for node in _subtree(module):
+            if node.get("type") == "CELL":
+                child = str(node.get("modp"))
+                if child not in parents:
+                    raise TreeError(f"the instance `{node.get('name')}` names no module")
+                parents[child].append(addr)
+    counts: dict[str, int] = {}
+
+    def count(addr: str, seen: frozenset[str]) -> int:
+        if addr in counts:
+            return counts[addr]
+        if addr in seen:
+            raise TreeError("the modules instantiate each other in a loop")
+        module = by_addr[addr]
+        if module.get("type") == "PACKAGE" or (tops and module is tops[0]):
+            got = 1
+        else:
+            got = sum(count(p, seen | {addr}) for p in parents[addr])
+        counts[addr] = got
+        return got
+
+    return {addr: (module, count(addr, frozenset())) for addr, module in by_addr.items()}
+
+
+def parameter_values(tree: Any, meta: Any, ours: list[str]) -> ParamValues:
+    """The value of every parameter and localparam of our files in Verilator's elaborated tree,
+    once per module instance (`_instances`); a genvar has no value there and is left out. A value
+    that is not a plain number (a real, an array, a string kept as text) makes it None. Compared
+    with the simulator's values by `equiv_icarus.disagreement`."""
+    if not isinstance(tree, dict):
+        raise TreeError("the tree is not an object")
+    files = _file_letters(meta)
+    found: ParamValues = {}
+    for module, instances in _instances(tree).values():
+        for node in _subtree(module):
+            if node.get("type") != "VAR" or not (
+                node.get("isParam") is True or node.get("varType") in ("LPARAM", "GPARAM")
+            ):
+                continue
+            match = _LOC.match(str(node.get("loc", "")))
+            if match is None or match.group(1) not in files or files[match.group(1)] not in ours:
+                continue
+            key = (files[match.group(1)], int(match.group(2)), str(node.get("name", "?")))
+            known = found.setdefault(key, [])
+            values = node.get("valuep") or []
+            only = values[0] if isinstance(values, list) and len(values) == 1 else None
+            plain = (
+                _PLAIN_CONST.match(str(only.get("name", "")))
+                if isinstance(only, dict) and only.get("type") == "CONST"
+                else None
+            )
+            if plain is None or known is None:
+                found[key] = None
+                continue
+            width = int(plain.group(1))
+            value = int(plain.group(3).replace("_", ""), _BASES[plain.group(2)])
+            known.extend([(width, value)] * instances)
+    return found
+
+
 # -- generate conditions that can be x ----------------------------------------------------------
 
+# Only DIV, MODDIV and POW appear in the tree before V3Param (Verilator 5.046): the signed forms
+# are made later, by V3Width. They are kept so that a tree of a later stage is judged the same.
 _DIVIDES = frozenset({"DIV", "DIVS", "MODDIV", "MODDIVS"})
 _POWERS = frozenset({"POW", "POWSS", "POWSU", "POWUS"})
 # Where a generate construct keeps the expressions that choose its branches and loop passes.

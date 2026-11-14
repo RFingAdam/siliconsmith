@@ -21,5 +21,16 @@ unit tests of the log readers (`tests/test_equiv_parse.py`) and of the verdict m
   `initstate_initz` (a counter with an initial value and no reset) and `initstate_equal` (initial
   values that reset overwrites) are the logs of the initial-value state check (stage 2): the RTL
   with its initial values against the RTL without, on every register after the reset cycle.
+- `counter_good/base.log` and `counter_m0442/base.log` (stage 3, the X run and the DEF run) were
+  made again by the round-15 code: the X run now takes each side from its own copy of the
+  stage-1 model (top `base_x`), so every netlist value in its table is defined. In
+  `counter_m0442` the X run finds uio_oe[0] at cycle 1: RTL 0, netlist 1.
+- `bmc_once.log` is the one-shot search from reset (stage 4, `equiv_script.miter_once`: one `sat`
+  problem of 33 time steps) next to the step-by-step search (`bmc.log`) on the same miter, both
+  made by the round-14 code with the production netlist: `counter_good/bmc_once.log` (a proof),
+  `seg7reg` (the registered seven-segment decoder of the `seg7reg` design fixture: the one-shot
+  proves 32 cycles in about a second, the step-by-step `bmc.log` was stopped at a 20 s limit
+  after 18 cycles) and `counter_swap` (the counter's netlist with one cell swapped, nand3 to
+  nor3: both find the difference at cycle 4, with different traces).
 - `tests/fixtures/equiv/check_netlist.py` is the test-only script that gives the worker's check a
   hand-edited netlist inside the container (the production verb cannot take one).

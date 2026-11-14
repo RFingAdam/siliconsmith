@@ -394,6 +394,13 @@ RTL_SEEDS = [
     ("xsel", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("xseld", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("qf2", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # Round 15: a localparam from a constant function that selects outside the range, where an
+    # `if (!x)` turns the x into a defined value: Icarus gives 1, Verilator and Yosys give 0. The
+    # value steers an array index (c02ifnot), an `if` on the output pins (e05genlaunder) and a
+    # parameter override of a sub-module (c14sub); judged by comparing every parameter's value
+    ("c02ifnot", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("e05genlaunder", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("c14sub", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
 
 
@@ -547,7 +554,7 @@ async def test_a_registered_table_with_a_constant_bit_is_a_sound_model_of_the_rt
     of the constant bit, so `check -assert` refused the RTL side (`error structure`). The RTL side
     keeps the `case` as logic (`proc -norom`): every mode of it passes the structure guard, and
     the ROM version of the proof mode still fails it (so this probe sees the difference). The whole
-    check is not run here: its check from reset stops at its time limit on this design."""
+    check runs in `test_equiv_normal_designs_are_equivalent`."""
     async with server as client:
         project = await design_project(client, tmp_path, "segsync", "verilog")
         emitted = await call(client, "emit_verilog", project="segsync")
@@ -654,8 +661,28 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # by a wire array (`.q(stage[0])`, a process Yosys anchors at the port). n45: a function that
 # reads the members of a packed struct argument (`p.hi`). pieces: combinational blocks built
 # piece by piece before they are read (constant selects, full case and casez without default,
-# a loop accumulator, a named-block local, array elements, struct members).
-EQUIVALENT = ["swpick", "n52", "n45", "pieces"]
+# a loop accumulator, a named-block local, array elements, struct members). Round 14: seg7reg
+# (a seven-segment decoder registered every clock: a Verilog `case`, an Amaranth Array, a MyHDL
+# tuple), seg7en (the same on an enable: a Verilog `case`, an Amaranth Switch) and segsync (the
+# 8-bit table with a constant bit): the step-by-step search from reset stalls on them, the
+# one-shot search proves them. structport: a struct argument `cfg` and a port `.cfg(cfg)`.
+# Round 15: c12inrange (the control for c02ifnot: the same constant function with every select
+# in range, so every tool gives the same value); blinkmux and seg7mux (a multiplexer whose select
+# is a flip-flop with no value before reset: the run from power-up used to read the netlist side
+# through the RTL's values, saw x on a pin the netlist defines and called it "NOT equivalent").
+EQUIVALENT = [
+    "swpick",
+    "n52",
+    "n45",
+    "pieces",
+    "seg7reg",
+    "seg7en",
+    "segsync",
+    "structport",
+    "c12inrange",
+    "blinkmux",
+    "seg7mux",
+]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
 ]
@@ -675,6 +702,52 @@ async def test_equiv_normal_designs_are_equivalent(
         assert result["ok"] is True, result["summary"]
         assert details["verdict"] == "equivalent" and details["method"] == "equiv_induct", details
         assert "tree" in details["seconds"], details["seconds"]  # the tree checks ran
+
+
+async def test_the_one_shot_search_from_reset_proves_a_registered_table(
+    server: Client, tmp_path: Path, image: str
+) -> None:
+    """seg7reg (round 14 v62): the induction proof closes, and the check from reset is decided by
+    the one-shot search (one `sat` problem of 32 cycles), so the step-by-step search, which
+    stalls on this design after about 20 cycles, never runs. The one-shot log shows the whole
+    problem: 33 time steps, the per-side power-up and reset at cycle 1."""
+    async with server as client:
+        project = await design_project(client, tmp_path, "seg7reg", "verilog")
+        synthesized = await call(client, "synthesize", project="seg7reg")
+        assert synthesized["ok"] is True, synthesized["summary"]
+    verdict = check_in_container(image, project, "/work/build/synth/tt_um_seg7reg.v")
+    print(f"\nseg7reg: {verdict['verdict']} {verdict['seconds']}")
+    assert verdict["verdict"] == "equivalent" and verdict["ok"] is True, verdict["message"]
+    assert verdict["cycles_covered"] == 32 and verdict["method"] == "equiv_induct"
+    scratch = project / "build" / "eq_scratch"
+    once = (scratch / "bmc_once.log").read_text()
+    assert once.count("SAT proof finished - no model found: SUCCESS!") == 1
+    assert "Setting up time step 33:" in once and "Setting up time step 34:" not in once
+    assert "Import all_undef constraint for this timestep: \\ff_gold" in once
+    assert "Import def constraint for this timestep: \\ff_gate" in once
+    assert not (scratch / "bmc.ys").exists()  # the step-by-step search did not run
+
+
+async def test_a_display_mux_with_one_cell_changed_is_still_not_equivalent(
+    server: Client, tmp_path: Path, image: str
+) -> None:
+    """Round 15: the control for seg7mux. The run from power-up now reads each side from its own
+    copy of the proof model, so a netlist that really differs (one cell of the table changed to
+    another function) must still be found, with a defined value on each side of the pin."""
+    async with server as client:
+        project = await design_project(client, tmp_path, "seg7mux", "verilog")
+        synthesized = await call(client, "synthesize", project="seg7mux")
+        assert synthesized["ok"] is True, synthesized["summary"]
+    original = (project / "build" / "synth" / "tt_um_seg7mux.v").read_text()
+    edited, what = swap_cell_type(original)
+    (project / "build" / "edited.v").write_text(edited)
+    verdict = check_in_container(image, project, "/work/build/edited.v")
+    print(f"\nseg7mux ({what}): {verdict['verdict']} {verdict['reason']}: {verdict['message']}")
+    assert verdict["verdict"] == "not_equivalent" and verdict["ok"] is False, verdict
+    mismatch = verdict["first_mismatch"]
+    assert any(d["signal"].startswith("uo_out[") for d in mismatch["differs"]), mismatch
+    diff = mismatch["differs"][0]
+    assert {diff["rtl"], diff["netlist"]} <= {"0", "1"} and diff["rtl"] != diff["netlist"]
 
 
 async def test_an_x_that_only_spreads_through_the_netlist_is_never_not_equivalent(

@@ -634,35 +634,37 @@ always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational blo
 can read a signal before it writes it on some path through the block (a branch, a case item \
 or a loop pass that does not write it first: write each signal at the top of the block), a \
 parameter, localparam or genvar value with an x or z bit as Verilator or the simulator Icarus \
-works it out (1/0, 5 % 0, 0 ** -1, a constant select outside the range, a constant function \
-that returns x), any other constant in your files that Verilator works out with an x bit \
-(8'd5 / 8'd0 in an assign; with or without an always block), a constant select or array index \
-outside the declared range (A[6] of a 4-bit A), a / or % whose divisor is not a plain nonzero \
-number, a ** whose base is not a plain nonzero number and whose exponent is not a plain number \
-of 0 or more, or a call of one of your functions in the condition of a generate if, case or \
-for (compute the value in a localparam first), RTL that Icarus (iverilog -g2012) cannot \
-compile, an unsized number of 2**31 or more (2147483648: Verilator reads it as \
-negative, Yosys and Icarus as positive; write 32'd2147483648), a function argument that is not \
-an input (output, inout, ref: Icarus cannot compile one either; return the value), a function \
-that reads anything other than its arguments and any task, an always block (any keyword) or \
-function call that Yosys elaborates and Verilator does not (a generate branch or instance \
-chosen by a constant that is x to Yosys and a simulator, or a call outside an always block \
-that a constant makes dead code: EN ? f(a) : a, EN && f(a) or f(a) & {8{EN}} with a constant \
-EN in an assign, a declaration or a port; choose with a generate \
-if instead), a hierarchical function call (g.f(a)) or a hierarchical name (a dotted name that \
-is not a member of an argument or of a local declared at the top of the function, or whose \
-first name is also a label, module, instance or call name) inside a function, a MyHDL core \
-that is not the plain single module MyHDL writes (generate, instances, a second module, odd \
-arrays), \
-a MyHDL level-sensitive block that is not the plain shape @always_comb writes and does not \
-list every signal it reads (use @always_comb), a carriage return that no line feed follows, \
-and a function without automatic. It does NOT detect an out-of-range index or a division by \
-zero applied to a signal (x in a simulator, some value in the gates; also inside a generate \
-loop or module copy), a function call written in an expression (not in a parameter) that \
-returns x for constant arguments, a function that reads one of its own locals before it writes \
-it (x in a simulator), a \
-constant expression that Yosys evaluates differently from a simulator (a size cast, an \
-unbased '1 or $rtoi inside a localparam, an untyped localparam whose value overflows), or \
+works it out (1/0, 5 % 0, 0 ** -1, a constant select outside the range, a constant function that \
+returns x), a parameter or localparam that the simulator and Verilator work out to different \
+values (a select outside the range inside a constant function, where an if or ! turns the x into 0 \
+or 1), any other constant in your files that Verilator works out with an x bit (8'd5 / 8'd0 in an \
+assign; with or without an always block), a constant select or array index outside the declared \
+range, even on a signal (ui_in[9]) or in a branch that a constant never selects (A[6] of a 4-bit \
+A), a / or % whose divisor is not a plain nonzero number (a localparam is not one: W / B is \
+refused), a ** whose base is not a plain nonzero number and whose exponent is not a plain number \
+of 0 or more, or a call of one of your functions in the condition of a generate if, case or for \
+(compute the value in a localparam first), RTL that Icarus (iverilog -g2012) cannot compile, an \
+unsized number of 2**31 or more (2147483648: Verilator reads it as negative, Yosys and Icarus as \
+positive; write 32'd2147483648), a function argument that is not an input (output, inout, ref: \
+Icarus cannot compile one either; return the value), a function that reads anything other than its \
+arguments and any task, an always block (any keyword) or function call that Yosys elaborates and \
+Verilator does not (a generate branch or instance chosen by a constant that is x to Yosys and a \
+simulator, or a call outside an always block that a constant makes dead code: EN ? f(a) : a, EN && \
+f(a) or f(a) & {8{EN}} with a constant EN in an assign, a declaration or a port; choose with a \
+generate if instead), a hierarchical function call (g.f(a)) or a hierarchical name (a dotted name \
+that is not a member of an argument or of a local declared at the top of the function, or whose \
+first name is also a label, module, instance or call name; the port in a connection .p(p) is not \
+one) inside a function, a MyHDL core that is not the plain single module MyHDL writes (generate, \
+instances, a second module, odd arrays), a MyHDL level-sensitive block that is not the plain shape \
+@always_comb writes and does not list every signal it reads (use @always_comb), a carriage return \
+that no line feed follows, and a function without automatic. It does NOT detect an index computed \
+from a signal that goes outside the range or a division by a signal that is 0 (x in a simulator, \
+some value in the gates; also inside a generate loop or module copy), a function call written in \
+an expression (not in a parameter) that returns x for constant arguments, a function that reads \
+one of its own locals before it writes it (x in a simulator), a constant expression that Yosys \
+evaluates differently from a simulator (a size cast or an unbased '1 inside a localparam, $rtoi in \
+any constant expression: a localparam or a generate condition, an untyped localparam whose value \
+overflows; only a parameter value on which the simulator and Verilator disagree is refused), or \
 other effects of simulation event order: run gate-level simulation (run_tests with gl=True) \
 as well. A state machine that synthesis re-encodes can end as not proven (unproven points).\n\
 What it checks: every output value the RTL defines must match for every power-up state of \

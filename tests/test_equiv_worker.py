@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 from conftest import REPO_ROOT
 
-from siliconsmith.worker import equiv, equiv_script
+from siliconsmith.worker import equiv, equiv_parse, equiv_script
 
 REAL_RUN_VERILATOR = equiv._run_verilator  # the autouse fixture replaces it
 REAL_RUN_ICARUS = equiv._run_icarus  # this one too
@@ -80,6 +80,8 @@ class FakeYosys:
             if self.miter_il is not None:
                 (cwd / "miter.il").write_text(self.miter_il)
             answer = answer or (0, "inline", "")
+        if tag.endswith("_once"):  # the one-shot search: by default it runs out of time
+            answer = answer or (None, "inline", "")
         if answer is None:
             raise AssertionError(f"unexpected Yosys call {tag!r}; calls so far: {self.calls}")
         code, scenario, name = answer
@@ -157,7 +159,7 @@ def test_the_counter_is_proven_by_induction(tmp_path: Path) -> None:
     assert got["method"] == "equiv_induct" and got["first_mismatch"] is None
     assert got["stage1"]["proven"] == 24 and got["base"] == {"status": "ok"}
     assert got["cycles_covered"] == 32 and got["internal_inconsistency"] is False
-    assert fake.tags == ["equiv", "base", "bmc_model", "bmc"]
+    assert fake.tags == ["equiv", "base", "bmc_model", "bmc_once", "bmc"]
     assert set(got["seconds"]) == {"tree", "stage1", "base", "stage4", "total"}
     assert len(got["netlist_sha256"]) == 64
     assert "24 matched points proven by induction" in got["message"]
@@ -181,6 +183,7 @@ def test_every_call_runs_in_the_private_scratch_folder_with_its_own_time_limit(
         "equiv.ys",
         "base.ys",
         "bmc_model.ys",
+        "bmc_once.ys",
         "bmc.ys",
     }
     assert (scratch / "netlist.v").read_text() == "module tt_um_chip(); endmodule\n"
@@ -202,6 +205,11 @@ def test_every_call_runs_in_the_private_scratch_folder_with_its_own_time_limit(
     bmc = (scratch / "bmc.ys").read_text()
     assert "read_rtlil miter_ff.il" in bmc and "-set-init" not in bmc
     assert "-set-all-undef-at 1 ff_gold -set-def-at 1 ff_gate" in bmc
+    # The one-shot search first: the same constraints and cycles as one `sat` problem.
+    once = (scratch / "bmc_once.ys").read_text()
+    assert "read_rtlil miter_ff.il" in once and "-set-init" not in once
+    assert "-set-all-undef-at 1 ff_gold -set-def-at 1 ff_gate" in once
+    assert "-seq 33 -prove-skip 1" in once and "-tempinduct" not in once
     ff = (scratch / "miter_ff.il").read_text()
     assert "  wire width 8 \\ff_gold\n  connect \\ff_gold { \\gold.core.cnt }" in ff
     assert "  wire width 1 \\ff_gate\n  connect \\ff_gate { \\gate._1_.IQ }" in ff
@@ -247,13 +255,13 @@ def test_a_base_case_x_difference_on_an_output_is_not_equivalent(tmp_path: Path)
     assert fake.tags == ["equiv", "base"]  # no referee needed
     mismatch = got["first_mismatch"]
     assert mismatch["cycle"] == 1
-    assert {"signal": "uio_oe[0]", "rtl": "0", "netlist": "x"} in mismatch["differs"]
+    assert {"signal": "uio_oe[0]", "rtl": "0", "netlist": "1"} in mismatch["differs"]
     assert "cycle 1 (power-up, with rst_n low)" in got["message"]
-    assert "uio_oe[0] (RTL 0, netlist x)" in got["message"]
+    assert "uio_oe[0] (RTL 0, netlist 1)" in got["message"]
     assert "for some power-up state of its flip-flops" in got["message"]
     row = got["trace"][0]
     assert row["cycle"] == 1 and row["inputs"]["rst_n"] == "0"
-    assert row["rtl"]["uio_oe[0]"] == "0" and row["netlist"]["uio_oe[0]"] == "x"
+    assert row["rtl"]["uio_oe[0]"] == "0" and row["netlist"]["uio_oe[0]"] == "1"
     assert all(k.startswith(("uo_out", "uio_out", "uio_oe")) for k in row["rtl"])  # pins only
 
 
@@ -346,9 +354,21 @@ def test_a_difference_found_from_reset_names_the_bit_the_cycle_and_the_trace(
     got = go(tmp_path, fake)
     assert got["verdict"] == "not_equivalent" and got["reason"] is None
     # the confirmed counterexample ended it
-    assert fake.tags == ["equiv", "kind_x", "kind_x_check_model", "kind_x_check"]
+    assert fake.tags == [
+        "equiv",
+        "kind_x",
+        "kind_x_check_model",
+        "kind_x_check_once",
+        "kind_x_check",
+    ]
     assert "-set-init-undef" not in (tmp_path / "scratch" / "kind_x_check.ys").read_text()
     assert "read_rtlil miter_ff.il" in (tmp_path / "scratch" / "kind_x_check.ys").read_text()
+    # the re-check reads the RTL as a chip powers up (initial values removed), the k-induction
+    # the RTL as written
+    noinit = equiv_script.stash(equiv_script.gold("chip", "rtl_noinit"), "chip", "gold")
+    written = equiv_script.stash(equiv_script.gold("chip", "rtl"), "chip", "gold")
+    assert (tmp_path / "scratch" / "kind_x_check_model.ys").read_text().startswith(noinit)
+    assert (tmp_path / "scratch" / "kind_x.ys").read_text().startswith(written)
     mismatch = got["first_mismatch"]
     assert mismatch["cycle"] >= 2
     assert mismatch["differs"][0]["signal"].startswith(("uo_out[", "uio_out[", "uio_oe["))
@@ -376,9 +396,199 @@ def test_an_x_only_difference_with_every_flip_flop_at_x_must_be_confirmed(tmp_pa
     )
     got = go(tmp_path, fake)
     assert got["verdict"] == "not_proven" and got["reason"] == "unproven_points"
-    assert fake.tags == ["equiv", "kind_x", "kind_x_check_model", "kind_x_check", "kind_zero"]
+    assert fake.tags == [
+        "equiv",
+        "kind_x",
+        "kind_x_check_model",
+        "kind_x_check_once",
+        "kind_x_check",
+        "kind_zero",
+    ]
     assert got["first_mismatch"] is None and got["cycles_covered"] == 32
     assert "first 32 cycles from reset" in got["message"]
+
+
+# -- the one-shot search from reset (stage 4) ------------------------------------------------------
+
+PROVEN = {
+    "equiv": (0, "counter_good", "equiv.log"),
+    "base": (0, "counter_good", "base.log"),
+}
+
+
+def test_a_one_shot_proof_ends_the_check_from_reset(tmp_path: Path) -> None:
+    """Round 14 v62: a registered seven-segment decoder. The step-by-step search stalls after 19
+    cycles; the one-shot search proves all 32 in a second, so the step-by-step one never runs."""
+    fake = FakeYosys("counter_good", **PROVEN, bmc_once=(0, "seg7reg", "bmc_once.log"))
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "equivalent" and got["ok"] is True and got["reason"] is None
+    assert fake.tags == ["equiv", "base", "bmc_model", "bmc_once"]
+    assert got["cycles_covered"] == 32 and got["time_limit_hit"] is False
+    assert "found no difference in 32 cycles" in got["message"]
+
+
+def test_a_one_shot_difference_falls_back_to_the_step_by_step_first_difference(
+    tmp_path: Path,
+) -> None:
+    """counter_swap: one cell swapped. The one-shot finds a difference; the step-by-step search
+    then reports it at its first cycle with its own trace (the one-shot trace is not used)."""
+    fake = FakeYosys(
+        "counter_good",
+        **PROVEN,
+        bmc_once=(0, "counter_swap", "bmc_once.log"),
+        bmc=(0, "counter_swap", "bmc.log"),
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "not_equivalent" and got["ok"] is False
+    assert fake.tags == ["equiv", "base", "bmc_model", "bmc_once", "bmc"]
+    step = equiv_parse.parse_cex((FIX / "counter_swap" / "bmc.log").read_text())
+    assert got["first_mismatch"] == step["first_mismatch"]
+    assert got["trace"] == equiv._trace(step["trace"], step["first_mismatch"])
+    assert "At cycle 4" in got["message"] and "uo_out[1]" in got["message"]
+
+
+@pytest.mark.parametrize("bmc", [(None, "inline", ""), (0, "counter_good", "bmc.log")])
+def test_a_one_shot_difference_the_step_by_step_search_does_not_find_is_reported(
+    tmp_path: Path, bmc: tuple[int | None, str, str]
+) -> None:
+    """The step-by-step search runs out of time (or, against the one-shot, finds nothing in 32
+    cycles): the one-shot's own model is the counterexample, never a pass."""
+    fake = FakeYosys(
+        "counter_good", **PROVEN, bmc_once=(0, "counter_swap", "bmc_once.log"), bmc=bmc
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "not_equivalent" and got["ok"] is False
+    assert fake.tags == ["equiv", "base", "bmc_model", "bmc_once", "bmc"]
+    once = equiv_parse.parse_cex((FIX / "counter_swap" / "bmc_once.log").read_text())
+    assert got["first_mismatch"] == once["first_mismatch"]
+    assert got["trace"] == equiv._trace(once["trace"], once["first_mismatch"])
+    assert got["trace"][-1]["cycle"] == 4
+
+
+def test_a_one_shot_difference_whose_bits_cannot_be_read_is_not_proven(tmp_path: Path) -> None:
+    fake = FakeYosys(
+        "counter_good",
+        **PROVEN,
+        bmc_once=(0, "inline", "SAT proof finished - model found: FAIL!\n"),
+        bmc=(None, "inline", ""),
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "unreadable_counterexample"
+
+
+def test_a_one_shot_time_out_falls_back_to_the_step_by_step_search(tmp_path: Path) -> None:
+    fake = FakeYosys(
+        "counter_good",
+        **PROVEN,
+        bmc_once=(None, "seg7reg", "bmc_once.log"),  # stopped, whatever it printed
+        bmc=(0, "counter_good", "bmc.log"),
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "equivalent" and got["cycles_covered"] == 32
+    assert fake.tags == ["equiv", "base", "bmc_model", "bmc_once", "bmc"]
+
+
+def test_both_searches_out_of_time_is_not_proven(tmp_path: Path) -> None:
+    """v62 before round 14: the step-by-step search stopped after 18 of 32 cycles."""
+    fake = FakeYosys(
+        "counter_good", **PROVEN, bmc_once=(None, "inline", ""), bmc=(None, "seg7reg", "bmc.log")
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "time_limit"
+    assert got["cycles_covered"] == 18 and "after 18 of 32 cycles" in got["message"]
+
+
+def without(scenario: str, name: str, line: str) -> str:
+    text = (FIX / scenario / name).read_text()
+    kept = [x for x in text.splitlines() if x != line]
+    assert len(kept) < len(text.splitlines()), line
+    return "\n".join(kept) + "\n"
+
+
+@pytest.mark.parametrize(
+    "once",
+    [
+        (0, "inline", "SAT proof finished - no model found: SUCCESS!\n"),  # nothing else
+        (0, "inline", ""),
+        (1, "seg7reg", "bmc_once.log"),  # a clean log, but a failing exit code
+        (0, "inline", (FIX / "seg7reg" / "bmc_once.log").read_text() * 2),  # two end lines
+        # the power-up constraints, the reset or the last cycle missing from the log
+        (0, "inline", without("seg7reg", "bmc_once.log", "Import def constraint for this "
+                              "timestep: \\ff_gate")),
+        (0, "inline", without("seg7reg", "bmc_once.log", "Import all_undef constraint for "
+                              "this timestep: \\ff_gold")),
+        (0, "inline", without("seg7reg", "bmc_once.log", "Import set-constraint for this "
+                              "timestep: \\in_rst_n = 1'0")),
+        (0, "inline", without("seg7reg", "bmc_once.log", "Setting up time step 33:")),
+    ],
+)  # fmt: skip
+def test_an_unclear_one_shot_log_falls_back_to_the_step_by_step_search(
+    tmp_path: Path, once: tuple[int | None, str, str]
+) -> None:
+    fake = FakeYosys("counter_good", **PROVEN, bmc_once=once, bmc=(None, "seg7reg", "bmc.log"))
+    got = go(tmp_path, fake)
+    assert fake.tags == ["equiv", "base", "bmc_model", "bmc_once", "bmc"]
+    assert got["verdict"] == "not_proven" and got["reason"] == "time_limit"  # never a pass
+
+
+def test_the_one_shot_takes_only_the_time_the_step_by_step_search_does_not_need(
+    tmp_path: Path,
+) -> None:
+    """The one-shot gets at most ONCE_SHARE of the budget, out of the deadline beyond one full
+    budget: the step-by-step search after it still gets its whole budget."""
+    fake = FakeYosys("counter_good", **PROVEN, bmc=(0, "counter_good", "bmc.log"))
+    go(tmp_path, fake, budget_s=60.0, deadline_s=1000.0)
+    timeouts = dict(fake.calls)
+    assert timeouts["bmc_once"] == pytest.approx(60.0 * equiv.ONCE_SHARE)
+    assert timeouts["bmc"] > 59.0
+
+
+@pytest.mark.parametrize(("deadline", "once_max"), [(400.0, 20.0), (130.0, 10.0), (100.0, 0.0)])
+def test_near_the_deadline_the_one_shot_gets_only_the_spare_time(
+    tmp_path: Path, deadline: float, once_max: float
+) -> None:
+    fake = FakeYosys("counter_good", **PROVEN, bmc=(0, "counter_good", "bmc.log"))
+    got = go(tmp_path, fake, budget_s=120.0, deadline_s=deadline)
+    timeouts = dict(fake.calls)
+    if once_max:
+        assert once_max - 2.0 < timeouts["bmc_once"] <= once_max
+    else:
+        assert timeouts["bmc_once"] == 0.0  # it does not run at all
+    assert timeouts["bmc"] > min(120.0, deadline) - 5.0  # what it had without the one-shot
+    assert got["verdict"] == "equivalent"
+
+
+def test_the_x_only_recheck_also_tries_the_one_shot_first(tmp_path: Path) -> None:
+    """kind_x finds a difference whose netlist bits are all x; the per-side re-check proves it
+    away with the one-shot (no step-by-step re-check), and the zero-start k-induction decides."""
+    fake = FakeYosys(
+        "counter_good",
+        equiv=(0, "counter_m0115", "equiv.log"),
+        kind_x=(0, "counter_m0115", "kind_x.log"),  # uo_out[5]: RTL 0, netlist x
+        kind_x_check_once=(0, "seg7reg", "bmc_once.log"),
+        kind_zero=(0, "counter_m0043", "kind_zero.log"),
+    )
+    got = go(tmp_path, fake)
+    assert fake.tags == ["equiv", "kind_x", "kind_x_check_model", "kind_x_check_once", "kind_zero"]
+    assert got["verdict"] == "not_proven" and got["reason"] == "unproven_points"
+    assert got["first_mismatch"] is None and got["cycles_covered"] == 32
+
+
+def test_the_x_only_recheck_reports_a_one_shot_difference_at_the_first_cycle(
+    tmp_path: Path,
+) -> None:
+    fake = FakeYosys(
+        "counter_good",
+        equiv=(0, "counter_m0115", "equiv.log"),
+        kind_x=(0, "counter_m0115", "kind_x.log"),
+        kind_x_check_once=(0, "counter_swap", "bmc_once.log"),
+        kind_x_check=(0, "counter_swap", "bmc.log"),
+    )
+    got = go(tmp_path, fake)
+    assert fake.tags[-2:] == ["kind_x_check_once", "kind_x_check"]
+    assert got["verdict"] == "not_equivalent" and got["first_mismatch"]["cycle"] == 4
+    step = equiv_parse.parse_cex((FIX / "counter_swap" / "bmc.log").read_text())
+    assert got["trace"] == equiv._trace(step["trace"], step["first_mismatch"])
 
 
 def test_the_referee_finding_a_difference_after_a_clean_base_case_is_never_a_pass(
@@ -426,7 +636,7 @@ def test_initial_values_that_reset_overwrites_let_the_check_go_on(tmp_path: Path
     )
     got = go(tmp_path, fake)
     assert got["verdict"] == "equivalent"
-    assert fake.tags == ["equiv", "initstate", "base", "bmc_model", "bmc"]
+    assert fake.tags == ["equiv", "initstate", "base", "bmc_model", "bmc_once", "bmc"]
     script = (tmp_path / "scratch" / "initstate.ys").read_text()
     assert "expose -dff" in script and "-prove-skip 1" in script  # the state at cycle 2
 
@@ -1214,7 +1424,7 @@ def test_a_design_of_continuous_assignments_only_gets_the_tree_checks_too(
         "end\n    default: begin : g assign y = ~a; end\n  endcase\nendmodule\n"
     )
     tree = {"type": "NETLIST", "modulesp": [
-        {"type": "MODULE", "addr": "(M)", "name": "tt_um_chip", "loc": "e,1:1,1:7"},
+        {"type": "MODULE", "addr": "(M)", "name": "tt_um_chip", "loc": "e,1:1,1:7", "level": 1},
         {"type": "VAR", "addr": "(Q)", "name": "Q", "varType": "LPARAM", "isParam": True,
          "loc": "e,3:22,3:23", "valuep": [{"type": "CONST", "name": "32'hxxxxxxxx",
                                            "loc": "e,3:26,3:31"}]},
@@ -1670,6 +1880,40 @@ def test_a_clean_simulator_run_goes_on_to_the_elaboration_and_a_stale_output_is_
     assert got is not None and "cannot compile the RTL" in got[1]
 
 
+# c02ifnot (round 15): `localparam integer M = pick(4'b1010, 6);` on line 11 of chip.v, where
+# `pick` reads `v[6]` of a 4-bit `v` and returns `!v[k] ? 0 : 1`. Verilator folds it to 0, the
+# simulator reads x, `if (!x)` takes the else branch and M is 1.
+def param_tree(value: str) -> str:
+    m = {"type": "VAR", "addr": "(V)", "name": "M", "varType": "LPARAM", "isParam": True,
+         "loc": "e,11:20,11:21",
+         "valuep": [{"type": "CONST", "name": value, "loc": "e,11:24,11:28"}]}  # fmt: skip
+    top = {"type": "MODULE", "addr": "(T)", "name": "tt_um_chip", "level": 1, "stmtsp": [m]}
+    return json.dumps({"type": "NETLIST", "modulesp": [top]})
+
+
+SIM_M = 'P_0x1 .param/l "M" 1 4 11, +C4<00000000000000000000000000000001>;\n' + SIM_TABLE
+
+
+@pytest.mark.parametrize(
+    ("verilator", "refused"), [("32'sh0", True), ("32'sh1", False)], ids=["differ", "agree"]
+)
+def test_a_parameter_the_simulator_and_verilator_compute_differently_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verilator: str, refused: bool
+) -> None:
+    simulator(monkeypatch, equiv.LintRun(0, ""), SIM_M)
+    fake = fake_elab("module \\tt_um_chip\nend\n")
+    got, _ = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=param_tree(verilator), fake=fake
+    )
+    if refused:
+        assert got is not None and got[0] == "guard_sim_synth_differ", got
+        assert "(chip.v, line 11) gives the parameter `M` the value 1 in a simulator" in got[1]
+        assert "but 0 in Verilator's elaboration" in got[1]
+        assert fake.tags == []  # named before Yosys's elaboration
+    else:
+        assert got is None and fake.tags == ["elab"]
+
+
 def test_a_simulator_that_times_out_or_cannot_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1730,7 +1974,14 @@ def test_a_clean_recheck_is_never_a_pass_even_when_the_zero_start_induction_clos
         kind_zero=(0, "shiftnr_m0165", "kind_x.log"),  # closes
     )
     got = go(tmp_path, fake)
-    assert fake.tags == ["equiv", "kind_x", "kind_x_check_model", "kind_x_check", "kind_zero"]
+    assert fake.tags == [
+        "equiv",
+        "kind_x",
+        "kind_x_check_model",
+        "kind_x_check_once",
+        "kind_x_check",
+        "kind_zero",
+    ]
     assert got["verdict"] == "not_proven" and got["reason"] == "unproven_points"
     assert "no difference was found in the first 16 cycles from reset" in got["message"]
 
@@ -1745,5 +1996,11 @@ def test_a_recheck_that_fails_is_an_error_and_ends_the_check(tmp_path: Path) -> 
     )
     got = go(tmp_path, fake)
     assert got["verdict"] == "error" and got["ok"] is False
-    assert fake.tags == ["equiv", "kind_x", "kind_x_check_model", "kind_x_check"]
+    assert fake.tags == [
+        "equiv",
+        "kind_x",
+        "kind_x_check_model",
+        "kind_x_check_once",
+        "kind_x_check",
+    ]
     assert got["message"].startswith("Could not run the check from reset")

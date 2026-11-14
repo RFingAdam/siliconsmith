@@ -1,0 +1,346 @@
+Setting up time step 1:
+Import set-constraint for this timestep: \in_rst_n = 1'0
+Final constraint equation: \in_rst_n = 1'0
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \ff_gate
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Import all_undef constraint for this timestep: \ff_gold
+Imported 183 cells to SAT database.
+No constraints for initial state found.
+Setting up time step 2:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 3:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 4:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 5:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 6:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 7:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 8:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 9:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 10:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 11:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 12:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 13:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 14:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 15:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 16:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 17:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 18:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 19:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 20:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 21:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 22:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 23:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 24:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 25:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 26:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 27:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 28:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 29:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 30:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 31:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 32:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 33:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+Solving problem with 100506 variables and 268064 clauses..
+SAT proof finished - no model found: SUCCESS!

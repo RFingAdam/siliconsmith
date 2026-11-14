@@ -1335,6 +1335,46 @@ def test_a_dotted_name_that_is_not_a_member_of_an_argument_or_local_is_refused(
     refused(f"{STRUCT}{function}\n{extra}", HIER)
 
 
+@pytest.mark.parametrize(
+    "connection",
+    [
+        "sub u_sub (.clk(clk), .cfg(cfg), .q(r));",  # round 14 v73
+        "sub u_sub (.cfg (cfg));",
+        "sub u_sub (. cfg(cfg));",
+        "sub u_sub (.\n  cfg\n  (cfg));",
+        "sub u_sub [1:0] (.cfg(cfg));",
+        "assign w = u_sub.cfg(ui_in);",  # the member of a dotted call: its head is the scope
+    ],
+)
+def test_a_word_after_a_dot_is_a_port_or_member_not_a_scope(connection: str) -> None:
+    """A named port connection `.cfg(cfg)` is not an instance or call named `cfg`: a function
+    argument `cfg` of a packed struct type can still use `cfg.hi`."""
+    function = "function automatic [3:0] pick(input pair_t cfg); pick = cfg.hi; endfunction"
+    ok(f"module m;\n{STRUCT}{function}\n{connection}\nendmodule\n")
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "sub cfg (.a(b));",  # an instance named cfg
+        "sub cfg [3:0] (.a(b));",  # an array of instances
+        "sub #(.W(4)) cfg (.a(b));",  # with a parameter override
+        "assign w = cfg(ui_in);",  # a call
+        "sub u_sub (.cfg(cfg));\nsub cfg (.a(b));",  # a port connection does not hide one
+    ],
+)
+def test_an_instance_or_call_of_the_argument_name_is_still_a_scope(scope: str) -> None:
+    function = "function automatic [3:0] pick(input pair_t cfg); pick = cfg.hi; endfunction"
+    refused(f"{STRUCT}{function}\n{scope}", HIER)
+
+
+def test_the_reviewers_struct_argument_with_a_same_named_port_is_not_refused() -> None:
+    """Round 14 v73 (the equivalence fixture `structport`): a sub-module port `.cfg(cfg)` and a
+    function argument `cfg` of a packed struct type that reads `cfg.hi` and `cfg.lo`."""
+    path = REPO_ROOT / "tests" / "fixtures" / "equiv_designs" / "structport" / "verilog.v"
+    assert sv.refusal([("structport.v", path.read_text())]) is None
+
+
 def test_a_glued_begin_after_a_star_block_gets_a_blank() -> None:
     assert sv.always_comb_copy("always@(*)begin y = a; end") == "always_comb begin y = a; end"
 

@@ -23,12 +23,15 @@ out of the way (synthesis did not change the logic; an `x` in the RTL is a don't
 EFFORT: `equiv_sv.refusal` refuses (`not_proven`, reason `guard_sim_synth_differ`) the common
 constructs that a simulator and Yosys read differently, and `_tree_checks` what is judged on
 Verilator's syntax tree (an impure function, a combinational block that can read a signal before
-it writes it on some path, a parameter with an x or z bit, a different elaboration). NOT
-detected: an out-of-range index or a division by zero, a constant that is x to a simulator
-steering a case inside a block, the values inside a generate loop or module copy, a constant
-expression that Yosys evaluates differently from a simulator (a size cast, an unbased `'1` or
-`$rtoi` inside a localparam, an untyped localparam whose value overflows), and anything else that
-depends on simulation event order;
+it writes it on some path, a parameter with an x or z bit, a parameter value that the simulator
+Icarus works out differently, a different elaboration). NOT detected: an index computed from a
+signal that goes outside the range or a division by a signal that is 0, a constant that is x to
+a simulator steering a case inside a block, the values inside a generate loop or module copy, a
+constant expression that Yosys evaluates differently from a simulator (a size cast or an unbased
+`'1` inside a localparam, `$rtoi` in any constant expression: a localparam or a generate
+condition, an untyped localparam whose value overflows; only a parameter value on which the
+simulator and Verilator disagree is refused), and anything else that depends on simulation event
+order;
 gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour.
 
 ## Verdict
@@ -51,8 +54,13 @@ gate-level simulation (`run_tests` with `gl=true`) is the check against simulati
     stage1       {status, proven, unproven, unproven_signals, unpaired_outputs} or None
     base         {status, run, cycle, differs} or None
     first_mismatch  {cycle, differs: [{signal, rtl, netlist}]} or None. Cycle 1 is power-up with
-                 rst_n low; outputs are compared from cycle 2 (but an output the RTL defines and
-                 the netlist leaves unknown is reported from cycle 1).
+                 rst_n low; outputs are compared from cycle 2. Cycle 1 is compared only when
+                 stage 1 proved every point and paired every output: the X run of the base case
+                 compares there every value the RTL defines, for every power-up state of the
+                 netlist's flip-flops (an output that differs is reported at cycle 1). The
+                 k-induction path (stage 1 did not prove everything) compares nothing at cycle
+                 1. A design without flip-flops needs no cycle 1: from cycle 2 its inputs take
+                 every value.
     trace        per cycle up to the mismatch: {cycle, inputs{rst_n, ui_in, uio_in},
                  rtl{uo_out, uio_out, uio_oe}, netlist{...}} as bit strings (x = unknown)
     internal_inconsistency  true when the induction and the referee disagree
@@ -62,9 +70,12 @@ gate-level simulation (`run_tests` with `gl=true`) is the check against simulati
     netlist_sha256  sha256 of the netlist bytes that were checked (the private copy)
 
 Time: every Yosys call is a subprocess with its own limit (`budget_s`, 120 s; Yosys's own
-`sat -timeout` is ignored), and the whole check has a deadline (`deadline_s`, 300 s). Each call
-runs in the private `scratch` folder, which holds copies of the inputs, so parallel checks never
-share files.
+`sat -timeout` is ignored), and the whole check has a deadline (`deadline_s`, 300 s). The one
+exception is the one-shot search from reset (stage 4, tried before the step-by-step search): it
+may take `ONCE_SHARE` of the budget, and only out of the deadline beyond one full budget
+(`Clock.first_try`), so the step-by-step search after it gets the time it would have had
+without it. Each call runs in the private `scratch` folder, which holds copies of the inputs, so
+parallel checks never share files.
 """
 
 from __future__ import annotations
@@ -108,6 +119,13 @@ SEQ = 5  # induction length of equiv_simple / equiv_induct (and the base case: S
 DEPTH = 32  # cycles of the referee from reset
 BUDGET_S = 120.0  # per Yosys call
 DEADLINE_S = 300.0  # the whole check
+# The one-shot search from reset (stage 4) may take this share of BUDGET_S (20 s), out of the
+# deadline beyond one full budget (`Clock.first_try`): the step-by-step search after it keeps its
+# time. Measured paired on a loaded host (round 14, 184 searches): where the one-shot proved
+# what the step-by-step search could not reach in 150 s (17, registered tables such as a
+# seven-segment decoder) it took 5 s at most (a MyHDL `for` loop needed 71-80 s); where it was
+# the slower search (69) it can take minutes, and the cap is all such a design loses.
+ONCE_SHARE = 1 / 6
 NETLIST_MAX_BYTES = 16 * 1024 * 1024
 NOT_A_PASS = "This is NOT a pass."
 EQUIV_DIR = "equiv"
@@ -153,6 +171,12 @@ class Clock:
     def left(self) -> float:
         """Seconds the next Yosys call may take; 0 once the deadline has passed."""
         return max(0.0, min(self.budget, self.end - time.monotonic()))
+
+    def first_try(self, share: float) -> float:
+        """Seconds for a first try that another call backs up: at most `share` of the budget,
+        and only out of the deadline beyond one full budget, so the call after it still gets
+        what `left` would have given it without the first try (0: no time for one)."""
+        return max(0.0, min(self.budget * share, self.end - time.monotonic() - self.budget))
 
 
 def _when(cycle: object) -> str:
@@ -390,16 +414,17 @@ def _base(r: _Run, points: list[equiv_script.Point], steps: int) -> dict[str, An
 def _miter(
     r: _Run, tag: str, golds: str, gates: str, init: str, induct: str, depth: int
 ) -> dict[str, Any]:
-    """One `sat` run on a miter. `status`: cex | proven | no_cex | fail. `init` "per_side" (a
+    """One search on a miter. `status`: cex | proven | no_cex | fail. `init` "per_side" (a
     bounded search only): the power-up of the base case, RTL registers x and netlist flip-flops
-    any defined value (`_per_side`), else every flip-flop `undef` or `zero`."""
+    any defined value (`_per_side`), else every flip-flop `undef` or `zero` (one `sat` run)."""
     if init == "per_side":
-        script_or_end = _per_side(r, tag, golds, gates, depth)
-        if isinstance(script_or_end, dict):
-            return script_or_end
-        script = script_or_end
-    else:
-        script = equiv_script.miter(golds, gates, tag, init, induct, depth)
+        return _per_side(r, tag, golds, gates, depth)
+    script = equiv_script.miter(golds, gates, tag, init, induct, depth)
+    return _sat(r, tag, script, induct, depth)
+
+
+def _sat(r: _Run, tag: str, script: str, induct: str, depth: int) -> dict[str, Any]:
+    """Run one `sat -tempinduct` script (`induct`: a key of `equiv_script.SAT_MODE`) and read it."""
     code, log = r.yosys(r.scratch, script, tag, r.clock.left())
     if "model found for base case: FAIL" in log:
         return {"status": "cex", **equiv_parse.parse_cex(log)}
@@ -435,9 +460,18 @@ def _miter(
     return {"status": "fail", "failure": failure}
 
 
-def _per_side(r: _Run, tag: str, golds: str, gates: str, depth: int) -> str | dict[str, Any]:
-    """Write the miter (`miter.il`), add the power-up wires of each side (`miter_ff.il`) and
-    return the script of the bounded search; or how `_miter` ends when that cannot be done."""
+def _per_side(r: _Run, tag: str, golds: str, gates: str, depth: int) -> dict[str, Any]:
+    """The bounded search from reset with the per-side power-up, as `_miter` returns it.
+
+    Write the miter (`miter.il`) and add the power-up wires of each side (`miter_ff.il`). Then
+    the one-shot search (`equiv_script.miter_once`, tag `<tag>_once`): when it proves every
+    cycle, that is the answer (`covered` = `depth`). Otherwise (a difference, a time-out, an
+    error, a log that does not show the problem asked for) the step-by-step search
+    (`equiv_script.miter_bmc`) runs as before, with the time the one-shot did not take from it
+    (`Clock.first_try`), and reports the first cycle that differs. A difference only the
+    one-shot found (the step-by-step search ran out of time, or contradicts it) is reported
+    from the one-shot's model, read like any other counterexample (one whose differing bits
+    cannot be read is `unreadable_counterexample`): never a pass."""
     for stale in ("miter.il", "miter_ff.il"):  # a file left by an earlier run is never read
         (r.scratch / stale).unlink(missing_ok=True)
     code, log = r.yosys(
@@ -459,7 +493,22 @@ def _per_side(r: _Run, tag: str, golds: str, gates: str, depth: int) -> str | di
     except (OSError, ValueError) as exc:
         return _no_model("the check from reset", exc)
     (r.scratch / "miter_ff.il").write_text(model, encoding="utf-8")
-    return equiv_script.miter_bmc(tag, wires, depth)
+    once_tag = f"{tag}_once"
+    code, once_log = r.yosys(
+        r.scratch,
+        equiv_script.miter_once(once_tag, wires, depth),
+        once_tag,
+        r.clock.first_try(ONCE_SHARE),
+    )
+    once = equiv_parse.once_result(code, once_log, wires, depth)
+    if once == "proved":
+        return {"status": "no_cex", "covered": depth}
+    got = _sat(r, tag, equiv_script.miter_bmc(tag, wires, depth), "base", depth)
+    if got["status"] == "no_cex" and once == "cex":
+        # the step-by-step search did not find the one-shot's difference (it ran out of time,
+        # or it contradicts it): the one-shot's model is reported (unreadable: not proven)
+        return {"status": "cex", **equiv_parse.parse_cex(once_log)}
+    return got
 
 
 def _mismatch(got: dict[str, Any]) -> dict[str, Any] | None:
@@ -619,7 +668,9 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        Verilator takes the first branch for an x `if` condition and drops it from the tree.
     3. `_icarus_checks`: the simulator's own elaboration (Icarus): it must compile the RTL, and
        no parameter may have an x or z bit there, nor a constant select be out of range
-       (Verilator folds those to a value, Icarus and Yosys read x).
+       (Verilator folds those to a value, Icarus and Yosys read x), nor a parameter have other
+       values than in Verilator's tree (`equiv_tree.parameter_values`; a select outside the
+       range inside a constant function leaves no x and no warning).
     4. Yosys elaborates the same cleaned RTL to RTLIL (only if Verilator gave a tree). A failure
        or a time out is the verdict of `equiv_parse.guard_failure`, never a pass.
     5. `equiv_elab.unmatched`: every block and call Yosys keeps must be in Verilator's tree
@@ -682,6 +733,7 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         before = json.loads(stages[0].read_text("latin-1"))
         unknown = equiv_tree.xz_parameter(tree, meta, list(cleaned))
         condition = equiv_tree.x_condition(before, meta, list(cleaned))
+        values = equiv_tree.parameter_values(tree, meta, list(cleaned))  # judged with Icarus's
         found = equiv_tree.impure_function(tree, meta, list(cleaned))  # judged after Yosys
         early = equiv_tree.early_read(tree, meta, list(cleaned))  # judged after purity
     except (OSError, ValueError, equiv_tree.TreeError, RecursionError) as exc:
@@ -690,7 +742,7 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     for root in (unknown, condition):
         if root is not None:
             return refuse("guard_sim_synth_differ", f"{root.sentence}.")
-    simulator = _icarus_checks(r, cleaned, name)
+    simulator = _icarus_checks(r, cleaned, name, values)
     r.timed("tree", t0)  # the Verilator and the Icarus run
     if simulator is not None:
         return simulator
@@ -722,17 +774,22 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     return None
 
 
-def _icarus_checks(r: _Run, cleaned: dict[str, str], name: str) -> dict[str, Any] | None:
+def _icarus_checks(
+    r: _Run, cleaned: dict[str, str], name: str, values: equiv_tree.ParamValues
+) -> dict[str, Any] | None:
     """A `not_proven` verdict if the simulator (Icarus) elaborates a constant of the RTL to a
-    value with an x or z bit, else None (`equiv_icarus`). `cleaned` is the cleaned RTL that Yosys
-    reads. Like the Verilator run it must not pass by giving up:
+    value with an x or z bit, or a parameter to other values than Verilator did (`values`, from
+    its tree), else None (`equiv_icarus`). `cleaned` is the cleaned RTL that Yosys reads. Like
+    the Verilator run it must not pass by giving up:
 
     * the run takes longer than the emit lint may: `time_limit`;
     * Icarus does not compile the RTL (a failing exit code or no output): `guard_sim_synth_differ`,
       naming the first error: the check cannot see what a simulator makes of it;
     * output it cannot read: `guard_sim_synth_differ`;
     * a parameter, localparam or genvar with an x or z bit (`equiv_icarus.x_parameter`), then a
-      constant select outside the range (`equiv_icarus.x_select`): `guard_sim_synth_differ`;
+      constant select outside the range (`equiv_icarus.x_select`), then a parameter or
+      localparam whose values differ from Verilator's (`equiv_icarus.disagreement`):
+      `guard_sim_synth_differ`;
     * Icarus cannot be started at all: inconclusive, logged, nothing is refused (it cannot happen
       in practice: the worker runs inside the toolchain image, which holds Icarus)."""
     folder = r.scratch / "sim_elab"
@@ -775,7 +832,11 @@ def _icarus_checks(r: _Run, cleaned: dict[str, str], name: str) -> dict[str, Any
             "compiles it.",
         )
     try:
-        found = equiv_icarus.x_parameter(vvp, ours) or equiv_icarus.x_select(run.output, ours)
+        found = (
+            equiv_icarus.x_parameter(vvp, ours)
+            or equiv_icarus.x_select(run.output, ours)
+            or equiv_icarus.disagreement(equiv_icarus.parameter_values(vvp, ours), values, ours)
+        )
     except equiv_icarus.IcarusError as exc:
         return refuse(
             "guard_sim_synth_differ",

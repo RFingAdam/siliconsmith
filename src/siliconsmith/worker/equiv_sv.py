@@ -13,15 +13,19 @@ the common constructs where they differ and the check answers `not_proven` (with
 named) instead of a verdict. What it does NOT spot is left to gate-level simulation
 (`run_tests` with `gl=true`):
 
-* an out-of-range index or a division by zero applied to a signal (x in a simulator, some value in
-  the gates, because an x in the RTL is a don't-care; also inside a generate loop or module copy),
-  a function call written in an expression (not in a parameter) that returns x for constant
-  arguments, and a function that reads one of its own locals before it writes it (a constant
-  that comes out x, a constant index outside the range and a generate condition that can be x
-  are refused by the checks on Verilator's tree and Icarus's elaboration in `equiv`);
-* a constant expression that Yosys evaluates differently from a simulator: a size cast, an
-  unbased `'1` or `$rtoi` inside a localparam, an untyped `localparam` whose value overflows
-  (`localparam K = 8'hff + 1`: the tools can size it differently);
+* an index computed from a signal that goes outside the range or a division by a signal that is
+  0 (x in a simulator, some value in the gates, because an x in the RTL is a don't-care; also
+  inside a generate loop or module copy), a function call written in an expression (not in a
+  parameter) that returns x for constant arguments, and a function that reads one of its own
+  locals before it writes it (a constant that comes out x, a constant index outside the range, a
+  parameter value that the simulator and Verilator work out differently and a generate condition
+  that can be x are refused by the checks on Verilator's tree and Icarus's elaboration in
+  `equiv`);
+* a constant expression that Yosys evaluates differently from a simulator: a size cast or an
+  unbased `'1` inside a localparam, `$rtoi` in any constant expression (a localparam or a
+  generate condition), an untyped `localparam` whose value overflows (`localparam K = 8'hff + 1`:
+  the tools can size it differently); only a parameter value on which the simulator and
+  Verilator disagree is refused;
 * anything else that depends on the order in which a simulator runs events.
 
 ## What this module does
@@ -333,12 +337,15 @@ _DECLARES = re.compile(
 )
 # Names that open a scope a dotted name can reach into: a block label (`begin : g`, `g : begin`),
 # a module, interface or program, an instance, an array of instances or a call (any word before
-# a `(`, possibly after `[...]`: more than the instances, never fewer).
+# a `(`, possibly after `[...]`: more than the instances, never fewer). A word right after a `.`
+# (blanks allowed between) is not one: it is a named port connection (`.cfg(cfg)`) or the member
+# of a dotted name (`g.rd(x)`, whose head `g` is what counts).
+_CALL_OR_INSTANCE = re.compile(r"(?<![\w$'])([A-Za-z_][\w$]*)\s*(?:\[[^\]]*\]\s*)*\(", re.ASCII)
 _SCOPES = (
     re.compile(r"\b(?:begin|fork)\s*:\s*([A-Za-z_][\w$]*)", re.ASCII),
     re.compile(r"(?<![\w$'])([A-Za-z_][\w$]*)\s*:\s*(?:begin|fork)\b", re.ASCII),
     re.compile(r"\b(?:module|macromodule|interface|program)\s+([A-Za-z_][\w$]*)", re.ASCII),
-    re.compile(r"(?<![\w$'])([A-Za-z_][\w$]*)\s*(?:\[[^\]]*\]\s*)*\(", re.ASCII),
+    _CALL_OR_INSTANCE,
 )
 _WORD = re.compile(r"(?<![\w$'])[A-Za-z_][\w$]*", re.ASCII)
 _BASED = re.compile(
@@ -368,10 +375,23 @@ def _word_before(scan: str, pos: int) -> tuple[str, int]:
     return scan[k + 1 : end], k + 1
 
 
+def _after_dot(scan: str, pos: int) -> bool:
+    """True if the first character before `pos` that is not a blank is a `.`."""
+    k = pos - 1
+    while k >= 0 and scan[k] in ASCII_BLANKS:
+        k -= 1
+    return k >= 0 and scan[k] == "."
+
+
 def _scope_names(scan: str) -> set[str]:
     """Every name in the file that may open a scope (`_SCOPES`): a dotted name whose head is one
     of them is never taken for a member of a function's argument or local."""
-    return {m.group(1) for pattern in _SCOPES for m in pattern.finditer(scan)}
+    return {
+        m.group(1)
+        for pattern in _SCOPES
+        for m in pattern.finditer(scan)
+        if not (pattern is _CALL_OR_INSTANCE and _after_dot(scan, m.start(1)))
+    }
 
 
 def _split_top(text: str, sep: str) -> list[str]:

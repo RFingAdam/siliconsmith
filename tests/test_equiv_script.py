@@ -208,6 +208,18 @@ def test_base_script_has_the_x_run_and_the_def_run_with_ties_on_tied_points_only
     script = es.base_script(points, 7, {"gold": "ff_gold", "gate": "ff_gate"})
     x_run, def_run = script.split("log BASE-DEF")
     assert "read_rtlil base.il" in x_run and "log BASE-X" in x_run
+    # Round 15 n40: the X run reads each side on its own (the RTL side from a copy that keeps
+    # the RTL's value at every `$equiv`, the netlist side from one that keeps the netlist's),
+    # so a netlist gate never reads an RTL register's x; the DEF run reads `equiv` as before.
+    assert x_run.startswith(
+        "read_rtlil base.il\ndesign -save base\n"
+        "copy equiv equiv_rtl\nequiv_remove -gold equiv_rtl\n"
+        "copy equiv equiv_net\nequiv_remove -gate equiv_net\n"
+        "hierarchy -top base_x\nflatten\nopt_clean\nlog BASE-X\nsat -seq 7 "
+    )
+    assert x_run.endswith("-dump_vcd base_x.vcd base_x\ndesign -load base\nhierarchy -top equiv\n")
+    assert def_run.rstrip().endswith("-dump_vcd base_def.vcd equiv")
+    assert (es.BASE_X_TOP, es.BASE_X_RTL, es.BASE_X_NETLIST) == ("base_x", "equiv_rtl", "equiv_net")
     # RTL registers x, netlist flip-flops any defined value, and nothing else fixed.
     assert (
         "sat -seq 7 -set-all-undef-at 1 ff_gold -set-def-at 1 ff_gate -enable_undef "
@@ -242,6 +254,18 @@ def test_the_referee_writes_the_miter_then_searches_with_the_per_side_power_up()
         "-prove trigger 0 -show-ports -dump_vcd cex_bmc.vcd miter"
     ) in bmc
     assert "-set-init" not in bmc
+
+
+def test_the_one_shot_referee_is_the_same_search_as_one_sat_problem() -> None:
+    """`miter_once` has the constraints of `miter_bmc` (x semantics, defined inputs, the per-side
+    power-up, rst_n low at cycle 1), as one problem of time steps 1 to depth + 1."""
+    once = es.miter_once("bmc_once", {"gold": "ff_gold", "gate": "ff_gate"}, 32)
+    assert once == (
+        "read_rtlil miter_ff.il\nhierarchy -top miter\n"
+        "sat -seq 33 -prove-skip 1 -enable_undef -set-def-inputs -set-all-undef-at 1 ff_gold "
+        "-set-def-at 1 ff_gate -set-at 1 in_rst_n 0 -prove trigger 0 -show-ports "
+        "-dump_vcd cex_bmc_once.vcd miter\n"
+    )
 
 
 def test_miter_scripts_per_kind_of_run() -> None:

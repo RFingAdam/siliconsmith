@@ -140,3 +140,83 @@ def test_other_warnings_and_other_files_do_not_count() -> None:
     first = "core.v:9: warning: A[3+:4] is selecting after vector.\n" + WARNINGS
     got = ei.x_select(first, OURS)
     assert got is not None and got.line == 8
+
+
+def test_a_warning_in_the_first_of_our_files_counts_and_file_order_comes_before_line() -> None:
+    """The wrapper (`project.v`, the first of `ours`) is checked too, and named first."""
+    got = ei.x_select(
+        "core.v:8: warning: Constant bit select [6] is after A[3:0].\n"
+        "project.v:30: warning: Constant bit select [9] is after vector ui_in[7:0].\n",
+        OURS,
+    )
+    assert got is not None and (got.file, got.line) == ("project.v", 30)
+    assert "Constant bit select [9] is after vector ui_in[7:0]." in got.sentence
+
+
+# -- round 15: the simulator's values against Verilator's ---------------------------------------
+
+# c02ifnot: `localparam integer M = pick(4'b1010, 6);` with `if (!v[k]) pick = 0; else pick = 1;`
+# Icarus reads v[6] as x, `!x` is x, the `if` takes the else branch: 1, with no x bit and no
+# warning. Verilator (and Yosys) read v[6] as 0: 0.
+LAUNDERED = vvp('P_0x5f6c3b2fe620 .param/l "M" 1 4 11, +C4<00000000000000000000000000000001>;')
+
+
+def test_the_simulators_values_once_per_instance_and_pass() -> None:
+    got = ei.parameter_values(CLEAN, OURS)
+    assert got == {
+        ("core.v", 8, "g"): [(2, 0), (2, 1)],
+        ("core.v", 1, "N"): [(32, 3)],
+        ("core.v", 6, "NEG"): [(8, 0xFD)],
+        ("core.v", 3, "R"): None,
+        ("core.v", 2, "S"): None,
+    }
+    assert ei.parameter_values(QF2, OURS)[("core.v", 10, "Q")] is None  # an x bit
+    assert ei.parameter_values(QF2, ["project.v"]) == {}
+
+
+def test_a_parameter_the_simulator_computes_differently_from_verilator_is_named() -> None:
+    simulator = ei.parameter_values(LAUNDERED, OURS)
+    got = ei.disagreement(simulator, {("core.v", 11, "M"): [(32, 0)]}, OURS)
+    assert got is not None and (got.file, got.line) == ("core.v", 11)
+    assert (
+        "gives the parameter `M` the value 1 in a simulator (Icarus) but 0 in Verilator's "
+        "elaboration" in got.sentence
+    )
+    assert "keep every select inside the declared range" in got.sentence
+    assert ei.disagreement(simulator, {("core.v", 11, "M"): [(32, 1)]}, OURS) is None
+
+
+def test_values_are_compared_per_instance_on_the_bits_both_widths_hold() -> None:
+    key = ("core.v", 5, "P")
+
+    def differ(mine: list[tuple[int, int]] | None, theirs: list[tuple[int, int]] | None) -> bool:
+        return ei.disagreement({key: mine}, {key: theirs}, OURS) is not None
+
+    assert not differ([(33, 6)], [(32, 6)])  # Icarus makes `4'd5 + 1` 33 bits wide
+    assert not differ([(33, 2**33 - 1)], [(32, 2**32 - 1)])  # -1
+    assert differ([(33, 2**32 + 6)], [(32, 7)])
+    # three instances: the laundered one looks like the third in Icarus, like the second in
+    # Verilator, so the sets match; the counts do not
+    assert differ([(32, 1), (32, 0), (32, 1)], [(32, 0), (32, 0), (32, 1)])
+    assert not differ([(32, 1), (32, 0), (32, 1)], [(32, 1), (32, 1), (32, 0)])
+    assert not differ(None, [(32, 0)]) and not differ([(32, 1)], None)  # a string, real or x
+    assert not differ([(32, 1)], [])  # a module copy nothing instantiates
+    assert ei.disagreement({key: [(32, 1)]}, {}, OURS) is None  # only one tool lists it
+
+
+def test_the_first_disagreement_by_file_order_then_line_is_named_with_every_value() -> None:
+    simulator = {
+        ("core.v", 3, "A"): [(32, 1)],
+        ("project.v", 9, "W"): [(8, 1)] * 5,
+        ("core.v", 2, "B"): [(32, 1)],
+    }
+    verilator = {
+        ("core.v", 3, "A"): [(32, 0)],
+        ("project.v", 9, "W"): [(8, 2)] * 5,
+        ("core.v", 2, "B"): [(32, 0)],
+    }
+    got = ei.disagreement(simulator, verilator, OURS)
+    assert got is not None and (got.file, got.line) == ("project.v", 9)
+    assert "the value 1, 1, 1, 1, ... in a simulator (Icarus) but 2, 2, 2, 2, ..." in got.sentence
+    got = ei.disagreement(simulator, verilator, ["core.v"])
+    assert got is not None and (got.file, got.line) == ("core.v", 2)

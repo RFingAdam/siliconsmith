@@ -330,11 +330,12 @@ def flip_flops(il: str, side_of: Callable[[str], str | None]) -> dict[str, list[
 
 
 def _power_up_wires(
-    il: str, add: list[str], side_of: Callable[[str], str | None]
+    il: str, add: list[str], side_of: Callable[[str], str | None], port: int | None = None
 ) -> tuple[str, dict[str, str]]:
     """`il` plus the lines `add` and, for each side with flip-flops, one wire that holds the Q
-    of every flip-flop of that side. Returns the model and `{side: wire name}` (a name the model
-    does not use yet). Raises ValueError like `flip_flops`."""
+    of every flip-flop of that side (an output port numbered from `port`, when it is given).
+    Returns the model and `{side: wire name}` (a name the model does not use yet). Raises
+    ValueError like `flip_flops`."""
     used = set(_WIRE.findall(il))
     wires: dict[str, str] = {}
     lines = list(add)
@@ -346,26 +347,92 @@ def _power_up_wires(
             n += 1
             name = f"ff_{side}_{n}"
         wires[side] = name
+        out = "" if port is None else f" output {port + len(wires) - 1}"
         lines += [
-            f"  wire width {sum(w for _, w in flops)} \\{name}",
+            f"  wire width {sum(w for _, w in flops)}{out} \\{name}",
             f"  connect \\{name} {{ {' '.join(q for q, _ in flops)} }}",
         ]
     end = il.rstrip().rfind("\nend")
     return il[:end] + "\n" + "\n".join(lines) + il[end:], wires
 
 
+# The X run of the base case (`es.base_script`) reads its own top module: each side runs on its
+# own there, the RTL side in `X_RTL` and the netlist side in `X_NETLIST`, copies of `equiv` in
+# which `equiv_remove` connects every matched signal to that side's own value.
+X_TOP = es.BASE_X_TOP
+X_RTL = es.BASE_X_RTL
+X_NETLIST = es.BASE_X_NETLIST
+_PORT = re.compile(r"^  wire ((?:\S+ )*?)(input|output|inout) (\d+) (\S+)$", re.M)
+
+
+def _x_top(il: str, points: int, wires: dict[str, str]) -> str:
+    """The module `X_TOP`: the inputs of `equiv` (the model `il`), an instance of `X_RTL` for
+    the RTL side and one of `X_NETLIST` for the netlist side, and as output ports the point
+    wires and power-up wires of each side (`eqa_i` and `ff_gold` from the first, `eqb_i` and
+    `ff_gate` from the second)."""
+    ports = _PORT.findall(il)
+    inputs = [(attrs, name) for attrs, kind, _, name in ports if kind == "input"]
+    if any(kind == "inout" for _, kind, _, _ in ports) or not inputs:
+        raise ValueError("the proof model's ports cannot be read")
+    widths = {
+        name: f"width {m.group(1)} " if (m := re.match(r"width (\d+) ", attrs)) else ""
+        for attrs, name in inputs
+    }
+    if any(attrs not in ("", f"{widths[name]}") for attrs, name in inputs):
+        raise ValueError("an input of the proof model is not a plain vector")
+    sides = {
+        "gold": (X_RTL, "rtl", [f"\\eqa_{i}" for i in range(points)]),
+        "gate": (X_NETLIST, "net", [f"\\eqb_{i}" for i in range(points)]),
+    }
+    flop_widths = {
+        name: width
+        for width, name in re.findall(r"^  wire width (\d+) output \d+ \\(ff_\w+)$", il, re.M)
+    }
+    lines = [f"module \\{X_TOP}"]
+    n = 0
+    for _, name in inputs:
+        n += 1
+        lines.append(f"  wire {widths[name]}input {n} {name}")
+    for side, (_, _, own) in sides.items():
+        for wire in own:
+            n += 1
+            lines.append(f"  wire output {n} {wire}")
+        if side in wires:
+            n += 1
+            lines.append(f"  wire width {flop_widths[wires[side]]} output {n} \\{wires[side]}")
+    for side, (module, instance, own) in sides.items():
+        lines.append(f"  cell \\{module} \\{instance}")
+        lines += [f"    connect {name} {name}" for _, name in inputs]
+        lines += [f"    connect {wire} {wire}" for wire in own]
+        if side in wires:
+            lines.append(f"    connect \\{wires[side]} \\{wires[side]}")
+        lines.append("  end")
+    return "\n".join([*lines, "end", ""])
+
+
 def base_model(equiv_il: str, points: list[es.Point]) -> tuple[str, dict[str, str]]:
-    """`equiv.il` plus a named wire for each side of every point (`eqa_i`, `eqb_i`) and the
-    power-up wires of `_power_up_wires` (stage 3, `es.base_script`)."""
+    """The model of stage 3 (`es.base_script`): `equiv.il` plus a named wire for each side of
+    every point (`eqa_i`, `eqb_i`) and the power-up wires of `_power_up_wires`, all of them
+    output ports, then the top module of the X run (`_x_top`).
+
+    In `equiv` every user of a matched signal reads the RTL's value (the `Y` of its `$equiv`
+    cell follows `A`), as in `equiv_induct`: the DEF run uses it as it is. In the X run the RTL
+    registers are x, and a netlist gate that reads such a value spreads that x gate by gate
+    (a mux whose two data inputs are equal still gives x), so it would show an x that no power-up
+    state of the netlist gives. The X run therefore reads the netlist side from a copy in which
+    every matched signal is the netlist's own value: each side runs on its own, the netlist
+    values are exact for every power-up state of its flip-flops."""
+    first = 1 + max((int(n) for _, _, n, _ in _PORT.findall(equiv_il)), default=0)
     add: list[str] = []
     for i, p in enumerate(points):
         add += [
-            f"  wire \\eqa_{i}",
-            f"  wire \\eqb_{i}",
+            f"  wire output {first + 2 * i} \\eqa_{i}",
+            f"  wire output {first + 2 * i + 1} \\eqb_{i}",
             f"  connect \\eqa_{i} {p.a}",
             f"  connect \\eqb_{i} {p.b}",
         ]
-    return _power_up_wires(equiv_il, add, side_by_suffix)
+    model, wires = _power_up_wires(equiv_il, add, side_by_suffix, first + 2 * len(points))
+    return model + _x_top(model, len(points), wires), wires
 
 
 def miter_model(miter_il: str) -> tuple[str, dict[str, str]]:
@@ -495,3 +562,39 @@ def state_result(log: str) -> str:
 def reached_depth(log: str, depth: int) -> bool:
     """True if a bounded search printed its positive end line for `depth` steps."""
     return f"proved base case for {depth} steps: SUCCESS" in log
+
+
+# The one-shot search of stage 4 (`es.miter_once`): its end line and what it imports.
+ONCE_PROVED = "SAT proof finished - no model found: SUCCESS!"
+ONCE_PROOF = "Import proof-constraint: \\trigger = 1'0"
+ONCE_RESET = "Import set-constraint for this timestep: \\in_rst_n = 1'0"
+ONCE_POWER_UP = {
+    "gold": "Import all_undef constraint for this timestep: \\{}",
+    "gate": "Import def constraint for this timestep: \\{}",
+}
+
+
+def once_result(code: int | None, log: str, wires: dict[str, str], depth: int) -> str:
+    """Read the one-shot search: `proved`, `cex` or `unclear`.
+
+    `proved` needs everything at once: exit code 0, exactly one `ONCE_PROVED` line and no
+    `model found: FAIL`, and a log that shows the problem asked for: time steps 1 to `depth + 1`
+    and no further, the proof constraint at exactly `depth` of them (steps 2 to `depth + 1`),
+    `rst_n` set low once, and the power-up of each side in `wires` (`all_undef` for the RTL,
+    `def` for the netlist) imported once. `cex`: exit code 0 and a model found. Anything else
+    (a time-out, an error, a cut-off or reworded log) is `unclear`, and the step-by-step search
+    decides: never a pass."""
+    if code != 0:
+        return "unclear"
+    if SAT_FAILED in log:
+        return "cex"
+    if log.count(ONCE_PROVED) != 1:
+        return "unclear"
+    shape = (
+        f"Setting up time step {depth + 1}:" in log
+        and f"Setting up time step {depth + 2}:" not in log
+        and log.count(ONCE_PROOF) == depth
+        and log.count(ONCE_RESET) == 1
+        and all(log.count(ONCE_POWER_UP[side].format(w)) == 1 for side, w in wires.items())
+    )
+    return "proved" if shape else "unclear"

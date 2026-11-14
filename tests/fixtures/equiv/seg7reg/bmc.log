@@ -1,0 +1,486 @@
+Setting up time step 1:
+Import set-constraint for this timestep: \in_rst_n = 1'0
+Final constraint equation: \in_rst_n = 1'0
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \ff_gate
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Import all_undef constraint for this timestep: \ff_gold
+Imported 183 cells to SAT database.
+No constraints for initial state found.
+** Trying induction with length 1 **
+Setting up time step 2:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 1] Solving problem with 5949 variables and 15827 clauses..
+Base case for induction length 1 proven.
+** Trying induction with length 2 **
+Setting up time step 3:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 2] Solving problem with 9112 variables and 24315 clauses..
+Base case for induction length 2 proven.
+** Trying induction with length 3 **
+Setting up time step 4:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 3] Solving problem with 12381 variables and 33134 clauses..
+Base case for induction length 3 proven.
+** Trying induction with length 4 **
+Setting up time step 5:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 4] Solving problem with 15749 variables and 42263 clauses..
+Base case for induction length 4 proven.
+** Trying induction with length 5 **
+Setting up time step 6:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 5] Solving problem with 19216 variables and 51702 clauses..
+Base case for induction length 5 proven.
+** Trying induction with length 6 **
+Setting up time step 7:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 6] Solving problem with 22782 variables and 61451 clauses..
+Base case for induction length 6 proven.
+** Trying induction with length 7 **
+Setting up time step 8:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 7] Solving problem with 26447 variables and 71510 clauses..
+Base case for induction length 7 proven.
+** Trying induction with length 8 **
+Setting up time step 9:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 8] Solving problem with 30211 variables and 81879 clauses..
+Base case for induction length 8 proven.
+** Trying induction with length 9 **
+Setting up time step 10:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 9] Solving problem with 34074 variables and 92558 clauses..
+Base case for induction length 9 proven.
+** Trying induction with length 10 **
+Setting up time step 11:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 10] Solving problem with 38036 variables and 103547 clauses..
+Base case for induction length 10 proven.
+** Trying induction with length 11 **
+Setting up time step 12:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 11] Solving problem with 42097 variables and 114846 clauses..
+Base case for induction length 11 proven.
+** Trying induction with length 12 **
+Setting up time step 13:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 12] Solving problem with 46257 variables and 126455 clauses..
+Base case for induction length 12 proven.
+** Trying induction with length 13 **
+Setting up time step 14:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 13] Solving problem with 50516 variables and 138374 clauses..
+Base case for induction length 13 proven.
+** Trying induction with length 14 **
+Setting up time step 15:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 14] Solving problem with 54874 variables and 150603 clauses..
+Base case for induction length 14 proven.
+** Trying induction with length 15 **
+Setting up time step 16:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 15] Solving problem with 59331 variables and 163142 clauses..
+Base case for induction length 15 proven.
+** Trying induction with length 16 **
+Setting up time step 17:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 16] Solving problem with 63887 variables and 175991 clauses..
+Base case for induction length 16 proven.
+** Trying induction with length 17 **
+Setting up time step 18:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 17] Solving problem with 68542 variables and 189150 clauses..
+Base case for induction length 17 proven.
+** Trying induction with length 18 **
+Setting up time step 19:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 18] Solving problem with 73296 variables and 202619 clauses..
+Base case for induction length 18 proven.
+** Trying induction with length 19 **
+Setting up time step 20:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 183 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+[base case 19] Solving problem with 78149 variables and 216398 clauses..

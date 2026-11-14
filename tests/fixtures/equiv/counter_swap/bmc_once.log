@@ -1,0 +1,793 @@
+Setting up time step 1:
+Import set-constraint for this timestep: \in_rst_n = 1'0
+Final constraint equation: \in_rst_n = 1'0
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Import def constraint for this timestep: \ff_gate
+Import all_undef constraint for this timestep: \ff_gold
+Imported 150 cells to SAT database.
+No constraints for initial state found.
+Setting up time step 2:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 3:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 4:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 5:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 6:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 7:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 8:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 9:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 10:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 11:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 12:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 13:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 14:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 15:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 16:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 17:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 18:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 19:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 20:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 21:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 22:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 23:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 24:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 25:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 26:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 27:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 28:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 29:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 30:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 31:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 32:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Setting up time step 33:
+Final constraint equation: { } = { }
+Import def constraint for this timestep: \in_rst_n
+Import def constraint for this timestep: \in_ena
+Import def constraint for this timestep: \in_clk
+Import def constraint for this timestep: \in_uio_in
+Import def constraint for this timestep: \in_ui_in
+Imported 150 cells to SAT database.
+Import proof-constraint: \trigger = 1'0
+Final proof equation: \trigger = 1'0
+Import show expression: \in_clk
+Import show expression: \in_ena
+Import show expression: \in_rst_n
+Import show expression: \in_ui_in
+Import show expression: \in_uio_in
+Import show expression: \gate_uio_oe
+Import show expression: \gate_uio_out
+Import show expression: \gate_uo_out
+Import show expression: \gold_uio_oe
+Import show expression: \gold_uio_out
+Import show expression: \gold_uo_out
+Import show expression: \trigger
+Solving problem with 83490 variables and 218833 clauses..
+SAT proof finished - model found: FAIL!
+  Time Signal Name                      Dec       Hex           Bin
+  ---- ------------------------ ----------- --------- -------------
+  init \gate._44_.IQ                      1         1             1
+  init \gate._45_.IQ                      1         1             1
+  init \gate._46_.IQ                      1         1             1
+  init \gate._47_.IQ                      0         0             0
+  init \gate._48_.IQ                      1         1             1
+  init \gate._49_.IQ                      1         1             1
+  init \gate._50_.IQ                      1         1             1
+  init \gate._51_.IQ                      1         1             1
+  init \gold.core.count[0]               --        --             x
+  init \gold.core.count[1]               --        --             x
+  init \gold.core.count[2]               --        --             x
+  init \gold.core.count[3]               --        --             x
+  init \gold.core.count[4]               --        --             x
+  init \gold.core.count[5]               --        --             x
+  init \gold.core.count[6]               --        --             x
+  init \gold.core.count[7]               --        --             x
+  ---- ------------------------ ----------- --------- -------------
+     1 \gate_uio_oe                       0         0      00000000
+     1 \gate_uio_out                      0         0      00000000
+     1 \gate_uo_out                     127        7f      01111111
+     1 \gold_uio_oe                       0         0      00000000
+     1 \gold_uio_out                      0         0      00000000
+     1 \gold_uo_out                      --        --      xxxxxxxx
+     1 \in_clk                            0         0             0
+     1 \in_ena                            0         0             0
+     1 \in_rst_n                          0         0             0
+     1 \in_ui_in                          1         1      00000001
+     1 \in_uio_in                         0         0      00000000
+     1 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+     2 \gate_uio_oe                       0         0      00000000
+     2 \gate_uio_out                      0         0      00000000
+     2 \gate_uo_out                       0         0      00000000
+     2 \gold_uio_oe                       0         0      00000000
+     2 \gold_uio_out                      0         0      00000000
+     2 \gold_uo_out                       0         0      00000000
+     2 \in_clk                            0         0             0
+     2 \in_ena                            0         0             0
+     2 \in_rst_n                          1         1             1
+     2 \in_ui_in                          1         1      00000001
+     2 \in_uio_in                         0         0      00000000
+     2 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+     3 \gate_uio_oe                       0         0      00000000
+     3 \gate_uio_out                      0         0      00000000
+     3 \gate_uo_out                       1         1      00000001
+     3 \gold_uio_oe                       0         0      00000000
+     3 \gold_uio_out                      0         0      00000000
+     3 \gold_uo_out                       1         1      00000001
+     3 \in_clk                            0         0             0
+     3 \in_ena                            0         0             0
+     3 \in_rst_n                          1         1             1
+     3 \in_ui_in                          1         1      00000001
+     3 \in_uio_in                         0         0      00000000
+     3 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+     4 \gate_uio_oe                       0         0      00000000
+     4 \gate_uio_out                      0         0      00000000
+     4 \gate_uo_out                       0         0      00000000
+     4 \gold_uio_oe                       0         0      00000000
+     4 \gold_uio_out                      0         0      00000000
+     4 \gold_uo_out                       2         2      00000010
+     4 \in_clk                            0         0             0
+     4 \in_ena                            0         0             0
+     4 \in_rst_n                          1         1             1
+     4 \in_ui_in                          0         0      00000000
+     4 \in_uio_in                         0         0      00000000
+     4 \trigger                           1         1             1
+  ---- ------------------------ ----------- --------- -------------
+     5 \gate_uio_oe                       0         0      00000000
+     5 \gate_uio_out                      0         0      00000000
+     5 \gate_uo_out                       0         0      00000000
+     5 \gold_uio_oe                       0         0      00000000
+     5 \gold_uio_out                      0         0      00000000
+     5 \gold_uo_out                       2         2      00000010
+     5 \in_clk                            0         0             0
+     5 \in_ena                            0         0             0
+     5 \in_rst_n                          1         1             1
+     5 \in_ui_in                          0         0      00000000
+     5 \in_uio_in                         0         0      00000000
+     5 \trigger                           1         1             1
+  ---- ------------------------ ----------- --------- -------------
+     6 \gate_uio_oe                       0         0      00000000
+     6 \gate_uio_out                      0         0      00000000
+     6 \gate_uo_out                       0         0      00000000
+     6 \gold_uio_oe                       0         0      00000000
+     6 \gold_uio_out                      0         0      00000000
+     6 \gold_uo_out                       2         2      00000010
+     6 \in_clk                            0         0             0
+     6 \in_ena                            0         0             0
+     6 \in_rst_n                          0         0             0
+     6 \in_ui_in                          0         0      00000000
+     6 \in_uio_in                         0         0      00000000
+     6 \trigger                           1         1             1
+  ---- ------------------------ ----------- --------- -------------
+     7 \gate_uio_oe                       0         0      00000000
+     7 \gate_uio_out                      0         0      00000000
+     7 \gate_uo_out                       0         0      00000000
+     7 \gold_uio_oe                       0         0      00000000
+     7 \gold_uio_out                      0         0      00000000
+     7 \gold_uo_out                       0         0      00000000
+     7 \in_clk                            0         0             0
+     7 \in_ena                            0         0             0
+     7 \in_rst_n                          0         0             0
+     7 \in_ui_in                          1         1      00000001
+     7 \in_uio_in                         0         0      00000000
+     7 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+     8 \gate_uio_oe                       0         0      00000000
+     8 \gate_uio_out                      0         0      00000000
+     8 \gate_uo_out                       0         0      00000000
+     8 \gold_uio_oe                       0         0      00000000
+     8 \gold_uio_out                      0         0      00000000
+     8 \gold_uo_out                       0         0      00000000
+     8 \in_clk                            0         0             0
+     8 \in_ena                            0         0             0
+     8 \in_rst_n                          1         1             1
+     8 \in_ui_in                          1         1      00000001
+     8 \in_uio_in                         0         0      00000000
+     8 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+     9 \gate_uio_oe                       0         0      00000000
+     9 \gate_uio_out                      0         0      00000000
+     9 \gate_uo_out                       1         1      00000001
+     9 \gold_uio_oe                       0         0      00000000
+     9 \gold_uio_out                      0         0      00000000
+     9 \gold_uo_out                       1         1      00000001
+     9 \in_clk                            0         0             0
+     9 \in_ena                            0         0             0
+     9 \in_rst_n                          1         1             1
+     9 \in_ui_in                          1         1      00000001
+     9 \in_uio_in                         0         0      00000000
+     9 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    10 \gate_uio_oe                       0         0      00000000
+    10 \gate_uio_out                      0         0      00000000
+    10 \gate_uo_out                       0         0      00000000
+    10 \gold_uio_oe                       0         0      00000000
+    10 \gold_uio_out                      0         0      00000000
+    10 \gold_uo_out                       2         2      00000010
+    10 \in_clk                            0         0             0
+    10 \in_ena                            0         0             0
+    10 \in_rst_n                          0         0             0
+    10 \in_ui_in                          1         1      00000001
+    10 \in_uio_in                         0         0      00000000
+    10 \trigger                           1         1             1
+  ---- ------------------------ ----------- --------- -------------
+    11 \gate_uio_oe                       0         0      00000000
+    11 \gate_uio_out                      0         0      00000000
+    11 \gate_uo_out                       0         0      00000000
+    11 \gold_uio_oe                       0         0      00000000
+    11 \gold_uio_out                      0         0      00000000
+    11 \gold_uo_out                       0         0      00000000
+    11 \in_clk                            0         0             0
+    11 \in_ena                            0         0             0
+    11 \in_rst_n                          1         1             1
+    11 \in_ui_in                          1         1      00000001
+    11 \in_uio_in                         0         0      00000000
+    11 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    12 \gate_uio_oe                       0         0      00000000
+    12 \gate_uio_out                      0         0      00000000
+    12 \gate_uo_out                       1         1      00000001
+    12 \gold_uio_oe                       0         0      00000000
+    12 \gold_uio_out                      0         0      00000000
+    12 \gold_uo_out                       1         1      00000001
+    12 \in_clk                            0         0             0
+    12 \in_ena                            0         0             0
+    12 \in_rst_n                          1         1             1
+    12 \in_ui_in                          1         1      00000001
+    12 \in_uio_in                         0         0      00000000
+    12 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    13 \gate_uio_oe                       0         0      00000000
+    13 \gate_uio_out                      0         0      00000000
+    13 \gate_uo_out                       0         0      00000000
+    13 \gold_uio_oe                       0         0      00000000
+    13 \gold_uio_out                      0         0      00000000
+    13 \gold_uo_out                       2         2      00000010
+    13 \in_clk                            0         0             0
+    13 \in_ena                            0         0             0
+    13 \in_rst_n                          0         0             0
+    13 \in_ui_in                          1         1      00000001
+    13 \in_uio_in                         0         0      00000000
+    13 \trigger                           1         1             1
+  ---- ------------------------ ----------- --------- -------------
+    14 \gate_uio_oe                       0         0      00000000
+    14 \gate_uio_out                      0         0      00000000
+    14 \gate_uo_out                       0         0      00000000
+    14 \gold_uio_oe                       0         0      00000000
+    14 \gold_uio_out                      0         0      00000000
+    14 \gold_uo_out                       0         0      00000000
+    14 \in_clk                            0         0             0
+    14 \in_ena                            0         0             0
+    14 \in_rst_n                          1         1             1
+    14 \in_ui_in                          0         0      00000000
+    14 \in_uio_in                         0         0      00000000
+    14 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    15 \gate_uio_oe                       0         0      00000000
+    15 \gate_uio_out                      0         0      00000000
+    15 \gate_uo_out                       0         0      00000000
+    15 \gold_uio_oe                       0         0      00000000
+    15 \gold_uio_out                      0         0      00000000
+    15 \gold_uo_out                       0         0      00000000
+    15 \in_clk                            0         0             0
+    15 \in_ena                            0         0             0
+    15 \in_rst_n                          1         1             1
+    15 \in_ui_in                          1         1      00000001
+    15 \in_uio_in                         0         0      00000000
+    15 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    16 \gate_uio_oe                       0         0      00000000
+    16 \gate_uio_out                      0         0      00000000
+    16 \gate_uo_out                       1         1      00000001
+    16 \gold_uio_oe                       0         0      00000000
+    16 \gold_uio_out                      0         0      00000000
+    16 \gold_uo_out                       1         1      00000001
+    16 \in_clk                            0         0             0
+    16 \in_ena                            0         0             0
+    16 \in_rst_n                          1         1             1
+    16 \in_ui_in                          1         1      00000001
+    16 \in_uio_in                         0         0      00000000
+    16 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    17 \gate_uio_oe                       0         0      00000000
+    17 \gate_uio_out                      0         0      00000000
+    17 \gate_uo_out                       0         0      00000000
+    17 \gold_uio_oe                       0         0      00000000
+    17 \gold_uio_out                      0         0      00000000
+    17 \gold_uo_out                       2         2      00000010
+    17 \in_clk                            0         0             0
+    17 \in_ena                            0         0             0
+    17 \in_rst_n                          1         1             1
+    17 \in_ui_in                          0         0      00000000
+    17 \in_uio_in                         0         0      00000000
+    17 \trigger                           1         1             1
+  ---- ------------------------ ----------- --------- -------------
+    18 \gate_uio_oe                       0         0      00000000
+    18 \gate_uio_out                      0         0      00000000
+    18 \gate_uo_out                       0         0      00000000
+    18 \gold_uio_oe                       0         0      00000000
+    18 \gold_uio_out                      0         0      00000000
+    18 \gold_uo_out                       2         2      00000010
+    18 \in_clk                            0         0             0
+    18 \in_ena                            0         0             0
+    18 \in_rst_n                          0         0             0
+    18 \in_ui_in                          1         1      00000001
+    18 \in_uio_in                         0         0      00000000
+    18 \trigger                           1         1             1
+  ---- ------------------------ ----------- --------- -------------
+    19 \gate_uio_oe                       0         0      00000000
+    19 \gate_uio_out                      0         0      00000000
+    19 \gate_uo_out                       0         0      00000000
+    19 \gold_uio_oe                       0         0      00000000
+    19 \gold_uio_out                      0         0      00000000
+    19 \gold_uo_out                       0         0      00000000
+    19 \in_clk                            0         0             0
+    19 \in_ena                            0         0             0
+    19 \in_rst_n                          0         0             0
+    19 \in_ui_in                          1         1      00000001
+    19 \in_uio_in                         0         0      00000000
+    19 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    20 \gate_uio_oe                       0         0      00000000
+    20 \gate_uio_out                      0         0      00000000
+    20 \gate_uo_out                       0         0      00000000
+    20 \gold_uio_oe                       0         0      00000000
+    20 \gold_uio_out                      0         0      00000000
+    20 \gold_uo_out                       0         0      00000000
+    20 \in_clk                            0         0             0
+    20 \in_ena                            0         0             0
+    20 \in_rst_n                          1         1             1
+    20 \in_ui_in                          0         0      00000000
+    20 \in_uio_in                         0         0      00000000
+    20 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    21 \gate_uio_oe                       0         0      00000000
+    21 \gate_uio_out                      0         0      00000000
+    21 \gate_uo_out                       0         0      00000000
+    21 \gold_uio_oe                       0         0      00000000
+    21 \gold_uio_out                      0         0      00000000
+    21 \gold_uo_out                       0         0      00000000
+    21 \in_clk                            0         0             0
+    21 \in_ena                            0         0             0
+    21 \in_rst_n                          0         0             0
+    21 \in_ui_in                          1         1      00000001
+    21 \in_uio_in                         0         0      00000000
+    21 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    22 \gate_uio_oe                       0         0      00000000
+    22 \gate_uio_out                      0         0      00000000
+    22 \gate_uo_out                       0         0      00000000
+    22 \gold_uio_oe                       0         0      00000000
+    22 \gold_uio_out                      0         0      00000000
+    22 \gold_uo_out                       0         0      00000000
+    22 \in_clk                            0         0             0
+    22 \in_ena                            0         0             0
+    22 \in_rst_n                          1         1             1
+    22 \in_ui_in                          0         0      00000000
+    22 \in_uio_in                         0         0      00000000
+    22 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    23 \gate_uio_oe                       0         0      00000000
+    23 \gate_uio_out                      0         0      00000000
+    23 \gate_uo_out                       0         0      00000000
+    23 \gold_uio_oe                       0         0      00000000
+    23 \gold_uio_out                      0         0      00000000
+    23 \gold_uo_out                       0         0      00000000
+    23 \in_clk                            0         0             0
+    23 \in_ena                            0         0             0
+    23 \in_rst_n                          0         0             0
+    23 \in_ui_in                          1         1      00000001
+    23 \in_uio_in                         0         0      00000000
+    23 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    24 \gate_uio_oe                       0         0      00000000
+    24 \gate_uio_out                      0         0      00000000
+    24 \gate_uo_out                       0         0      00000000
+    24 \gold_uio_oe                       0         0      00000000
+    24 \gold_uio_out                      0         0      00000000
+    24 \gold_uo_out                       0         0      00000000
+    24 \in_clk                            0         0             0
+    24 \in_ena                            0         0             0
+    24 \in_rst_n                          1         1             1
+    24 \in_ui_in                          0         0      00000000
+    24 \in_uio_in                         0         0      00000000
+    24 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    25 \gate_uio_oe                       0         0      00000000
+    25 \gate_uio_out                      0         0      00000000
+    25 \gate_uo_out                       0         0      00000000
+    25 \gold_uio_oe                       0         0      00000000
+    25 \gold_uio_out                      0         0      00000000
+    25 \gold_uo_out                       0         0      00000000
+    25 \in_clk                            0         0             0
+    25 \in_ena                            0         0             0
+    25 \in_rst_n                          0         0             0
+    25 \in_ui_in                          1         1      00000001
+    25 \in_uio_in                         0         0      00000000
+    25 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    26 \gate_uio_oe                       0         0      00000000
+    26 \gate_uio_out                      0         0      00000000
+    26 \gate_uo_out                       0         0      00000000
+    26 \gold_uio_oe                       0         0      00000000
+    26 \gold_uio_out                      0         0      00000000
+    26 \gold_uo_out                       0         0      00000000
+    26 \in_clk                            0         0             0
+    26 \in_ena                            0         0             0
+    26 \in_rst_n                          1         1             1
+    26 \in_ui_in                          0         0      00000000
+    26 \in_uio_in                         0         0      00000000
+    26 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    27 \gate_uio_oe                       0         0      00000000
+    27 \gate_uio_out                      0         0      00000000
+    27 \gate_uo_out                       0         0      00000000
+    27 \gold_uio_oe                       0         0      00000000
+    27 \gold_uio_out                      0         0      00000000
+    27 \gold_uo_out                       0         0      00000000
+    27 \in_clk                            0         0             0
+    27 \in_ena                            0         0             0
+    27 \in_rst_n                          0         0             0
+    27 \in_ui_in                          1         1      00000001
+    27 \in_uio_in                         0         0      00000000
+    27 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    28 \gate_uio_oe                       0         0      00000000
+    28 \gate_uio_out                      0         0      00000000
+    28 \gate_uo_out                       0         0      00000000
+    28 \gold_uio_oe                       0         0      00000000
+    28 \gold_uio_out                      0         0      00000000
+    28 \gold_uo_out                       0         0      00000000
+    28 \in_clk                            0         0             0
+    28 \in_ena                            0         0             0
+    28 \in_rst_n                          1         1             1
+    28 \in_ui_in                          0         0      00000000
+    28 \in_uio_in                         0         0      00000000
+    28 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    29 \gate_uio_oe                       0         0      00000000
+    29 \gate_uio_out                      0         0      00000000
+    29 \gate_uo_out                       0         0      00000000
+    29 \gold_uio_oe                       0         0      00000000
+    29 \gold_uio_out                      0         0      00000000
+    29 \gold_uo_out                       0         0      00000000
+    29 \in_clk                            0         0             0
+    29 \in_ena                            0         0             0
+    29 \in_rst_n                          0         0             0
+    29 \in_ui_in                          1         1      00000001
+    29 \in_uio_in                         0         0      00000000
+    29 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    30 \gate_uio_oe                       0         0      00000000
+    30 \gate_uio_out                      0         0      00000000
+    30 \gate_uo_out                       0         0      00000000
+    30 \gold_uio_oe                       0         0      00000000
+    30 \gold_uio_out                      0         0      00000000
+    30 \gold_uo_out                       0         0      00000000
+    30 \in_clk                            0         0             0
+    30 \in_ena                            0         0             0
+    30 \in_rst_n                          1         1             1
+    30 \in_ui_in                          0         0      00000000
+    30 \in_uio_in                         0         0      00000000
+    30 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    31 \gate_uio_oe                       0         0      00000000
+    31 \gate_uio_out                      0         0      00000000
+    31 \gate_uo_out                       0         0      00000000
+    31 \gold_uio_oe                       0         0      00000000
+    31 \gold_uio_out                      0         0      00000000
+    31 \gold_uo_out                       0         0      00000000
+    31 \in_clk                            0         0             0
+    31 \in_ena                            0         0             0
+    31 \in_rst_n                          1         1             1
+    31 \in_ui_in                          1         1      00000001
+    31 \in_uio_in                         0         0      00000000
+    31 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    32 \gate_uio_oe                       0         0      00000000
+    32 \gate_uio_out                      0         0      00000000
+    32 \gate_uo_out                       1         1      00000001
+    32 \gold_uio_oe                       0         0      00000000
+    32 \gold_uio_out                      0         0      00000000
+    32 \gold_uo_out                       1         1      00000001
+    32 \in_clk                            0         0             0
+    32 \in_ena                            0         0             0
+    32 \in_rst_n                          1         1             1
+    32 \in_ui_in                          1         1      00000001
+    32 \in_uio_in                         0         0      00000000
+    32 \trigger                           0         0             0
+  ---- ------------------------ ----------- --------- -------------
+    33 \gate_uio_oe                       0         0      00000000
+    33 \gate_uio_out                      0         0      00000000
+    33 \gate_uo_out                       0         0      00000000
+    33 \gold_uio_oe                       0         0      00000000
+    33 \gold_uio_out                      0         0      00000000
+    33 \gold_uo_out                       2         2      00000010
+    33 \in_clk                            0         0             0
+    33 \in_ena                            0         0             0
+    33 \in_rst_n                          0         0             0
+    33 \in_ui_in                          1         1      00000001
+    33 \in_uio_in                         0         0      00000000
+    33 \trigger                           1         1             1

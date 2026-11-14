@@ -711,3 +711,121 @@ def test_the_first_x_condition_by_file_order_then_line_and_other_files_are_not_j
     odd = {"type": "GENIF", "loc": "e,4:3,4:5", "condp": {"odd": 1}}
     with pytest.raises(et.TreeError):
         et.x_condition(module(odd), META, OURS)
+
+
+# -- the value of every parameter (round 15) --------------------------------------------------
+
+
+def elab_param(addr: str, name: str, line: int, value: str, **more: Any) -> dict[str, Any]:
+    """A parameter as Verilator's elaborated tree has it (`valuep`: one CONST)."""
+    return var(
+        addr, name, line, varType="LPARAM", isParam=True,
+        valuep=[{"type": "CONST", "name": value, "loc": f"e,{line}:9,{line}:10"}], **more,
+    )  # fmt: skip
+
+
+def mod(addr: str, name: str, level: int, *kids: dict[str, Any], kind: str = "MODULE") -> dict:
+    return {"type": kind, "addr": addr, "name": name, "level": level, "stmtsp": list(kids)}
+
+
+def cell(name: str, to: str) -> dict[str, Any]:
+    return {"type": "CELL", "name": name, "modp": to, "loc": "e,1:1,1:2"}
+
+
+# The shape of round 15's probe: `core` instantiates `mid` twice with Z = 1 (Verilator shares
+# one copy) and once with Z = 5; each `mid` holds one `leaf`, whose K follows Z.
+PARAM_TREE = {
+    "type": "NETLIST",
+    "modulesp": [
+        mod("(T)", "tt_um_core", 1, cell("core", "(C)")),
+        mod("(P)", "pk", 2, elab_param("(PP)", "PP", 3, "32'sh7"), kind="PACKAGE"),
+        mod(
+            "(C)",
+            "core",
+            2,
+            cell("m0", "(M)"),
+            cell("m1", "(M)"),
+            cell("m2", "(M5)"),
+            {
+                "type": "GENBLOCK",
+                "name": "genblk1",
+                "stmtsp": [elab_param("(Q)", "Q", 33, "8'h33")],
+            },
+            var("(G)", "g", 14, varType="GENVAR"),
+            elab_param("(R)", "R", 21, "1.5"),
+            elab_param("(N)", "N", 22, "4'he"),
+        ),
+        mod("(M)", "mid", 3, elab_param("(Z1)", "Z", 18, "32'sh1"), cell("l0", "(L1)")),
+        mod("(M5)", "mid__Z5", 3, elab_param("(Z5)", "Z", 18, "32'sh5"), cell("l0", "(L5)")),
+        mod(
+            "(L1)",
+            "leaf__K1",
+            4,
+            elab_param("(K1)", "K", 6, "32'sh1"),
+            func("(F1)", "f", 12, elab_param("(FL1)", "FL", 13, "32'sh5")),
+        ),
+        mod(
+            "(L5)",
+            "leaf__K5",
+            4,
+            elab_param("(K5)", "K", 6, "32'sh5"),
+            func("(F5)", "f", 12, elab_param("(FL5)", "FL", 13, "32'sh5")),
+        ),
+        mod("(U)", "unused", 2, elab_param("(UK)", "UK", 40, "32'sh9")),
+    ],
+}
+
+
+def test_every_parameter_value_counts_once_per_module_instance() -> None:
+    got = et.parameter_values(PARAM_TREE, META, OURS)
+    assert got == {
+        ("core.v", 3, "PP"): [(32, 7)],  # a package once
+        ("core.v", 33, "Q"): [(8, 0x33)],
+        ("core.v", 21, "R"): None,  # a real is not a plain number
+        ("core.v", 22, "N"): [(4, 14)],
+        ("core.v", 18, "Z"): [(32, 1), (32, 1), (32, 5)],  # m0 and m1 share one copy
+        ("core.v", 6, "K"): [(32, 1), (32, 1), (32, 5)],  # through every level
+        ("core.v", 13, "FL"): [(32, 5)] * 3,  # inside a function too
+        ("core.v", 40, "UK"): [],  # nothing instantiates it
+    }  # the genvar has no value: left out
+
+
+def test_only_our_files_and_plain_values_count() -> None:
+    tree = {
+        "type": "NETLIST",
+        "modulesp": [
+            mod(
+                "(T)", "tt_um_core", 1,
+                elab_param("(A)", "A", 2, "32'sh1"),
+                {**elab_param("(B)", "B", 3, "32'sh1"), "loc": "d,3:1,3:2"},  # <verilated_std>
+                {**elab_param("(C)", "C", 4, "8'h1"), "valuep": []},
+                {**elab_param("(D)", "D", 5, "8'h1"), "valuep": [{"type": "INITARRAY"}]},
+                elab_param("(E)", "E", 6, "8'hx1"),
+                {**elab_param("(F)", "F", 7, "32'h2"), "isParam": None, "varType": "GPARAM"},
+            ),
+        ],
+    }  # fmt: skip
+    got = et.parameter_values(tree, META, OURS)
+    assert got == {
+        ("core.v", 2, "A"): [(32, 1)],
+        ("core.v", 4, "C"): None,
+        ("core.v", 5, "D"): None,
+        ("core.v", 6, "E"): None,  # an x is `xz_parameter`'s
+        ("core.v", 7, "F"): [(32, 2)],
+    }
+
+
+@pytest.mark.parametrize(
+    ("modules", "why"),
+    [
+        ([mod("(T)", "t", 1, cell("c", "(nowhere)"))], "names no module"),
+        ([mod("(T)", "t", 2)], "exactly one top module"),
+        ([mod("(T)", "t", 1), mod("(S)", "s", 1)], "exactly one top module"),
+        ([mod("(T)", "t", 1, cell("a", "(A)")), mod("(A)", "a", 2, cell("a", "(A)"))], "loop"),
+    ],
+)
+def test_an_instance_count_that_cannot_be_trusted_raises(modules: list[Any], why: str) -> None:
+    with pytest.raises(et.TreeError, match=why):
+        et.parameter_values({"type": "NETLIST", "modulesp": modules}, META, OURS)
+    with pytest.raises(et.TreeError):
+        et.parameter_values({"type": "NETLIST"}, META, OURS)

@@ -222,19 +222,66 @@ def test_base_model_adds_one_wire_pair_per_point_inside_the_module() -> None:
     il = log("counter_good", "equiv.il")
     points, n_gold, n_gate = ep.equiv_points(log("counter_good", "equiv.json"))
     model, wires = ep.base_model(il, points)
-    assert model.count("  wire \\eqa_") == 24 and model.count("  wire \\eqb_") == 24
-    assert "  connect \\eqa_0 " + points[0].a in model
-    assert "  connect \\eqb_23 " + points[23].b in model
-    assert model.rstrip().endswith("end")
-    assert model.rfind("connect \\eqb_23") < model.rstrip().rfind("\nend")  # inside the module
+    equiv, _ = model.split(f"module \\{ep.X_TOP}\n")
+    # equiv.il has eight ports; every point wire and power-up wire is an output port after them
+    assert equiv.count("  wire output ") == 48
+    assert "  wire output 9 \\eqa_0\n  wire output 10 \\eqb_0\n" in equiv
+    assert "  wire output 56 \\eqb_23\n" in equiv
+    assert "  connect \\eqa_0 " + points[0].a in equiv
+    assert "  connect \\eqb_23 " + points[23].b in equiv
+    assert equiv.rstrip().endswith("end")
+    assert equiv.rfind("connect \\eqb_23") < equiv.rstrip().rfind("\nend")  # inside the module
     # One wire per side that holds the output of every flip-flop of that side.
     assert wires == {"gold": "ff_gold", "gate": "ff_gate"}
     flops = ep.flip_flops(il, ep.side_by_suffix)
     assert sum(w for _, w in flops["gold"]) == 8 and sum(w for _, w in flops["gate"]) == 8
-    assert "  wire width 8 \\ff_gold\n  connect \\ff_gold { " in model
-    assert "  wire width 8 \\ff_gate\n  connect \\ff_gate { " in model
-    assert model.rfind("connect \\ff_gate") < model.rstrip().rfind("\nend")
+    assert "  wire width 8 output 57 \\ff_gold\n  connect \\ff_gold { " in equiv
+    assert "  wire width 8 output 58 \\ff_gate\n  connect \\ff_gate { " in equiv
+    assert equiv.rfind("connect \\ff_gate") < equiv.rstrip().rfind("\nend")
     assert n_gold and n_gate
+
+
+def test_the_x_run_reads_each_side_from_its_own_copy() -> None:
+    """Round 15 n40: the X run's top module takes the RTL points and RTL power-up wire from the
+    copy of `equiv` that keeps the RTL's values (`X_RTL`), the netlist's from the copy that keeps
+    the netlist's (`X_NETLIST`): a netlist gate never reads an RTL register's x there."""
+    il = log("counter_good", "equiv.il")
+    points, _, _ = ep.equiv_points(log("counter_good", "equiv.json"))
+    model, _ = ep.base_model(il, points)
+    x_top = model.split(f"module \\{ep.X_TOP}\n")[1]
+    assert model.count("\nmodule ") == 2 and x_top.endswith("end\n")  # equiv, then X_TOP
+    head, rtl, net = x_top.split("  cell ")
+    # the inputs of equiv.il, then every point wire and power-up wire as an output port
+    assert head.startswith(
+        "  wire input 1 \\clk\n  wire input 2 \\ena\n  wire input 3 \\rst_n\n"
+        "  wire width 8 input 4 \\ui_in\n  wire width 8 input 5 \\uio_in\n"
+        "  wire output 6 \\eqa_0\n"
+    )
+    assert "  wire width 8 output 30 \\ff_gold\n" in head
+    assert head.endswith("  wire output 54 \\eqb_23\n  wire width 8 output 55 \\ff_gate\n")
+    assert rtl.startswith(f"\\{ep.X_RTL} \\rtl\n    connect \\clk \\clk\n")
+    assert net.startswith(f"\\{ep.X_NETLIST} \\net\n    connect \\clk \\clk\n")
+    assert "connect \\eqa_23 \\eqa_23" in rtl and "eqb_" not in rtl and "ff_gate" not in rtl
+    assert "connect \\ff_gold \\ff_gold" in rtl
+    assert "connect \\eqb_23 \\eqb_23" in net and "eqa_" not in net and "ff_gold" not in net
+    assert "connect \\ff_gate \\ff_gate" in net
+    for name in ("\\ena", "\\rst_n", "\\ui_in", "\\uio_in"):
+        assert f"    connect {name} {name}\n" in rtl and f"    connect {name} {name}\n" in net
+
+
+@pytest.mark.parametrize(
+    ("change", "why"),
+    [
+        (("wire width 8 input 2 \\ui_in", "wire width 8 inout 2 \\ui_in"), "cannot be read"),
+        (("wire width 8 input 2 \\ui_in", "wire width 8 signed input 2 \\ui_in"), "plain"),
+        (("wire width 8 input 2 \\ui_in", "wire width 8 offset 1 input 2 \\ui_in"), "plain"),
+    ],
+)
+def test_an_input_the_x_run_cannot_copy_raises(change: tuple[str, str], why: str) -> None:
+    il = log("counter_good", "equiv.il")
+    assert change[0] in il
+    with pytest.raises(ValueError, match=why):
+        ep.base_model(il.replace(*change), [])
 
 
 def test_a_power_up_wire_never_takes_a_name_the_model_already_has() -> None:
@@ -304,8 +351,8 @@ def test_more_than_one_module_raises() -> None:
 def test_table_reads_steps_names_and_bits() -> None:
     vals = ep.table(log("counter_m0442", "base.log"))
     assert set(vals) == set(range(1, 8))  # the base case runs 7 cycles
-    assert vals[1]["eqa_16"] == "x" and vals[1]["eqa_0"] == "0"
-    assert vals[1]["eqb_0"] == "x"  # `--` columns, the bit string is `x`
+    assert vals[1]["eqa_16"] == "x"  # `--` columns, the bit string is `x`
+    assert vals[1]["eqa_0"] == "0" and vals[1]["eqb_0"] == "1"
     tab = ep.table(log("counter_m0115", "kind_x.log"))
     assert tab[1]["in_rst_n"] == "0" and tab[1]["in_ui_in"] == "00000001"
     assert tab[1]["gold_uo_out"] == "xxxxxxxx"
@@ -317,8 +364,20 @@ def test_base_case_with_a_difference_in_the_x_run() -> None:
     got = ep.parse_base(log("counter_m0442", "base.log"), points)
     assert got["status"] == "cex" and got["run"] == "X" and got["cycle"] == 1
     assert got["outputs_differ"] is True
-    assert {"signal": "uio_oe[0]", "rtl": "0", "netlist": "x"} in got["differs"]
+    assert {"signal": "uio_oe[0]", "rtl": "0", "netlist": "1"} in got["differs"]
     assert got["inputs"]["rst_n"] == "0"
+
+
+def test_the_x_run_shows_a_defined_netlist_value_at_every_point_and_cycle() -> None:
+    """Round 15 n40: the X run reads the netlist side on its own (`base_model`), with every
+    netlist flip-flop defined and every input defined, so no netlist value can be x. The old
+    model spread an RTL register's x through the netlist gates and showed `netlist x` here."""
+    x_run = log("counter_m0442", "base.log").split("BASE-DEF")[0]
+    vals = ep.table(x_run)
+    assert set(vals) == set(range(1, 8))
+    netlist = [v for row in vals.values() for k, v in row.items() if k.startswith("eqb_")]
+    assert len(netlist) == 7 * 24 and set(netlist) <= {"0", "1"}
+    assert any(v == "x" for row in vals.values() for k, v in row.items() if k.startswith("eqa_"))
 
 
 def test_base_case_that_holds() -> None:
@@ -367,6 +426,84 @@ def test_a_bounded_search_needs_its_positive_end_line() -> None:
     assert ep.reached_depth(log("counter_good", "bmc.log"), 32)
     assert not ep.reached_depth(log("counter_good", "bmc.log"), 31)
     assert not ep.reached_depth("", 32)
+
+
+# -- the one-shot search of stage 4 (es.miter_once) ----------------------------------------------
+
+WIRES = {"gold": "ff_gold", "gate": "ff_gate"}
+
+
+@pytest.mark.parametrize("scenario", ["counter_good", "seg7reg"])
+def test_a_one_shot_search_is_proved_only_with_its_whole_shape(scenario: str) -> None:
+    """seg7reg: the registered decoder whose step-by-step search stalls (its `bmc.log` was cut
+    off at 20 s after 18 cycles); the one-shot proves all 32 in about a second."""
+    text = log(scenario, "bmc_once.log")
+    assert ep.once_result(0, text, WIRES, 32) == "proved"
+    assert ep.once_result(0, text, WIRES, 31) == "unclear"  # another depth than asked for
+    assert ep.once_result(0, text, WIRES, 33) == "unclear"
+    assert ep.covered_cycles(log("seg7reg", "bmc.log")) == 18
+
+
+@pytest.mark.parametrize("code", [None, 1, 134])
+def test_a_one_shot_search_without_exit_code_0_is_never_proved(code: int | None) -> None:
+    assert ep.once_result(code, log("counter_good", "bmc_once.log"), WIRES, 32) == "unclear"
+    assert ep.once_result(code, log("counter_swap", "bmc_once.log"), WIRES, 32) == "unclear"
+
+
+def drop_lines(text: str, line: str) -> str:
+    kept = [x for x in text.splitlines() if x != line]
+    assert len(kept) < len(text.splitlines()), line
+    return "\n".join(kept) + "\n"
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "Import all_undef constraint for this timestep: \\ff_gold",  # the RTL's x power-up
+        "Import def constraint for this timestep: \\ff_gate",  # the netlist's defined power-up
+        "Import set-constraint for this timestep: \\in_rst_n = 1'0",  # reset at cycle 1
+        "Setting up time step 33:",  # the last cycle
+        "SAT proof finished - no model found: SUCCESS!",
+    ],
+)
+def test_a_one_shot_search_whose_log_misses_a_constraint_is_not_proved(missing: str) -> None:
+    text = drop_lines(log("counter_good", "bmc_once.log"), missing)
+    assert ep.once_result(0, text, WIRES, 32) == "unclear"
+
+
+def test_a_one_shot_search_needs_every_proof_step_and_no_more() -> None:
+    text = log("counter_good", "bmc_once.log")
+    assert text.count(ep.ONCE_PROOF) == 32  # time steps 2 to 33
+    one_less = text.replace(ep.ONCE_PROOF + "\n", "", 1)
+    assert ep.once_result(0, one_less, WIRES, 32) == "unclear"
+    twice = text + ep.ONCE_PROVED + "\n"
+    assert ep.once_result(0, twice, WIRES, 32) == "unclear"
+    beyond = text + "Setting up time step 34:\n"
+    assert ep.once_result(0, beyond, WIRES, 32) == "unclear"
+    assert ep.once_result(0, text[: len(text) // 2], WIRES, 32) == "unclear"  # cut off
+    assert ep.once_result(0, "", WIRES, 32) == "unclear"
+    # a wire the log does not name (another power-up wire than the one asked for)
+    assert ep.once_result(0, text, {"gold": "ff_gold_1", "gate": "ff_gate"}, 32) == "unclear"
+    # a side without flip-flops has no power-up wire: nothing to look for there
+    gate_only = drop_lines(text, "Import all_undef constraint for this timestep: \\ff_gold")
+    assert ep.once_result(0, gate_only, {"gate": "ff_gate"}, 32) == "proved"
+
+
+def test_a_one_shot_difference_is_read_like_any_counterexample() -> None:
+    """counter_swap: the counter's netlist with one cell swapped (nand3 -> nor3). The one-shot
+    model and the step-by-step search agree on the first differing cycle and bit; the one-shot
+    trace runs to the last cycle (33), with other inputs than the step-by-step one."""
+    text = log("counter_swap", "bmc_once.log")
+    assert ep.once_result(0, text, WIRES, 32) == "cex"
+    assert "SAT proof finished - model found: FAIL!" in text
+    once, step = ep.parse_cex(text), ep.parse_cex(log("counter_swap", "bmc.log"))
+    assert once["first_mismatch"] == step["first_mismatch"]
+    assert once["first_mismatch"] == {
+        "cycle": 4,
+        "differs": [{"signal": "uo_out[1]", "rtl": "1", "netlist": "0"}],
+    }
+    assert len(once["trace"]) == 33 and len(step["trace"]) == 4
+    assert once["trace"][0]["inputs"] != step["trace"][0]["inputs"]
 
 
 def test_counterexample_trace_and_first_mismatch() -> None:
