@@ -1150,3 +1150,415 @@ def test_the_first_constant_call_by_file_order_then_line() -> None:
     assert constant(READS_AT_K, std) is None  # another file's call is not judged
     with pytest.raises(et.TreeError):
         et.constant_call([], META, OURS)
+
+
+# -- a select proven inside the range is not an x source (round 16) -------------------------------
+# The shapes are those of Verilator's tree before V3Param: a typed VAR keeps its type in
+# `childDTypep` (a BASICDTYPE with a RANGE of constants, or an integer keyword with `range`), a
+# `for` loop is `i = C0` right before a LOOP of [LOOPTEST, body..., `i = i +- 1`].
+
+
+def basic(left: int | dict[str, Any] = 7, right: int = 0, **more: Any) -> dict[str, Any]:
+    """`logic [left:right]` (a constant expression as `left` too)."""
+    high = const(f"?32?sh{left:x}") if isinstance(left, int) else left
+    rng = {"type": "RANGE", "leftp": [high], "rightp": [const(f"?32?sh{right:x}")]}
+    return {"type": "BASICDTYPE", "keyword": "logic", "rangep": [rng], **more}
+
+
+INTEGER = {"type": "BASICDTYPE", "keyword": "integer", "range": "31:0", "signed": True}
+
+
+def local(addr: str, name: str, dtype: dict[str, Any], **more: Any) -> dict[str, Any]:
+    return var(addr, name, 5, isFuncLocal=True, childDTypep=[dtype], **more)
+
+
+def arg(addr: str, name: str, dtype: dict[str, Any]) -> dict[str, Any]:
+    return local(addr, name, dtype, varType="PORT", direction="INPUT")
+
+
+def rd(addr: str, name: str) -> dict[str, Any]:
+    return ref(f"({next(_N)})", addr, name, 6)
+
+
+def wr(addr: str, name: str) -> dict[str, Any]:
+    return ref(f"({next(_N)})", addr, name, 6, access="WR")
+
+
+def num(value: int, sized: str = "?32?sh") -> dict[str, Any]:
+    return const(f"{sized}{value:x}")
+
+
+def ar(kind: str, a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    return {"type": kind, "lhsp": [a], "rhsp": [b]}
+
+
+def read_bit(vector: dict[str, Any], index: dict[str, Any], kind: str = "SELBIT") -> dict[str, Any]:
+    return {"type": kind, "fromp": [vector], "bitp": [index], "loc": "e,6:5,6:8"}
+
+
+def for_loop(
+    i: str, start: dict[str, Any], test: dict[str, Any], body: list[Any], step: int = 1
+) -> list[dict[str, Any]]:
+    """`for (i = start; test; i = i +- 1) body` as Verilator links it: two statements."""
+    bump = ar("ADD" if step > 0 else "SUB", rd(i, "i"), num(1, "?32?h"))
+    stmts = [{"type": "LOOPTEST", "condp": [test]}, *body, assign(wr(i, "i"), bump)]
+    return [assign(wr(i, "i"), start), {"type": "LOOP", "stmtsp": stmts}]
+
+
+RET8 = local("(R8)", "f", basic(7), isFuncReturn=True)
+V8 = arg("(V8)", "v", basic(7))
+I32 = local("(I)", "i", INTEGER)
+
+
+def f8(*body: dict[str, Any], extra: tuple[dict[str, Any], ...] = ()) -> dict[str, Any]:
+    """`function [7:0] f(input [7:0] v, ...extra); integer i; body`."""
+    return func("(F8)", "f", 5, RET8, V8, *extra, I32, {"type": "BEGIN", "stmtsp": list(body)})
+
+
+def f8_call(*args: dict[str, Any], line: int = 9) -> dict[str, Any]:
+    return call(f"({next(_N)})", "(F8)", "f", line) | {
+        "argsp": [{"type": "ARG", "exprp": [a]} for a in (args or (num(0x81, "8'h"),))]
+    }
+
+
+def judged(fn: dict[str, Any], *more: dict[str, Any], **kw: Any) -> et.Unknown | None:
+    """`constant_call` on a module with `fn` and a constant call of it (and `more`)."""
+    args = kw.pop("args", ())
+    return et.constant_call(module(*NAMED, fn, *more, f8_call(*args)), META, OURS, **kw)
+
+
+def lt(a: dict[str, Any], b: dict[str, Any], kind: str = "LT") -> dict[str, Any]:
+    return ar(kind, a, b)
+
+
+def v_at(index: dict[str, Any]) -> dict[str, Any]:
+    """`f = {7'd0, v[index]}`: a read of v at `index`."""
+    return assign(wr("(R8)", "f"), read_bit(rd("(V8)", "v"), index))
+
+
+SEGS = var("(SG)", "SEGS", 3, varType="LPARAM", isParam=True, childDTypep=[basic(111)],
+           valuep=[num(0, "112'h")])  # fmt: skip
+D4 = arg("(D4)", "d", basic(3))
+K3 = arg("(K3)", "k", basic(2))
+S4 = arg("(S4)", "s", basic(3, signed=True))
+MEM = local("(MEM)", "mem", {"type": "UNPACKARRAYDTYPE", "childDTypep": [basic(7)],
+                              "rangep": [{"type": "RANGE", "leftp": [num(0)],
+                                          "rightp": [num(3)]}]})  # fmt: skip
+WPAR = var("(WP)", "W", 2, varType="GPARAM", isParam=True, valuep=[num(8)])
+TW = local("(TW)", "t", basic(ar("SUB", rd("(WP)", "W"), num(1))))
+KL = local("(KL)", "k", basic(2))  # a 3-bit local, not an argument
+# g(v, k) = v[k], k a 3-bit argument: proven inside g
+G = func("(G)", "g", 4, local("(RG)", "g", basic(0), isFuncReturn=True), arg("(VG)", "v", basic(7)),
+         arg("(KG)", "k", basic(2)), {"type": "BEGIN", "stmtsp": [assign(wr("(RG)", "g"), read_bit(
+             rd("(VG)", "v"), rd("(KG)", "k")))]})  # fmt: skip
+
+
+def g_of(index: dict[str, Any]) -> dict[str, Any]:
+    """`f = g(v, index)` inside f."""
+    args = [{"type": "ARG", "exprp": [e]} for e in (rd("(V8)", "v"), index)]
+    return assign(wr("(R8)", "f"), call(f"({next(_N)})", "(G)", "g", 6) | {"argsp": args})
+
+
+@pytest.mark.parametrize(
+    ("fn", "known"),
+    [
+        # s17: SEGS[d*7 +: 7], d a 4-bit argument: 0 to 105, + 6 <= 111
+        (
+            f8(assign(wr("(R8)", "f"), read_bit(rd("(SG)", "SEGS"), ar("MUL", rd("(D4)", "d"),
+             num(7)), "SELPLUS") | {"widthp": [num(7)]}), extra=(D4,)),
+            None,
+        ),
+        # s46: for (i = 0; i < 8; i = i + 1) f = f ^ v[i]
+        (f8(*for_loop("(I)", num(0), lt(rd("(I)", "i"), num(8)), [v_at(rd("(I)", "i"))])), None),
+        # e4: for (i = 7; i >= 0; i = i - 1) ... v[i], i a signed integer
+        (
+            f8(*for_loop("(I)", num(7), lt(rd("(I)", "i"), num(0), "GTE"),
+                         [v_at(rd("(I)", "i"))], step=-1)),
+            None,
+        ),
+        # frev: v[7 - i] for i = 0 to 7 (the bound on the left: 8 > i)
+        (
+            f8(*for_loop("(I)", num(0), lt(num(8), rd("(I)", "i"), "GT"),
+                         [v_at(ar("SUB", num(7), rd("(I)", "i")))])),
+            None,
+        ),
+        # i <= 7, and the read of i in the test and the step are outside the body
+        (f8(*for_loop("(I)", num(0), lt(rd("(I)", "i"), num(7), "LTE"), [v_at(rd("(I)", "i"))])),
+         None),
+        # mem[k[1:0]], an array of 4: a constant part-select of an argument as the index
+        (
+            f8(MEM, assign(wr("(R8)", "f"), read_bit(rd("(MEM)", "mem"), {
+                "type": "SELEXTRACT", "fromp": [rd("(K3)", "k")], "leftp": [num(1)],
+                "rightp": [num(0)]})), extra=(K3,)),
+            None,
+        ),
+        # mem[0][k]: one element's packed range, k 3 bits
+        (
+            f8(MEM, assign(wr("(R8)", "f"), read_bit(read_bit(rd("(MEM)", "mem"), num(0)),
+                                                       rd("(K3)", "k"))), extra=(K3,)),
+            None,
+        ),
+        # t[W - 1 - k] with `logic [W-1:0] t` and W = 8 in every instance, agreed
+        (
+            f8(TW, assign(wr("(R8)", "f"), read_bit(rd("(TW)", "t"), ar("SUB", ar(
+                "SUB", rd("(WP)", "W"), num(1)), rd("(K3)", "k")))), extra=(K3,)),
+            {("core.v", 2, "W"): 8},
+        ),
+        # a divide by k + 1, k 3 bits unsigned: 1 to 8, never 0
+        (
+            f8(assign(wr("(R8)", "f"), ar("DIV", rd("(V8)", "v"),
+                                          ar("ADD", rd("(K3)", "k"), num(1)))), extra=(K3,)),
+            None,
+        ),
+        # pick(v, k) with an 8-bit v and a 3-bit argument k
+        (f8(v_at(rd("(K3)", "k")), extra=(K3,)), None),
+        # g(v, k) inside f, g's select proven: with f's own argument k, and with a constant
+        (f8(g_of(rd("(K3)", "k")), extra=(K3,)), None),
+        (f8(g_of(num(3))), None),
+    ],
+)  # fmt: skip
+def test_a_select_or_divide_proven_in_range_lets_a_constant_call_through(
+    fn: dict[str, Any], known: dict[et.ParamKey, int] | None
+) -> None:
+    assert judged(fn, SEGS, WPAR, G, agreed=known) is None
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [
+        # pick(v, k) with k 3 bits and v 4 bits wide... here v is 8 bits and k is a signed 4 bits
+        f8(v_at(rd("(S4)", "s")), extra=(S4,)),
+        # v4[k], k 3 bits: 4 to 7 are outside [3:0]
+        f8(assign(wr("(R8)", "f"), read_bit(rd("(D4)", "d"), rd("(K3)", "k"))), extra=(D4, K3)),
+        # a loop that runs one pass too far: i <= 8 over an 8-bit vector
+        f8(*for_loop("(I)", num(0), lt(rd("(I)", "i"), num(8), "LTE"), [v_at(rd("(I)", "i"))])),
+        # v[i - 1] with i from 0
+        f8(*for_loop("(I)", num(0), lt(rd("(I)", "i"), num(8)),
+                     [v_at(ar("SUB", rd("(I)", "i"), num(1)))])),
+        # an integer index outside any loop: every integer value
+        f8(v_at(rd("(I)", "i"))),
+        # SEGS[d*7 +: 8]: the last part reaches bit 112
+        f8(assign(wr("(R8)", "f"), read_bit(rd("(SG)", "SEGS"), ar("MUL", rd("(D4)", "d"),
+           num(7)), "SELPLUS") | {"widthp": [num(8)]}), extra=(D4,)),
+        # v[d - 4'd1], d 4 bits unsigned: d = 0 wraps around to 15 (an unsigned context)
+        f8(v_at(ar("SUB", rd("(D4)", "d"), num(1, "4'h"))), extra=(D4,)),
+        # v[k + (-1)]: a negative operand in an unsigned context (k unsigned) is read as large
+        f8(v_at(ar("ADD", rd("(K3)", "k"), num(0xFFFFFFFF, "?32?sh"))), extra=(K3,)),
+        # a divide by k, which can be 0, and by k - 1 (wraps)
+        f8(assign(wr("(R8)", "f"), ar("DIV", rd("(V8)", "v"), rd("(K3)", "k"))), extra=(K3,)),
+        # t[W - 1 - k] without an agreed value of W
+        f8(TW, assign(wr("(R8)", "f"), read_bit(rd("(TW)", "t"), ar("SUB", ar(
+            "SUB", rd("(WP)", "W"), num(1)), rd("(K3)", "k")))), extra=(K3,)),
+        # v[k] with a 3-bit local k that nothing writes first (x), and with an argument k that
+        # the function writes (fail closed, even with a value in range)
+        f8(KL, v_at(rd("(KL)", "k"))),
+        f8(assign(wr("(K3)", "k"), num(1)), v_at(rd("(K3)", "k")), extra=(K3,)),
+        # g(v, k) inside f with that unwritten local k: x reaches g's proven select
+        f8(KL, g_of(rd("(KL)", "k"))),
+        # g(v, i) after a loop: i outside its loop's body has no proven range
+        f8(*for_loop("(I)", num(0), lt(rd("(I)", "i"), num(8)), [v_at(rd("(I)", "i"))]),
+           g_of(rd("(I)", "i"))),
+    ],
+)  # fmt: skip
+def test_a_select_that_can_leave_the_range_still_refuses_a_constant_call(
+    fn: dict[str, Any],
+) -> None:
+    got = judged(fn, SEGS, WPAR, G)
+    assert got is not None and got.name == "f" and got.line == 9
+
+
+# -- round 17: a constant select is an operand only of an operand, as wide as its indices -------
+
+
+def part(vector: dict[str, Any], left: int, right: int) -> dict[str, Any]:
+    """`vector[left:right]` at constant indices."""
+    return {"type": "SELEXTRACT", "fromp": [vector], "leftp": [num(left)],
+            "rightp": [num(right)], "loc": "e,6:5,6:8"}  # fmt: skip
+
+
+def to_f(value: dict[str, Any]) -> dict[str, Any]:
+    """`f = value`."""
+    return assign(wr("(R8)", "f"), value)
+
+
+W2 = arg("(W2)", "w", basic(1))  # a 2-bit argument
+T3 = local("(T3)", "t", {"type": "UNPACKARRAYDTYPE", "childDTypep": [basic(2)],
+                          "rangep": [{"type": "RANGE", "leftp": [num(0)],
+                                      "rightp": [num(3)]}]})  # fmt: skip
+LOC = local("(LC)", "loc", basic(1))  # a 2-bit local
+SEGS_AGREED = {("core.v", 3, "SEGS"): 0}
+SEGS_PART = f8(
+    to_f(
+        read_bit(
+            rd("(SG)", "SEGS"),
+            ar("ADD", ar("MUL", rd("(K3)", "k"), num(7)), part(rd("(SG)", "SEGS"), 2, 0)),
+        )
+    ),
+    extra=(K3,),
+)
+
+
+@pytest.mark.parametrize(
+    ("fn", "known"),
+    [
+        # v[i[2:0]] for i = 0 to 7: a constant select of a loop variable in the loop's body
+        pytest.param(f8(*for_loop("(I)", num(0), lt(rd("(I)", "i"), num(8)),
+                                  [v_at(part(rd("(I)", "i"), 2, 0))])), None, id="loop-part"),
+        # v[k[1:0]] and v[k[2]], k an argument the function never writes
+        pytest.param(f8(v_at(part(rd("(K3)", "k"), 1, 0)), extra=(K3,)), None, id="arg-part"),
+        pytest.param(f8(v_at(read_bit(rd("(K3)", "k"), num(2))), extra=(K3,)), None,
+                     id="arg-bit"),
+        # SEGS[k * 7 + SEGS[2:0]], SEGS a typed localparam with one agreed value: 0 to 56
+        pytest.param(SEGS_PART, SEGS_AGREED, id="param-part"),
+    ],
+)  # fmt: skip
+def test_a_constant_select_of_an_operand_is_an_operand(
+    fn: dict[str, Any], known: dict[et.ParamKey, int] | None
+) -> None:
+    assert judged(fn, SEGS, WPAR, G, agreed=known) is None
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [
+        # ua04, arrelc: d[t[2]] with `reg [2:0] t [0:3]` and t[2] = 7: an element of an array is
+        # 3 bits (0 to 7, outside the 4-bit d), not one bit per index of the array
+        pytest.param(f8(T3, assign(read_bit(wr("(T3)", "t"), num(2)), num(7, "3'h")),
+                        to_f(read_bit(rd("(D4)", "d"), read_bit(rd("(T3)", "t"), num(2)))),
+                        extra=(D4,)), id="array-element"),
+        # locsel2: v[loc[1:0]] with a local that only k == 3 sets: x for every other k
+        pytest.param(f8(LOC, if_(ar("EQ", rd("(K3)", "k"), num(3)),
+                                 [assign(wr("(LC)", "loc"), num(1, "2'h"))]),
+                        v_at(part(rd("(LC)", "loc"), 1, 0)), extra=(K3,)), id="local-part"),
+        # rb02: v[f[2:0]], the function's own result before it is written (x)
+        pytest.param(f8(v_at(part(rd("(R8)", "f"), 2, 0))), id="own-result"),
+        # SEGS[k * 7 + SEGS[2:0]] without an agreed value of SEGS
+        pytest.param(SEGS_PART, id="param-unagreed"),
+        # w[k[1:0]]: k[1:0] is 0 to 3 (two bits) and w has two bits
+        pytest.param(f8(to_f(read_bit(rd("(W2)", "w"), part(rd("(K3)", "k"), 1, 0))),
+                        extra=(W2, K3)), id="part-width"),
+        # v[k[4:3]] with a 3-bit k: a constant select outside k's range reads x
+        pytest.param(f8(v_at(part(rd("(K3)", "k"), 4, 3)), extra=(K3,)), id="part-outside"),
+        # mem[0][d]: one 8-bit element at a 4-bit index (8 to 15 outside it)
+        pytest.param(f8(MEM, to_f(read_bit(read_bit(rd("(MEM)", "mem"), num(0)),
+                                           rd("(D4)", "d"))), extra=(D4,)), id="element-index"),
+        # v / (d + 4'd1), d 4 bits: 15 + 1 is 16, which 4 bits do not hold (the divisor is taken
+        # as its own context, which can only refuse more)
+        pytest.param(f8(to_f(ar("DIV", rd("(V8)", "v"), ar("ADD", rd("(D4)", "d"),
+                                                           num(1, "4'h")))), extra=(D4,)),
+                     id="divisor-wraps"),
+        # d[k[1:0] + 3'd1 + 2'sb11]: 0 to 3 as whole numbers, but the 3-bit context is unsigned
+        # and extends 2'sb11 with zeros (3, not -1): k[1:0] + 4, outside the 4-bit d
+        pytest.param(f8(to_f(read_bit(rd("(D4)", "d"), ar("ADD", ar(
+            "ADD", part(rd("(K3)", "k"), 1, 0), num(1, "3'h")), num(3, "2'sh")))),
+            extra=(D4, K3)), id="negative-zero-extended"),
+        # SEGS[i + 4'sb1111] for i = 0 to 7: the signed constant is -1, so i = 0 reads SEGS[-1]
+        pytest.param(f8(*for_loop("(I)", num(0), lt(rd("(I)", "i"), num(8)), [to_f(read_bit(
+            rd("(SG)", "SEGS"), ar("ADD", rd("(I)", "i"), num(0xF, "4'sh"))))])),
+            id="signed-constant"),
+        # v[k + d]: 0 to 22 as whole numbers, which the 4-bit context does not hold
+        pytest.param(f8(v_at(ar("ADD", rd("(K3)", "k"), rd("(D4)", "d"))), extra=(K3, D4)),
+                     id="add-two-ranges"),
+        # v[k -: 4]: k - 3 is below bit 0 for k < 3
+        pytest.param(f8(to_f(read_bit(rd("(V8)", "v"), rd("(K3)", "k"), "SELMINUS")
+                             | {"widthp": [num(4)]}), extra=(K3,)), id="minus-part"),
+        # v / (0 - i) for i = -3 to -1: 1 to 3, but from a negative operand, which a wider
+        # unsigned context extends with zeros
+        pytest.param(f8(*for_loop("(I)", num(0xFFFFFFFD), lt(rd("(I)", "i"), num(0)), [to_f(
+            ar("DIV", rd("(V8)", "v"), ar("SUB", num(0), rd("(I)", "i"))))])),
+            id="divisor-negative-operand"),
+        # for (i = 7; i >= k; i--) v[i - 1]: a bound that is not one constant (k = 0 reads v[-1])
+        pytest.param(f8(*for_loop("(I)", num(7), lt(rd("(I)", "i"), rd("(K3)", "k"), "GTE"),
+                                  [v_at(ar("SUB", rd("(I)", "i"), num(1)))], step=-1),
+                        extra=(K3,)), id="down-loop-variable-bound"),
+        # v[k + W] without an agreed value of W
+        pytest.param(f8(v_at(ar("ADD", rd("(K3)", "k"), rd("(WP)", "W"))), extra=(K3,)),
+                     id="unagreed-parameter"),
+    ],
+)  # fmt: skip
+def test_a_select_or_divide_that_is_not_proven_refuses_a_constant_call(fn: dict[str, Any]) -> None:
+    got = judged(fn, SEGS, WPAR, G)
+    assert got is not None and got.name == "f" and got.line == 9
+
+
+def test_an_element_of_an_array_parameter_is_not_one_bit_even_with_a_known_value() -> None:
+    """d[TP[2] * k[0]] with `localparam [2:0] TP [0:3]`: the element is 3 bits (0 to 7), so the
+    index can leave the 4-bit d, whatever value the check holds for TP."""
+    tp = var("(TP)", "TP", 4, varType="LPARAM", isParam=True, childDTypep=[{
+        "type": "UNPACKARRAYDTYPE", "childDTypep": [basic(2)],
+        "rangep": [{"type": "RANGE", "leftp": [num(0)], "rightp": [num(3)]}]}])  # fmt: skip
+    index = ar("MUL", read_bit(rd("(TP)", "TP"), num(2)), read_bit(rd("(K3)", "k"), num(0)))
+    fn = f8(to_f(read_bit(rd("(D4)", "d"), index)), extra=(D4, K3))
+    got = judged(fn, tp, agreed={("core.v", 4, "TP"): 0})
+    assert got is not None and got.name == "f" and got.line == 9
+
+
+def loop_with(
+    *body: dict[str, Any], start: dict[str, Any] | None = None, step: int = 1, var_: str = "(I)"
+) -> list[dict[str, Any]]:
+    return for_loop(var_, start or num(0), lt(rd(var_, "i"), num(8)), [*body, v_at(rd(var_, "i"))],
+                    step=step)  # fmt: skip
+
+
+U4 = local("(U4)", "u", basic(3))  # an unsigned 4-bit loop variable
+
+
+@pytest.mark.parametrize(
+    "stmts",
+    [
+        # the body writes i (directly, and as an output argument of a call)
+        loop_with(assign(wr("(I)", "i"), num(9))),
+        loop_with(assign(wr("(R8)", "f"), call("(c9)", "(F8)", "f", 6) | {
+            "argsp": [{"type": "ARG", "exprp": [wr("(I)", "i")]}]})),
+        # a `break` or `continue` (Verilator's JUMPGO)
+        loop_with({"type": "JUMPGO", "blockp": "(J)"}),
+        # a step the wrong way (i < 8 counting down) and a step of 2
+        loop_with(step=-1),
+        [assign(wr("(I)", "i"), num(0)), {"type": "LOOP", "stmtsp": [
+            {"type": "LOOPTEST", "condp": [lt(rd("(I)", "i"), num(8))]}, v_at(rd("(I)", "i")),
+            assign(wr("(I)", "i"), ar("ADD", rd("(I)", "i"), num(2)))]}],
+        # a start that is not a constant
+        loop_with(start=rd("(V8)", "v")),
+        # no start right before the loop
+        [assign(wr("(I)", "i"), num(0)), assign(wr("(R8)", "f"), num(0)),
+         *loop_with()[1:]],
+        # an unsigned 4-bit u counting down while u >= 0: never stops (u wraps to 15)
+        for_loop("(U4)", num(7), lt(rd("(U4)", "u"), num(0), "GTE"),
+                 [v_at(rd("(U4)", "u"))], step=-1),
+        # a test against a bound past u's range (u < 16 never fails)
+        for_loop("(U4)", num(0), lt(rd("(U4)", "u"), num(16)), [v_at(rd("(U4)", "u"))]),
+    ],
+)  # fmt: skip
+def test_a_loop_that_is_not_simple_gives_its_variable_every_value(
+    stmts: list[dict[str, Any]],
+) -> None:
+    got = judged(f8(*stmts, extra=(U4,)), SEGS, WPAR)
+    assert got is not None and got.name == "f"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        num(0, "8'bx"),  # an x argument: the proven select reads x
+        ar("DIV", num(1), num(0)),  # 1 / 0
+        call("(c7)", "(F8)", "f", 9),  # another call: it can return x (an unset result)
+    ],
+)
+def test_a_constant_call_whose_argument_can_be_x_is_refused_when_a_select_was_proven(
+    value: dict[str, Any],
+) -> None:
+    fn = f8(*for_loop("(I)", num(0), lt(rd("(I)", "i"), num(8)), [v_at(rd("(I)", "i"))]))
+    assert judged(fn, args=(value,)) is not None
+    assert judged(fn) is None  # the same call with 8'h81
+    plain = f8(assign(wr("(R8)", "f"), rd("(V8)", "v")))  # no select: an x argument is fine
+    assert judged(plain, args=(value,)) is None
+
+
+def test_the_agreed_values_are_one_value_that_both_tools_give_in_every_instance() -> None:
+    a, b = ("core.v", 2, "W"), ("core.v", 3, "N")
+    c, d = ("core.v", 4, "M"), ("core.v", 5, "R")
+    verilator = {a: [(("t",), 8), (("u",), 8)], b: [(("t",), 1), (("u",), 2)], c: [(("t",), 3)],
+                 d: None}  # fmt: skip
+    simulator = {a: [(("t",), 8)], b: [(("t",), 1)], c: [(("t",), 4)], d: [(("t",), 1)]}
+    assert et.agreed_values(verilator, simulator) == {a: 8}
+    assert et.agreed_values(verilator, {}) == {}

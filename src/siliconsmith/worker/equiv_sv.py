@@ -1428,7 +1428,8 @@ _ADVICE = (
      "check never sees."),
     ("two-state", "Use `reg` or `logic` (reset a register with rst_n): a two-state type starts "
      "at 0 in a simulator and turns an x into 0, which the check cannot see. For a loop index, "
-     "declare it in the for header (`for (int i = 0; i < 8; i++)`) or use `integer`."),
+     "declare it in the for header with no range (`for (int i = 0; i < 8; i++)`) or use "
+     "`integer`."),
     ("enum", "Write `enum logic [1:0] {...}`: without a base type it is a two-state int."),
     ("keyword", "Use a plain `case` or `if`: synthesis assumes things a simulator does not."),
     ("delay", "Remove it: a simulator waits, synthesis ignores it."),

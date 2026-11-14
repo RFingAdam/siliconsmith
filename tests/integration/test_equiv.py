@@ -426,6 +426,23 @@ RTL_SEEDS = [
     ("rangecall", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("arrpick", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("ovfmask", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # Round 16: inline constant calls whose select is not proven inside its range (a select that
+    # proves nothing lets the call through, see s17, s46, e4, frev and fcnt below): a 3-bit index
+    # into a 4-bit argument, a loop to `i <= 8` over 8 bits, an index `i - 1` from i = 0, and a
+    # signed index
+    ("inlpick3", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("inlle8", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("inlim1", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("inlsgn", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # Round 17: an index that round 16 proved from a constant select that is not an operand: an
+    # element of a local array (`v[m[0]]`, as wide as its type, not one bit) in an `if`, in a
+    # reset value, as a case label and inside another function; and a part-select of a local
+    # that one path leaves unset (`v[loc[1:0]]`, x)
+    ("ua04", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("ua08", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("arrelc", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("arrelf", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("locsel2", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
 
 
@@ -703,6 +720,11 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # localparam, also nested: Verilator keeps the array as one instance, a simulator makes one per
 # element, and each element must be counted to compare the values). ovfmaskok (the control of
 # ovfmask: the same masks with a size, so every tool gives them the same 32-bit value).
+# Round 16: s17, s46, e4, frev and fcnt (review designs with inline constant calls of functions
+# whose every select is provably inside its range: a simple for loop over a declared width, a
+# 2-bit index into 4 elements, a parameter with one agreed value), n09 (a PWM whose search from
+# reset took 63 s step by step: the two searches now race), and aluok (the workaround form of the
+# Yosys 0.62 ALU bug in alubug: the signed compare written from the sign bits).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -724,6 +746,13 @@ EQUIVALENT = [
     "arradd",
     "arrnest",
     "ovfmaskok",
+    "s17",
+    "s46",
+    "e4",
+    "frev",
+    "fcnt",
+    "n09",
+    "aluok",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
@@ -785,9 +814,10 @@ async def test_the_one_shot_search_from_reset_proves_a_registered_table(
     server: Client, tmp_path: Path, image: str
 ) -> None:
     """seg7reg (round 14 v62): the induction proof closes, and the check from reset is decided by
-    the one-shot search (one `sat` problem of 32 cycles), so the step-by-step search, which
-    stalls on this design after about 20 cycles, never runs. The one-shot log shows the whole
-    problem: 33 time steps, the per-side power-up and reset at cycle 1."""
+    the one-shot search (one `sat` problem of 32 cycles). Both searches start at once (round 16);
+    the step-by-step search, which stalls on this design after about 20 cycles, is stopped when
+    the one-shot proof ends. The one-shot log shows the whole problem: 33 time steps, the
+    per-side power-up and reset at cycle 1."""
     async with server as client:
         project = await design_project(client, tmp_path, "seg7reg", "verilog")
         synthesized = await call(client, "synthesize", project="seg7reg")
@@ -802,7 +832,30 @@ async def test_the_one_shot_search_from_reset_proves_a_registered_table(
     assert "Setting up time step 33:" in once and "Setting up time step 34:" not in once
     assert "Import all_undef constraint for this timestep: \\ff_gold" in once
     assert "Import def constraint for this timestep: \\ff_gate" in once
-    assert not (scratch / "bmc.ys").exists()  # the step-by-step search did not run
+    assert (scratch / "bmc.ys").exists()  # the step-by-step search started too ...
+    step = scratch / "bmc.log"
+    step_log = step.read_text() if step.exists() else ""
+    assert "proved base case for 32 steps: SUCCESS" not in step_log  # ... and was stopped
+
+
+async def test_a_known_yosys_bug_in_an_alu_is_not_equivalent_and_the_workaround_is_equivalent(
+    server: Client, tmp_path: Path
+) -> None:
+    """Round 16 (review design s06): Yosys 0.62, the version LibreLane and Tiny Tapeout pin,
+    builds wrong gates for an unsigned subtract wider than its operands and a signed compare of
+    the same operands, in one case here (also in an if chain, a ?: or separate assigns; its
+    `alumacc` pass; fixed in Yosys 0.68). The RTL is right, so the check must say
+    not_equivalent and name the output; aluok, the same ALU with the compare written from the
+    sign bits, is in EQUIVALENT."""
+    async with server as client:
+        await design_project(client, tmp_path, "alubug", "verilog")
+        result = await call(client, "check_equivalence", project="alubug")
+    details = result["details"]
+    print(f"\nalubug: {details.get('verdict')} {details.get('reason')}: {details['message']}")
+    assert result["ok"] is False and details["verdict"] == "not_equivalent", details
+    assert "uo_out[" in details["message"], details["message"]
+    mismatch = details["first_mismatch"]
+    assert any(d["signal"].startswith("uo_out[") for d in mismatch["differs"]), mismatch
 
 
 async def test_a_display_mux_with_one_cell_changed_is_still_not_equivalent(

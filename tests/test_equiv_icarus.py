@@ -274,6 +274,9 @@ def test_paths_that_cannot_be_paired_pass_only_with_one_value_in_both() -> None:
     assert differ([(a, 4)], [(b, 4)]) is None
     assert differ([(a, 4), (c, 4)], [(b, 4)]) is None  # every instance has 4 in both
     assert differ([(a, 4)], [(a, 4), (a, 4)]) is None  # a path twice: not paired, one value
+    # a path twice with two values: never paired by its last value
+    assert differ([(a, 4), (a, 5)], [(a, 5)]) is not None
+    assert differ([(a, 5)], [(a, 4), (a, 5)]) is not None
     got = differ([(a, 4)], [(b, 5)])
     assert got is not None and "the value 4 in a simulator (Icarus) but 5 in Verilator" in got
     got = differ([(a, 4), (c, 5)], [(b, 4), (c, 5)])

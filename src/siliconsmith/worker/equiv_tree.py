@@ -39,11 +39,13 @@ dumps before it evaluates the parameters (`--dump-tree-json`, the `linkinc` stag
   condition and drops the condition, so the evaluated tree cannot show it.
 * Is one of the design's functions called with constant arguments outside a parameter value
   (`constant_call`)? A simulator works it out itself, and only a parameter's value is compared
-  with the simulator's (`valued_calls` names the parameters whose value holds such a call).
+  with the simulator's (`valued_calls` names the parameters whose value holds such a call). A
+  select provably inside its range and a divisor provably nonzero do not count (`_Ranges`).
 """
 
 from __future__ import annotations
 
+import itertools
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -598,17 +600,427 @@ def _is_select(kind: str) -> bool:
     return kind.startswith("SEL") or kind.endswith("SEL")
 
 
-def _constant_calls(tree: Any) -> Iterator[tuple[dict[str, Any], dict[str, Any] | None]]:
+# -- exact value ranges inside the design's functions ---------------------------------------------
+
+
+class _Val(NamedTuple):
+    """What the values of an index or divisor expression inside one of the design's functions
+    can be, exactly (`_Ranges.value`): every value lies in `[lo, hi]` for every value its
+    operands can take (an operand that is x aside, see `_Ranges`). `width` and `signed` are
+    those of the expression's context; `signed` None: not known (a parameter's value is taken
+    as a number only). `plain`: no operand has a value below 0."""
+
+    lo: int
+    hi: int
+    width: int
+    signed: bool | None
+    plain: bool
+
+
+_ARITHMETIC = frozenset({"ADD", "SUB", "MUL", "MULS"})
+_COMPARISONS = {
+    "LT": "<", "LTS": "<", "LTE": "<=", "LTES": "<=", "GT": ">", "GTS": ">", "GTE": ">=",
+    "GTES": ">=",
+}  # fmt: skip
+_MIRRORED = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}
+_RANGE_TEXT = re.compile(r"^(-?\d+):(-?\d+)$")
+_SIZED_KEYWORDS = frozenset(
+    {"logic", "reg", "bit", "integer", "int", "shortint", "longint", "byte"}
+)
+_JUMPS = frozenset({"JUMPBLOCK", "JUMPGO", "JUMPLABEL"})
+
+
+def _is_loop(node: dict[str, Any]) -> bool:
+    return node.get("type") == "LOOP"
+
+
+def _fits(lo: int, hi: int, width: int, signed: bool) -> bool:
+    """True if every value in `[lo, hi]` is held exactly by a signed or unsigned `width`-bit
+    number."""
+    if signed:
+        return -(1 << (width - 1)) <= lo and hi < 1 << (width - 1)
+    return lo >= 0 and hi < 1 << width
+
+
+class _Ranges:
+    """Exact value ranges of the index and divisor expressions inside the design's functions, on
+    Verilator's tree before V3Param (`_constant_calls` asks `in_range` and `nonzero`).
+
+    An expression's operands are constants (a number without an x or z bit), parameters and
+    localparams with their one value in every instance (`known`: the value Verilator and the
+    simulator agree on, found by the caller), input arguments that the function never writes, the
+    variable of a simple loop inside the loop's body, and bit or part selects of them at constant
+    indices inside their range (only of a plain vector or integer that is itself one of these
+    operands). An argument takes every value of its declared type (its width and sign: `logic [3:0]`
+    0 to 15, `integer` -2**31 to 2**31-1); the variable of a simple loop takes, in the loop's body,
+    the values the loop gives it (`scan`). `+`, `-` and `*` are worked out on whole numbers, then
+    checked against the expression's real width and sign (`value`). Anything else (another
+    operator, a local outside a simple loop, an argument the function writes, a variable of another
+    type, a genvar, a parameter with several values, and a select of any of these or of an array's
+    element) has no range: the select or divide stays an x source (fail closed).
+
+    Why this is sound. (1) An input argument that the function never writes holds the value the call
+    passed, cut to the argument's declared type, or x when the call passed x (which `_x_argument`
+    refuses). So its declared range bounds it. A local is not used outside a simple loop, not even
+    through a constant select (`loc[1:0]`, the function's result `f[1:0]`): one read before it is
+    written is x. A constant select of a plain vector or integer holds the selected bits, so it is 0
+    to 2**n - 1 for n selected indices; an element of an array is as wide as its own type, not one
+    bit per index, so a select of an array has no range. (2) A simple loop is, in the tree, the
+    statement `i = C0` right before a LOOP whose first statement is its test (`i < C`, `i <= C`,
+    `i > C`, `i >= C` or the same with `i` on the right, `C` a constant expression), whose last
+    statement is `i = i + 1` or `i = i - 1` (`i++`, `i--`), and whose other statements (the body)
+    neither write `i` (no VARREF of `i` that is written, which includes an output argument) nor jump
+    (a JUMPGO, JUMPBLOCK or JUMPLABEL: a `continue`, a `break`, a `disable`). Then `i` is `C0` when
+    the test first runs and changes by 1 only after the body, so each time the body runs `i` has a
+    value of the sequence C0, C0 +- 1, ... for which the test held. The sequence is exact (no
+    wrap-around) up to the first value that fails the test: `C0` lies in `i`'s declared range, and
+    that first failing value (`C`, `C + 1`, `C`, `C - 1`) must also lie in it. The test compares as
+    whole numbers when `i` and `C` are both signed, or when every value involved is 0 or more (an
+    unsigned compare reads a negative number as a large one). So the body sees `[C0, C - 1]`,
+    `[C0, C]`, `[C + 1, C0]` or `[C, C0]`. A loop of another shape (a `break`, a `continue`, an
+    increment inside a `begin`, a step other than 1) is not simple: its variable has no range there
+    (a local, or an argument it writes). (3) Verilog works `+`, `-` and `*` modulo 2**W, W the width
+    of the expression's context (the widest operand), and an index expression is its own context
+    (self-determined). With every operand held exactly (an unsigned context extends a negative
+    operand with zeros, so then every operand must be 0 or more), the result modulo 2**W equals the
+    whole-number result, and it is the same number when that lies in the context's range (`_fits`).
+    A parameter's value is used as a number of its smallest width and an unknown sign, which can
+    only make that range smaller than the real one. (4) A select at an index that is not x and lies
+    inside the declared range of the vector or array reads a defined bit there, in a simulator and
+    in Yosys; a divisor that is never 0 gives a defined quotient. So inside a function whose every
+    such select and divide is proven, x can only come from somewhere else: an argument that is x
+    (`_constant_calls` refuses a constant call whose arguments can be x, see `_x_argument`), a local
+    read before it is written, or a function that leaves its result unset (both not detected, see
+    `constant_call`; neither can reach a proven index, whose operands are constants, parameters with
+    one value, unwritten arguments, loop variables, which the loop's first statement sets, and
+    constant selects of these). A call of a function whose selects are proven, made inside another
+    function, counts as proven only when every argument has a proven range itself
+    (`_constant_calls`), so a callee's argument is never x either. By induction over the order the
+    function runs in, the first x cannot come from a proven select or divide, whose operands are
+    then all defined."""
+
+    def __init__(self, variables: dict[str, dict[str, Any]], known: dict[str, int]) -> None:
+        self.variables = variables
+        self.known = known  # addr of a parameter's VAR -> its one agreed value
+        self.loops: dict[str, tuple[int, int]] = {}  # addr of a VARREF -> its loop's range
+        self.written: set[str] = set()  # addr of every VAR a scanned function writes
+
+    # declared types ---------------------------------------------------------------------------
+
+    def _exact(self, node: dict[str, Any] | None) -> int | None:
+        """The one value of a constant expression, else None."""
+        got = self.value(node) if node is not None else None
+        return got.lo if got is not None and got.lo == got.hi else None
+
+    def _bounds(self, dtype: dict[str, Any]) -> tuple[int, int] | None:
+        """`(left, right)` of a BASICDTYPE's packed range (`[0, 0]` for one bit), else None."""
+        if dtype.get("type") != "BASICDTYPE" or dtype.get("keyword") not in _SIZED_KEYWORDS:
+            return None
+        rng = _only(dtype, "rangep")
+        if rng is not None:
+            left, right = self._exact(_only(rng, "leftp")), self._exact(_only(rng, "rightp"))
+            return None if left is None or right is None else (left, right)
+        text = _RANGE_TEXT.match(str(dtype.get("range", "0:0")))
+        return (int(text.group(1)), int(text.group(2))) if text else None
+
+    def var_type(self, var: dict[str, Any]) -> _Val | None:
+        """Every value a function's variable of a plain vector or integer type can hold."""
+        if var.get("isFuncLocal") is not True:
+            return None
+        dtype = _only(var, "childDTypep")
+        bounds = self._bounds(dtype) if dtype is not None else None
+        if dtype is None or bounds is None:
+            return None
+        width = abs(bounds[0] - bounds[1]) + 1
+        if dtype.get("signed") is True:
+            return _Val(-(1 << (width - 1)), (1 << (width - 1)) - 1, width, True, False)
+        return _Val(0, (1 << width) - 1, width, False, True)
+
+    def dims(self, vector: dict[str, Any] | None) -> tuple[int, int] | None:
+        """The lowest and highest index a select of `vector` may use: the declared range of a
+        variable, parameter or localparam (the first unpacked one of a one-dimensional array),
+        or the packed range of one element of such an array; else None."""
+        if vector is None:
+            return None
+        element = vector.get("type") == "SELBIT"
+        ref = _only(vector, "fromp") if element else vector
+        var = self.variables.get(str(ref.get("varp"))) if ref is not None else None
+        if ref is None or ref.get("type") != "VARREF" or var is None:
+            return None
+        dtype = _only(var, "childDTypep")
+        if dtype is not None and dtype.get("type") == "UNPACKARRAYDTYPE":
+            inner = _only(dtype, "childDTypep")
+            if element:
+                bounds = self._bounds(inner) if inner is not None else None
+            elif inner is not None and inner.get("type") == "BASICDTYPE":
+                rng = _only(dtype, "rangep")
+                left = self._exact(_only(rng, "leftp")) if rng is not None else None
+                right = self._exact(_only(rng, "rightp")) if rng is not None else None
+                bounds = None if left is None or right is None else (left, right)
+            else:
+                bounds = None
+        else:
+            bounds = self._bounds(dtype) if dtype is not None and not element else None
+        return None if bounds is None else (min(bounds), max(bounds))
+
+    # expressions ------------------------------------------------------------------------------
+
+    def _leaf(self, node: dict[str, Any]) -> _Val | None:
+        kind = node.get("type")
+        if kind == "CONST":
+            match = _EARLY_CONST.match(str(node.get("name", "")))
+            if match is None:
+                return None
+            width = int(match.group(1) or match.group(2))
+            number = int(match.group(5).replace("_", ""), _BASES[match.group(4)])
+            signed = bool(match.group(3))
+            if width < 1 or number >> width:
+                return None
+            if signed and number >> (width - 1):
+                number -= 1 << width
+            return _Val(number, number, width, signed, number >= 0)
+        if kind == "VARREF":
+            addr = str(node.get("varp"))
+            var = self.variables.get(addr)
+            if var is None:
+                return None
+            if var.get("varType") in _PARAMETER_VALUES:
+                held = self.known.get(addr)
+                if held is None:
+                    return None
+                if held < 0:  # only a signed parameter holds a negative value
+                    return _Val(held, held, (-held - 1).bit_length() + 1, True, False)
+                return _Val(held, held, max(held.bit_length(), 1), None, True)
+            if var.get("varType") in PARAM_TYPES:  # a genvar
+                return None
+            declared = self.var_type(var)
+            looped = self.loops.get(str(node.get("addr")))
+            if declared is not None and looped is not None:
+                return declared._replace(lo=looped[0], hi=looped[1], plain=looped[0] >= 0)
+            if var.get("direction") != "INPUT" or addr in self.written:
+                return None  # a local can be read before it is written: x, not its type
+            return declared
+        if kind in ("SELBIT", "SELEXTRACT"):  # a constant select inside the range: unsigned
+            source = _only(node, "fromp")
+            if source is None or source.get("type") != "VARREF":
+                return None  # a select of a select, of an element, of an expression
+            var = self.variables.get(str(source.get("varp")))
+            dtype = _only(var, "childDTypep") if var is not None else None
+            if dtype is None or dtype.get("type") != "BASICDTYPE" or self._leaf(source) is None:
+                return None  # an array (its element is wider than one index), or a vector
+                # that is not itself an operand: a local or the function's result (x before it
+                # is written), an argument the function writes, an unagreed parameter
+            span = self.dims(source)
+            ends = (
+                [self._exact(_only(node, "bitp"))]
+                if kind == "SELBIT"
+                else [self._exact(_only(node, "leftp")), self._exact(_only(node, "rightp"))]
+            )
+            if span is None or any(e is None or not span[0] <= e <= span[1] for e in ends):
+                return None
+            known = [e for e in ends if e is not None]
+            width = max(known) - min(known) + 1
+            return _Val(0, (1 << width) - 1, width, False, True)
+        return None
+
+    def value(self, node: dict[str, Any]) -> _Val | None:
+        """The exact range of an expression of `+`, `-`, `*` over `_leaf`s, else None."""
+        leaves: list[_Val] = []
+
+        def walk(item: dict[str, Any]) -> tuple[int, int] | None:
+            if item.get("type") in _ARITHMETIC:
+                left, right = _only(item, "lhsp"), _only(item, "rhsp")
+                a = walk(left) if left is not None else None
+                b = walk(right) if right is not None else None
+                if a is None or b is None:
+                    return None
+                if item["type"] == "ADD":
+                    return a[0] + b[0], a[1] + b[1]
+                if item["type"] == "SUB":
+                    return a[0] - b[1], a[1] - b[0]
+                corners = [x * y for x in a for y in b]
+                return min(corners), max(corners)
+            leaf = self._leaf(item)
+            if leaf is None:
+                return None
+            leaves.append(leaf)
+            return leaf.lo, leaf.hi
+
+        got = walk(node)
+        if got is None or not leaves:
+            return None
+        width = max(v.width for v in leaves)
+        signs = {v.signed for v in leaves}
+        signed = False if False in signs else (None if None in signs else True)
+        plain = all(v.plain for v in leaves)
+        if signed is not True and not plain:  # zero-extended: a negative operand changes
+            return None
+        if signed is None:  # a parameter of unknown sign: it fits either way (a signed one is
+            # at least one bit wider than its value needs)
+            wider = max(v.width + (1 if v.signed is None else 0) for v in leaves)
+            fits = _fits(*got, width, False) and _fits(*got, wider, True)
+        else:
+            fits = _fits(*got, width, signed)
+        return _Val(got[0], got[1], width, signed, plain) if fits else None
+
+    # loops ------------------------------------------------------------------------------------
+
+    def scan(self, func: dict[str, Any]) -> None:
+        """Note the variables `func` writes, and, for every read of a simple loop's variable in
+        its body, the values it takes there (see the class)."""
+        for node in _subtree(func):
+            if node.get("type") == "VARREF" and node.get("access") != "RD":
+                self.written.add(str(node.get("varp")))
+        for parent in _subtree(func):
+            for items in parent.values():
+                if not isinstance(items, list):
+                    continue
+                for before, loop in itertools.pairwise(items):
+                    if isinstance(before, dict) and isinstance(loop, dict) and _is_loop(loop):
+                        self._loop(before, loop)
+
+    def _assigned(self, stmt: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+        """`(VAR addr, value)` of `x = value` to a plain variable, else None."""
+        if stmt.get("type") != "ASSIGN":
+            return None
+        target, value = _only(stmt, "lhsp"), _only(stmt, "rhsp")
+        if target is None or value is None or target.get("type") != "VARREF":
+            return None
+        return str(target.get("varp")), value
+
+    def _step(self, stmt: dict[str, Any], addr: str) -> int | None:
+        """+1 or -1 if `stmt` is `i = i + 1` (`1 + i`) or `i = i - 1` of the variable `addr`."""
+        got = self._assigned(stmt)
+        if got is None or got[0] != addr or got[1].get("type") not in ("ADD", "SUB"):
+            return None
+        left, right = _only(got[1], "lhsp"), _only(got[1], "rhsp")
+        if left is None or right is None:
+            return None
+
+        def is_var(n: dict[str, Any]) -> bool:
+            return n.get("type") == "VARREF" and str(n.get("varp")) == addr
+
+        def one(n: dict[str, Any]) -> bool:
+            leaf = self._leaf(n) if n.get("type") == "CONST" else None
+            return leaf is not None and leaf.lo == 1
+
+        if got[1]["type"] == "SUB":
+            return -1 if is_var(left) and one(right) else None
+        return 1 if (is_var(left) and one(right)) or (one(left) and is_var(right)) else None
+
+    def _loop(self, init: dict[str, Any], loop: dict[str, Any]) -> None:
+        stmts = loop.get("stmtsp") or []
+        if len(stmts) < 2 or not all(isinstance(s, dict) for s in stmts):
+            return
+        test, body, last = stmts[0], stmts[1:-1], stmts[-1]
+        start = self._assigned(init)
+        if start is None or test.get("type") != "LOOPTEST":
+            return
+        addr = start[0]
+        var = self.variables.get(addr)
+        declared = self.var_type(var) if var is not None else None
+        step = self._step(last, addr)
+        c0 = self._exact(start[1])
+        cond = _only(test, "condp")
+        if declared is None or step is None or c0 is None or cond is None:
+            return
+        if not declared.lo <= c0 <= declared.hi:
+            return
+        op = _COMPARISONS.get(str(cond.get("type")))
+        left, right = _only(cond, "lhsp"), _only(cond, "rhsp")
+        if op is None or left is None or right is None:
+            return
+        if right.get("type") == "VARREF" and str(right.get("varp")) == addr:
+            op, left, right = _MIRRORED[op], right, left
+        if left.get("type") != "VARREF" or str(left.get("varp")) != addr:
+            return
+        bound = self.value(right)
+        if bound is None or bound.lo != bound.hi:
+            return
+        c = bound.lo
+        for node in (n for s in body for n in _subtree(s)):
+            if node.get("type") in _JUMPS:
+                return
+            mine = node.get("type") == "VARREF" and str(node.get("varp")) == addr
+            if mine and node.get("access") != "RD":
+                return
+        whole = declared.signed is True and bound.signed is True
+        if step == 1 and op in ("<", "<="):
+            stop = c if op == "<" else c + 1
+            lo, hi = c0, stop - 1
+            if stop > declared.hi or not (whole or (c0 >= 0 and bound.plain and c >= 0)):
+                return
+        elif step == -1 and op in (">", ">="):
+            stop = c if op == ">" else c - 1
+            lo, hi = stop + 1, c0
+            if stop < declared.lo or not (whole or (stop >= 0 and bound.plain)):
+                return
+        else:
+            return
+        if lo > hi:
+            return
+        for node in (n for s in body for n in _subtree(s)):
+            if node.get("type") == "VARREF" and str(node.get("varp")) == addr:
+                self.loops[str(node.get("addr"))] = (lo, hi)
+
+    # questions --------------------------------------------------------------------------------
+
+    def in_range(self, select: dict[str, Any]) -> bool:
+        """True if every index a read select can use lies inside the declared range of what it
+        selects from: a bit select, or an indexed part select (`+:`, `-:`) of a constant width."""
+        kind = select.get("type")
+        span = self.dims(_only(select, "fromp"))
+        index = _only(select, "bitp")
+        got = self.value(index) if index is not None else None
+        if span is None or got is None:
+            return False
+        if kind == "SELBIT":
+            return span[0] <= got.lo and got.hi <= span[1]
+        width = self._exact(_only(select, "widthp"))
+        if width is None or width < 1:
+            return False
+        if kind == "SELPLUS":
+            return span[0] <= got.lo and got.hi + width - 1 <= span[1]
+        if kind == "SELMINUS":
+            return span[0] <= got.lo - width + 1 and got.hi <= span[1]
+        return False
+
+    def nonzero(self, divide: dict[str, Any]) -> bool:
+        """True if the divisor of a `/` or `%` is 1 or more for every value of its operands (all
+        of them 0 or more, so that no context can change the number)."""
+        divisor = _only(divide, "rhsp")
+        got = self.value(divisor) if divisor is not None else None
+        return got is not None and got.plain and got.lo >= 1
+
+
+def _x_argument(call: dict[str, Any]) -> bool:
+    """True if an argument of a call can be x for a simulator although it reads no variable: a
+    constant with an x or z bit, or an operator that can give x (`_x_operator`: a divide, a
+    `**`, another call)."""
+    for arg in call.get("argsp") or []:
+        for node in _subtree(arg) if isinstance(arg, dict) else ():
+            if node.get("type") == "CONST" and _XZ_CONST.search(str(node.get("name", ""))):
+                return True
+            if _x_operator(node) is not None:
+                return True
+    return False
+
+
+def _constant_calls(
+    tree: Any, known: dict[str, int] | None = None
+) -> Iterator[tuple[dict[str, Any], dict[str, Any] | None]]:
     """Every call of one of the design's functions that can give a simulator an x for constant
     arguments, made with constant arguments, with the parameter VAR whose value holds it (for
     an override, the child's parameter, the PIN's `modVarp`), or None anywhere else (an
-    override whose parameter does not resolve too). See `constant_call`."""
+    override whose parameter does not resolve too). `known`: the one agreed value of a
+    parameter, by the `addr` of its VAR (`_Ranges`). See `constant_call`."""
     if not isinstance(tree, dict):
         raise TreeError("the tree is not an object")
     nodes = list(_subtree(tree))
     variables = {str(n["addr"]): n for n in nodes if n.get("type") == "VAR" and "addr" in n}
     kinds = {addr: str(n.get("varType", "")) for addr, n in variables.items()}
     functions = {str(n["addr"]): n for n in nodes if n.get("type") == "FUNC" and "addr" in n}
+    ranges = _Ranges(variables, known or {})
 
     def reads_a_variable(root: dict[str, Any]) -> bool:
         stack = [root]
@@ -631,30 +1043,49 @@ def _constant_calls(tree: Any) -> Iterator[tuple[dict[str, Any], dict[str, Any] 
             base = _only(base, "fromp")
         return base is not None and base.get("type") == "VARREF" and base.get("access") == "WR"
 
-    risky: dict[str, bool] = {}
+    # How a function can give x: SAFE never (for arguments without x), PROVEN only if an
+    # argument is x (its every computed select and divide is proven by `ranges`), RISKY else.
+    safe, proven, risky = 0, 1, 2
+    level: dict[str, int] = {}
 
-    def x_function(addr: str) -> bool:
-        if addr not in risky:
-            risky[addr] = False  # a recursive call adds nothing new
+    def x_function(addr: str) -> int:
+        if addr not in level:
+            level[addr] = safe  # a recursive call adds nothing new
             func = functions.get(addr)
-            risky[addr] = func is None or any(x_source(n) for n in _subtree(func))
-        return risky[addr]
+            if func is None:
+                level[addr] = risky
+            else:
+                ranges.scan(func)
+                level[addr] = max((x_source(n) for n in _subtree(func)), default=safe)
+        return level[addr]
 
-    def x_source(node: dict[str, Any]) -> bool:
+    def defined(call: dict[str, Any]) -> bool:
+        """True if every argument of a call inside a function has a proven range, so is never
+        x (`_Ranges.value`: built from constants, parameters with one value, unwritten input
+        arguments and loop variables)."""
+        args = [a for a in call.get("argsp") or [] if isinstance(a, dict)]
+        exprs = [_only(a, "exprp") for a in args]
+        return all(e is not None and ranges.value(e) is not None for e in exprs)
+
+    def x_source(node: dict[str, Any]) -> int:
         kind = str(node.get("type", ""))
-        if kind == "FUNCREF":
-            return x_function(str(node.get("taskp")))
+        if kind == "FUNCREF":  # PROVEN in the callee holds only for arguments that are not x
+            how = x_function(str(node.get("taskp")))
+            return risky if how == proven and not defined(node) else how
         if _x_operator(node) is not None:
-            return True
+            return proven if kind in _DIVIDES and ranges.nonzero(node) else risky
         if _is_select(kind) and not written(node):
-            return any(
+            computed = any(
                 reads_a_variable(child)
                 for key, value in node.items()
                 if key not in _SELECT_SOURCE and isinstance(value, list)
                 for child in value
                 if isinstance(child, dict)
             )
-        return False
+            if not computed:
+                return safe
+            return proven if ranges.in_range(node) else risky
+        return safe
 
     def parameter(addr: Any) -> dict[str, Any] | None:
         var = variables.get(str(addr))
@@ -666,10 +1097,10 @@ def _constant_calls(tree: Any) -> Iterator[tuple[dict[str, Any], dict[str, Any] 
         kind = node.get("type")
         if kind == "FUNCREF":
             arguments = [a for a in node.get("argsp") or [] if isinstance(a, dict)]
-            if not any(reads_a_variable(a) for a in arguments) and x_function(
-                str(node.get("taskp"))
-            ):
-                yield node, owner
+            if not any(reads_a_variable(a) for a in arguments):
+                how = x_function(str(node.get("taskp")))
+                if how == risky or (how == proven and _x_argument(node)):
+                    yield node, owner
         for key, value in node.items():
             items = value if isinstance(value, list) else [value]
             for item in (i for i in items if isinstance(i, dict)):
@@ -681,7 +1112,40 @@ def _constant_calls(tree: Any) -> Iterator[tuple[dict[str, Any], dict[str, Any] 
                 stack.append((item, under))
 
 
-def constant_call(tree: Any, meta: Any, ours: list[str]) -> Unknown | None:
+def _known(tree: Any, files: dict[str, str], agreed: dict[ParamKey, int]) -> dict[str, int]:
+    """The agreed values (`agreed`, keyed as `parameter_values` keys them) by the `addr` of each
+    parameter's VAR in `tree`."""
+    found: dict[str, int] = {}
+    for node in _subtree(tree) if isinstance(tree, dict) else ():
+        if node.get("type") != "VAR" or node.get("varType") not in _PARAMETER_VALUES:
+            continue
+        match = _LOC.match(str(node.get("loc", "")))
+        if match is None or match.group(1) not in files or "addr" not in node:
+            continue
+        key = (files[match.group(1)], int(match.group(2)), str(node.get("name", "?")))
+        if key in agreed:
+            found[str(node["addr"])] = agreed[key]
+    return found
+
+
+def agreed_values(verilator: ParamValues, simulator: ParamValues) -> dict[ParamKey, int]:
+    """The parameters that have ONE value in every instance and loop pass, the same in
+    Verilator's tree (`parameter_values`) and in the simulator's elaboration
+    (`equiv_icarus.parameter_values`), with that value."""
+    found: dict[ParamKey, int] = {}
+    for key, mine in verilator.items():
+        theirs = simulator.get(key)
+        if not mine or not theirs:
+            continue
+        values = {v for _, v in mine} | {v for _, v in theirs}
+        if len(values) == 1:
+            found[key] = values.pop()
+    return found
+
+
+def constant_call(
+    tree: Any, meta: Any, ours: list[str], agreed: dict[ParamKey, int] | None = None
+) -> Unknown | None:
     """The first call (by file order, line, column) of one of the design's functions that can
     give a simulator an x for constant arguments, made with constant arguments anywhere but in
     the value of a parameter or localparam or in a parameter override, else None. `tree` is
@@ -701,11 +1165,20 @@ def constant_call(tree: Any, meta: Any, ours: list[str]) -> Unknown | None:
     a call belongs. A function without such a select or operator (a mask, a shift, a sum:
     `low_mask(3'd5)`, `rot(8'h81, 3'd2)`) is fine anywhere.
 
+    Round 16 narrows this: a select whose index `_Ranges` proves inside the declared range for
+    every value its operands can take, and a division whose divisor it proves nonzero, are no
+    x source (`rev(8'h81)` with `for (i = 0; i < 8; i++) r[i] = v[7 - i];`, a 2-bit index into
+    4 bits). Parameters count there with the one value in `agreed` (`agreed_values`: the same
+    value in every instance in Verilator and in the simulator), never with a guess. Such a call
+    still counts when one of its arguments can itself be x (`_x_argument`: an x or z literal, an
+    operator that can give x), since the proof bounds only the defined values. The soundness
+    argument is in `_Ranges`.
+
     An unresolved name (`PARSEREF`, a `VARREF` to no `VAR`) counts as a variable: only a module
     that nothing instantiates is left unlinked (in the design Verilator stops with an error)."""
     files = _file_letters(meta)
     found: list[tuple[int, int, int, str, str]] = []
-    for node, owner in _constant_calls(tree):
+    for node, owner in _constant_calls(tree, _known(tree, files, agreed or {})):
         if owner is None:
             file, line, col = _place(node, files)
             if file in ours:
@@ -719,8 +1192,10 @@ def constant_call(tree: Any, meta: Any, ours: list[str]) -> Unknown | None:
         line,
         f"the RTL ({file}, line {line}) calls the function `{name}` with constant arguments "
         "outside the value of a parameter or localparam, and the function reads a vector at a "
-        "computed index or divides: outside the range (or by 0) that is x to a simulator, which "
-        "an `if` or `!` inside the function can turn into a 0 or 1 that Yosys does not use. The "
+        "computed index that the check cannot prove inside the declared range, or divides by a "
+        "value it cannot prove nonzero: outside the range (or by 0) that is x to a simulator, "
+        "which an `if` or `!` inside the function can turn into a 0 or 1 that Yosys does not "
+        "use. The "
         "check compares such values only for parameters, so it cannot vouch for the design. "
         f"Compute it in a localparam first (`localparam integer V = {name}(...);`, inside the "
         "generate loop for a genvar argument) and use that",

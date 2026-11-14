@@ -61,20 +61,26 @@ A register that keeps an initial value (`reg x = 0`, `initial`, Amaranth `init=`
 
 It does not catch bugs in the RTL itself, including a wrong reset in the RTL: both sides share them, so only your tests can. Reset is 1 cycle, compared from cycle 2. Gate-level simulation is still the check for reset and power-up behaviour.
 
-`not_equivalent` names the output bit and the first differing clock cycle (x means it depends on power-up). Fix and rerun.
+`not_equivalent` names the output bit and the first differing clock cycle (x means it depends on power-up). Fix and rerun (tests pass? See below).
 
 `not_proven` is never a pass. Latches, derived or falling-edge clocks, z (tri-state), flops with async set and reset are unsupported and come back not proven, as does a proof that runs out of time. Tell the user it is not checked. An `error` (a loop, an unknown cell) is no pass either.
 
-## What equivalence does not see
+## When the verdict is not your bug
 
-"Equivalent" means synthesis did not change your logic: the gates match the RTL as Yosys reads it. The check refuses the common constructs a simulator reads differently as not proven (`guard_sim_synth_differ`) and names them: macros and `ifdef`, `include`, `bit`/`int` (a `for`-header loop index is fine), `unique`/`priority`, `casex`, `===`, x or z literals, `#` delays and a `lint_off` of a race warning.
-
-It cannot see an index computed from a signal or a variable that goes outside the range (x in a simulator, which an `if` can turn into 0 or 1; some value in the gates), also in a function (a loop index passed in, an array index), a division by a signal that is 0, a function that reads its own local before writing it, an inline constant call of a function that leaves its result unset and has no computed index or division, or anything that depends on the order a simulator runs events.
-Nor does it see a constant Yosys reads differently from a simulator (`$rtoi` in a constant; a select outside the range inside a constant function): only a parameter on which the simulator and Verilator disagree is refused.
-An `initial` value on a register that reset does not set is missed when its next value in the reset cycle depends on another register's power-up value.
-Gate-level simulation (`run_tests` with `gl=true`) checks simulation behaviour: run both.
+A `not_equivalent` on a design whose RTL tests pass can be a bug in the synthesis program, not in your RTL: `run_tests` with `gl=true` runs your tests on the gates and shows the same failure there.
+A known one: Yosys 0.62 (fixed in 0.68; LibreLane 3.0.14 and Tiny Tapeout pin 0.62) builds wrong gates when a design holds an unsigned subtract wider than its operands (`a - b` into a wider result) and a signed compare of the same operands (`$signed(a) < $signed(b)`), in one `case`, an `if` chain, a `?:` or separate assigns alike.
+Amaranth (`a.as_signed() < b.as_signed()`) and MyHDL (`a.signed() < b.signed()`) designs hit it too. Write the compare from the sign bits instead: `lt = (a[3] != b[3]) ? a[3] : (a < b);` for 4-bit `a` and `b`.
 
 A state machine that synthesis re-encodes can end as not proven (`unproven_points`): a limit of the proof, not a bug in the design.
+
+## What equivalence does not see
+
+"Equivalent" means synthesis did not change your logic: the gates match the RTL as Yosys reads it. The check refuses the common constructs a simulator reads differently as not proven (`guard_sim_synth_differ`) and names them: macros and `ifdef`, `include`, `bit`/`int` (a `for (int i = 0; ...)` index is fine), `unique`/`priority`, `casex`, `===`, x or z literals, `#` delays and a `lint_off` of a race warning.
+
+It cannot see an index computed from a signal or a variable that goes outside the range (x in a simulator, which an `if` can turn into 0 or 1; some value in the gates), also in a function (a loop index passed in, an array index), a division by a signal that is 0, a function that reads its own local before writing it, an inline call of a function that leaves its result unset for some constant arguments, or anything that depends on the order a simulator runs events.
+Nor does it see a constant Yosys reads differently from a simulator (`$rtoi` in a constant). Yosys 0.62 evaluates a select outside the range inside a constant function (also in a parameter's value) to an undefined value, so gates can differ even where Icarus and Verilator agree, and the verdict can change with unrelated edits; only a parameter they disagree on is refused.
+An `initial` value on a register that reset does not set is missed when its next value in the reset cycle depends on another register's power-up value.
+Gate-level simulation (`run_tests` with `gl=true`) checks simulation behaviour: run both.
 
 ## Writing RTL the equivalence check accepts
 
@@ -91,11 +97,19 @@ A parameter that the simulator (Icarus) and Verilator work out to different valu
 In a generate `if`, `case` or `for` condition, a `/` or `%` by anything but a plain nonzero number (a localparam is not one: `W / B` is refused), a `**` unless its base is a plain nonzero number or its exponent a plain number of 0 or more, and a call of your own function are refused: compute the value in a localparam first (`localparam AW = clog2(DEPTH);`, then `if (AW == 4)`).
 Give a number of 2**31 or more a size (`32'd3000000000`). Choose with a generate `if`, not with a constant inside an expression that holds a call (`EN ? f(a) : a`, `EN && f(a)`, `f(a) & {8{EN}}`): Verilator folds that call away, and outside an always block the check refuses it.
 
-## Constant calls and simulator limits
+## Constant calls
 
-A call of your function with constant arguments (numbers, parameters, genvars) anywhere but in the value of a parameter or localparam (its range or type is not its value) is refused when the function reads a vector at a computed index or divides, even when every index stays in range (a bit-reverse or popcount helper such as `rev(8'h81)`): a simulator works the call out itself, and an `if (!v[k])` in the function turns the x of a bit outside the range into 0 or 1 that the gates need not give.
-Instead, compute it in an integer localparam first (`localparam integer V = pick(4'b1010, 6);`, inside the generate loop for a genvar argument) and use `V`; only such a value is compared with the simulator's, so the same call in a `real` or string parameter is refused too.
-A select outside the range that Yosys finds once it inlines a function or unrolls a loop (`pick(ui_in[3:0], 6)` reading bit 6 of a 4-bit argument) is refused as well, also in an arm of `?:` that a constant condition never selects (`(i == 7) ? 1'b0 : getbit(v, i + 1)` in a loop): choose with an `if` there instead.
+A call of your function with constant arguments (numbers, parameters, genvars) anywhere but in the value of a parameter or localparam (its range or type is not its value) is refused when the function reads a vector at a computed index that the check cannot prove inside the declared range, or divides by something it cannot prove nonzero: a simulator works the call out itself, and an `if (!v[k])` in the function turns the x of a bit outside the range into 0 or 1 that the gates need not give.
+Instead, compute such a call in an integer localparam first (`localparam integer V = pick(4'b1010, 6);`, inside the generate loop for a genvar argument) and use `V`; only such a value is compared with the simulator's, so the same call in a `real` or string parameter is refused too.
+A select outside the range that Yosys finds once it inlines a function or unrolls a loop (`pick(ui_in[3:0], 6)` reading bit 6 of a 4-bit argument) is refused as well. So is one in an arm of `?:` that a constant condition never selects (`(i == 7) ? 1'b0 : getbit(v, i + 1)` in a loop): guard it with an `if (i < 7)` instead.
+
+## Indices a constant call may use
+
+Proven: an index from a simple `for` loop inside the range (`for (i = 0; i < 8; i++)` on 8 bits), one whose declared width fits (a 2-bit index into 4 bits) and constants or parameters with one value, also through `+ - *`, so a bit-reverse helper `rev(8'h81)` is fine. A constant select of one of these (`k[1:0]`) counts too.
+Not proven: a 3-bit index into 4 bits, a loop to `i <= 8` over 8 bits, `v[i - 1]` from `i = 0`, a `signed` argument as index, a loop step other than 1, a `$bits` bound, a shift (`v[i << 1]`), a call as an argument (`f(g(8'd1))`), another local or an element of an array as index, even through a select (`v[m[0]]`, `v[loc[1:0]]`).
+
+## Simulator limits
+
 Icarus 12 stops with an internal error on a parameter whose type is a typedef with two packed dimensions (`typedef logic [1:0][3:0] pair_t;` then `localparam pair_t P`; Yosys already rejects `localparam [1:0][3:0] P`); that is refused with the line quoted: declare it as a plain vector (`localparam [7:0] P`) and take the pieces with part-selects (`P[4*i +: 4]`).
 
 ## Too big for the tile

@@ -25,16 +25,21 @@ constructs that a simulator and Yosys read differently, and `_tree_checks` what 
 Verilator's syntax tree (an impure function, a combinational block that can read a signal before
 it writes it on some path, a parameter with an x or z bit, a parameter value that the simulator
 Icarus works out differently, a different elaboration, a call with constant arguments of a
-function that selects at a computed index or divides, a select outside the range that Yosys
-finds, RTL that Icarus cannot compile or stops on). NOT detected: an index computed from a
-signal or a variable (a loop index passed into a function too) that goes outside the range or a
-division by a signal that is 0, a constant that is x to
-a simulator steering a case inside a block, the values inside a generate loop or module copy, a
-constant expression that Yosys evaluates differently from a simulator (a size cast or an unbased
-`'1` inside a localparam, `$rtoi` in any constant expression: a localparam or a generate
-condition; only a parameter value on which the simulator and Verilator disagree is refused, as an
-untyped localparam that overflows is, which Icarus makes wider), and anything else that depends
-on simulation event order;
+function that selects at a computed index not proven inside the range or divides by a value not
+proven nonzero (`equiv_tree.constant_call`), a select outside the range that Yosys finds, also
+in an arm of `?:` that a constant condition never selects, RTL that Icarus cannot compile or
+stops on). NOT detected: an index computed from a signal or a variable (a loop index passed
+into a function too) that goes outside the range or a division by a signal that is 0, a
+constant that is x to a simulator steering a case inside a block, the values inside a generate
+loop or module copy, an inline call of a function that leaves its result unset for some
+constant arguments, a constant expression that Yosys evaluates differently from a simulator (a
+size cast or an unbased `'1` inside a localparam, `$rtoi` in any constant expression: a
+localparam or a generate condition; a select outside the range inside a constant function, also
+in a parameter's value, which Yosys 0.62 evaluates to an undefined value, so the gates can
+differ even where Icarus and Verilator agree and the verdict can change with unrelated edits;
+only a parameter value on which the simulator and Verilator disagree is refused, as an untyped
+localparam that overflows is, which Icarus makes wider), and anything else that depends on
+simulation event order;
 gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour.
 
 ## Verdict
@@ -73,24 +78,26 @@ gate-level simulation (`run_tests` with `gl=true`) is the check against simulati
     netlist_sha256  sha256 of the netlist bytes that were checked (the private copy)
 
 Time: every Yosys call is a subprocess with its own limit (`budget_s`, 120 s; Yosys's own
-`sat -timeout` is ignored), and the whole check has a deadline (`deadline_s`, 300 s). The one
-exception is the one-shot search from reset (stage 4, tried before the step-by-step search): it
-may take `ONCE_S` seconds (8 s), and only out of the deadline beyond one full budget
-(`Clock.first_try`), so the step-by-step search after it gets the time it would have had
-without it. Each call runs in the private `scratch` folder, which holds copies of the inputs, so
-parallel checks never share files.
+`sat -timeout` is ignored), and the whole check has a deadline (`deadline_s`, 300 s). The two
+searches from reset of stage 4 (the one-shot and the step-by-step search) run AT ONCE, as a race
+(`race_yosys`, `_per_side`), each with the time one call may take; the first answer that decides
+stops the other. Each call runs in the private `scratch` folder, which holds copies of the
+inputs, so parallel checks never share files.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
+import signal
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -122,15 +129,9 @@ SEQ = 5  # induction length of equiv_simple / equiv_induct (and the base case: S
 DEPTH = 32  # cycles of the referee from reset
 BUDGET_S = 120.0  # per Yosys call
 DEADLINE_S = 300.0  # the whole check
-# The one-shot search from reset (stage 4) may take this many seconds, out of the deadline beyond
-# one full budget (`Clock.first_try`): the step-by-step search after it keeps its time. A design
-# the one-shot does not prove in time pays this much, with the same verdict. Measured paired
-# (rounds 14 and 15): where the one-shot proved what the step-by-step search could not reach in
-# 150 s (registered tables such as a seven-segment decoder) it took 0.5-3.7 s at a load of 6 and
-# at most 4.8 s at a load of 50 on 16 cores (a MyHDL `for` loop needed 47-80 s: over any small
-# cap; its step-by-step search finishes); where it was the slower search it can take minutes.
-# Between the two (one review design: 16-18 s one-shot, 63 s step by step) the cap loses time.
-ONCE_S = 8.0
+# How often the race of the two searches from reset (stage 4, `race_yosys`) looks whether one
+# has ended.
+POLL_S = 0.05
 NETLIST_MAX_BYTES = 16 * 1024 * 1024
 NOT_A_PASS = "This is NOT a pass."
 EQUIV_DIR = "equiv"
@@ -138,6 +139,17 @@ EQUIV_DIR = "equiv"
 # A Yosys runner: (folder, script text, tag, time limit in seconds) -> (exit code, log text).
 # Exit code None means the call was stopped at the limit.
 YosysRunner = Callable[[Path, str, str, float], tuple[int | None, str]]
+# A Yosys race: (folder, [(script text, tag)], time limit in seconds for each) -> a generator of
+# (tag, exit code, log text), one per script as it ends (exit code None: stopped at the limit).
+# Closing the generator stops the scripts that still run.
+YosysRace = Callable[
+    [Path, list[tuple[str, str]], float], Generator[tuple[str, int | None, str], None, None]
+]
+
+
+def _yosys_argv(tag: str) -> list[str]:
+    """The command that runs the script `<tag>.ys` with its log in `<tag>.log`."""
+    return ["yosys", "-q", "-l", f"{tag}.log", "-s", f"{tag}.ys"]
 
 
 def run_yosys(cwd: Path, script: str, tag: str, timeout: float) -> tuple[int | None, str]:
@@ -149,7 +161,7 @@ def run_yosys(cwd: Path, script: str, tag: str, timeout: float) -> tuple[int | N
         return None, ""
     try:
         proc = subprocess.run(
-            ["yosys", "-q", "-l", log.name, "-s", f"{tag}.ys"],
+            _yosys_argv(tag),
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -166,6 +178,82 @@ def run_yosys(cwd: Path, script: str, tag: str, timeout: float) -> tuple[int | N
     return code, text + err
 
 
+def _stop(proc: subprocess.Popen[bytes]) -> None:
+    """Kill a script's whole process group (it was started in a session of its own) and reap
+    it: nothing it started keeps running."""
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    proc.wait()
+
+
+def race_yosys(
+    cwd: Path, jobs: list[tuple[str, str]], timeout: float
+) -> Generator[tuple[str, int | None, str], None, None]:
+    """Run several Yosys scripts AT ONCE in `cwd` (`jobs`: (script text, tag); the log of each
+    is `<tag>.log`, as in `run_yosys`), each with the time limit `timeout`, and yield
+    `(tag, exit code, log text)` for each as it ends; a script still running at the limit is
+    killed and yields exit code None. Each script runs in a session and process group of its
+    own; when the caller closes the generator (it has its answer) every script still running is
+    killed with its whole group and reaped, so no solver keeps running. Only Yosys runs here
+    (design code was reaped after elaboration), so nothing else in the container is touched."""
+    running: dict[str, tuple[subprocess.Popen[bytes], Any]] = {}
+    try:
+        for script, tag in jobs:
+            (cwd / f"{tag}.ys").write_text(script, encoding="utf-8")
+            (cwd / f"{tag}.log").unlink(missing_ok=True)
+        if timeout <= 0:
+            for _, tag in jobs:
+                yield tag, None, ""
+            return
+        end = time.monotonic() + timeout
+        for _, tag in jobs:
+            err = (cwd / f"{tag}.err").open("w+b")
+            proc = subprocess.Popen(
+                _yosys_argv(tag),
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=err,
+                start_new_session=True,
+            )
+            running[tag] = (proc, err)
+        while running:
+            for tag, (proc, err) in list(running.items()):
+                code = proc.poll()
+                if code is None and time.monotonic() < end:
+                    continue
+                if code is None:  # at the limit
+                    _stop(proc)
+                del running[tag]
+                err.seek(0)
+                said = err.read().decode(errors="replace")
+                err.close()
+                log = cwd / f"{tag}.log"
+                text = log.read_text(errors="replace") if log.exists() else ""
+                yield tag, code, text + ("" if code is None else said)
+            if running:
+                time.sleep(POLL_S)
+    finally:
+        for proc, err in running.values():  # the caller has its answer: stop the rest
+            _stop(proc)
+            err.close()
+
+
+def in_turn(run: YosysRunner) -> YosysRace:
+    """A race for a runner that runs one script at a time (a test's fake Yosys): the scripts
+    one after the other in the order given, each with the whole time limit; once the caller
+    closes the generator, the rest do not run."""
+
+    def race(
+        cwd: Path, jobs: list[tuple[str, str]], timeout: float
+    ) -> Generator[tuple[str, int | None, str], None, None]:
+        for script, tag in jobs:
+            code, log = run(cwd, script, tag, timeout)
+            yield tag, code, log
+
+    return race
+
+
 class Clock:
     """A limit per Yosys call (`budget`) inside a limit for the whole check (`deadline`)."""
 
@@ -176,13 +264,6 @@ class Clock:
     def left(self) -> float:
         """Seconds the next Yosys call may take; 0 once the deadline has passed."""
         return max(0.0, min(self.budget, self.end - time.monotonic()))
-
-    def first_try(self, cap: float) -> float:
-        """Seconds for a first try that another call backs up: at most `cap` (and the budget),
-        and only out of the deadline beyond one full budget, so the call after it still gets
-        what `left` would have given it without the first try (0: no time for one)."""
-        spare = self.end - time.monotonic() - self.budget
-        return max(0.0, min(cap, self.budget, spare))
 
 
 def _when(cycle: object) -> str:
@@ -204,8 +285,17 @@ def _points(diffs: list[dict[str, Any]]) -> str:
 class _Run:
     """What one check collects on the way; `verdict` turns it into the result dict."""
 
-    def __init__(self, scratch: Path, run: YosysRunner, clock: Clock, t0: float) -> None:
+    def __init__(
+        self,
+        scratch: Path,
+        run: YosysRunner,
+        clock: Clock,
+        t0: float,
+        race: YosysRace | None = None,
+    ) -> None:
         self.scratch, self.yosys, self.clock, self.t0 = scratch, run, clock, t0
+        # the real runner races the real way; any other (a test's fake) runs its scripts in turn
+        self.race: YosysRace = race or (race_yosys if run is run_yosys else in_turn(run))
         self.out: dict[str, Any] = {
             "seconds": {},
             "stage1": None,
@@ -432,6 +522,12 @@ def _miter(
 def _sat(r: _Run, tag: str, script: str, induct: str, depth: int) -> dict[str, Any]:
     """Run one `sat -tempinduct` script (`induct`: a key of `equiv_script.SAT_MODE`) and read it."""
     code, log = r.yosys(r.scratch, script, tag, r.clock.left())
+    return _read_sat(code, log, induct, depth)
+
+
+def _read_sat(code: int | None, log: str, induct: str, depth: int) -> dict[str, Any]:
+    """What a `sat -tempinduct` run says, as `_miter` returns it (exit code None: stopped at
+    its time limit)."""
     if "model found for base case: FAIL" in log:
         return {"status": "cex", **equiv_parse.parse_cex(log)}
     covered = equiv_parse.covered_cycles(log)
@@ -470,14 +566,15 @@ def _per_side(r: _Run, tag: str, golds: str, gates: str, depth: int) -> dict[str
     """The bounded search from reset with the per-side power-up, as `_miter` returns it.
 
     Write the miter (`miter.il`) and add the power-up wires of each side (`miter_ff.il`). Then
-    the one-shot search (`equiv_script.miter_once`, tag `<tag>_once`): when it proves every
-    cycle, that is the answer (`covered` = `depth`). Otherwise (a difference, a time-out, an
-    error, a log that does not show the problem asked for) the step-by-step search
-    (`equiv_script.miter_bmc`) runs as before, with the time the one-shot did not take from it
-    (`Clock.first_try`), and reports the first cycle that differs. A difference only the
-    one-shot found (the step-by-step search ran out of time, or contradicts it) is reported
-    from the one-shot's model, read like any other counterexample (one whose differing bits
-    cannot be read is `unreadable_counterexample`): never a pass."""
+    two searches of the same problem run AT ONCE (`race_yosys`), each with the whole time one
+    call may take, and with its own log and waveform file: the one-shot search
+    (`equiv_script.miter_once`, tag `<tag>_once`), one `sat` problem of all `depth` cycles, and
+    the step-by-step search (`equiv_script.miter_bmc`, tag `<tag>`), one more cycle per solver
+    call, which finds a difference at its first cycle. Neither is always the faster one: a
+    registered table takes the one-shot seconds and the step-by-step search minutes, a design
+    with arithmetic the other way round. Each log is read as it ends (`equiv_parse.once_result`,
+    `_read_sat`), and `_race_decision` says when the race is decided; the search still running
+    then is killed."""
     for stale in ("miter.il", "miter_ff.il"):  # a file left by an earlier run is never read
         (r.scratch / stale).unlink(missing_ok=True)
     code, log = r.yosys(
@@ -500,21 +597,68 @@ def _per_side(r: _Run, tag: str, golds: str, gates: str, depth: int) -> dict[str
         return _no_model("the check from reset", exc)
     (r.scratch / "miter_ff.il").write_text(model, encoding="utf-8")
     once_tag = f"{tag}_once"
-    code, once_log = r.yosys(
-        r.scratch,
-        equiv_script.miter_once(once_tag, wires, depth),
-        once_tag,
-        r.clock.first_try(ONCE_S),
-    )
-    once = equiv_parse.once_result(code, once_log, wires, depth)
+    jobs = [
+        (equiv_script.miter_once(once_tag, wires, depth), once_tag),
+        (equiv_script.miter_bmc(tag, wires, depth), tag),
+    ]
+    once: str | None = None
+    once_log = ""
+    step: dict[str, Any] | None = None
+    with contextlib.closing(r.race(r.scratch, jobs, r.clock.left())) as runs:
+        for ended, code, log in runs:
+            if ended == once_tag:
+                once, once_log = equiv_parse.once_result(code, log, wires, depth), log
+            else:
+                step = _read_sat(code, log, "base", depth)
+            got = _race_decision(once, once_log, step, depth)
+            if got is not None:
+                return got  # closing the race kills the search that still runs
+    # unreachable with a race that reports every script; never a pass if it does not
+    return {
+        "status": "fail",
+        "failure": {
+            "verdict": "error",
+            "reason": "yosys_failed",
+            "message": "the check from reset printed no result",
+            "detail": [],
+        },
+    }
+
+
+def _race_decision(
+    once: str | None, once_log: str, step: dict[str, Any] | None, depth: int
+) -> dict[str, Any] | None:
+    """The answer of the race in `_per_side` so far, as `_miter` returns it, or None to wait for
+    the search that still runs. `once`: what the one-shot search says
+    (`equiv_parse.once_result`: proved, cex or unclear; None while it runs) with its log
+    `once_log`; `step`: what the step-by-step search says (`_read_sat`; None while it runs).
+
+    * The one-shot proved every cycle: proved (`covered` = `depth`).
+    * The step-by-step search found a difference: that one, at its first cycle.
+    * The one-shot found a difference: the step-by-step search runs on for the first differing
+      cycle until it ends or reaches its limit; if it ends without a difference (it ran out of
+      time, failed, or contradicts the one-shot) the one-shot's model is reported, read like
+      any other counterexample (one whose differing bits cannot be read is
+      `unreadable_counterexample`): never a pass.
+    * The step-by-step search reached `depth` cycles without a difference: proved.
+    * It stopped at its limit or failed: wait for the one-shot, which may still prove every
+      cycle or find a difference; if it is unclear, the step-by-step result stands (a time
+      limit, an error).
+    * The one-shot is unclear (a time-out, an error, a process that died, a log that does not
+      show the problem asked for): the step-by-step search decides."""
     if once == "proved":
         return {"status": "no_cex", "covered": depth}
-    got = _sat(r, tag, equiv_script.miter_bmc(tag, wires, depth), "base", depth)
-    if got["status"] == "no_cex" and once == "cex":
-        # the step-by-step search did not find the one-shot's difference (it ran out of time,
-        # or it contradicts it): the one-shot's model is reported (unreadable: not proven)
+    if step is None:
+        return None
+    if step["status"] == "cex":
+        return step
+    if once == "cex":
         return {"status": "cex", **equiv_parse.parse_cex(once_log)}
-    return got
+    if step["status"] == "no_cex" and not step.get("stopped"):
+        return step
+    if once is None:
+        return None
+    return step
 
 
 def _mismatch(got: dict[str, Any]) -> dict[str, Any] | None:
@@ -692,10 +836,15 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        that can give x for constant arguments (a select at a computed index, a division) with
        constant arguments outside a parameter value (a simulator works it out itself, and an
        `if` in the function can turn an x into another value than Yosys uses; only parameter
-       values are compared with the simulator's: compute it in a localparam first). Then
-       `_yosys_outside`: no select outside the range in Yosys's elaboration (its warning; Yosys
-       sees one inside a function it inlines). Last, so that a more specific finding about the
-       same code is named first.
+       values are compared with the simulator's: compute it in a localparam first). A select
+       whose index is provably inside its range for every value of the operands, and a divisor
+       provably nonzero, are no x source (round 16, `equiv_tree._Ranges`); a parameter counts
+       there with the one value that both tools give it in every instance
+       (`equiv_tree.agreed_values` of Verilator's and Icarus's values), so this runs after
+       `_icarus_checks`. Then `_yosys_outside`: no select outside the range in Yosys's
+       elaboration (its warning; Yosys sees one inside a function it inlines, also in an arm of
+       `?:` that a constant condition never selects). Last, so that a more specific finding
+       about the same code is named first.
     """
     cleaned = {fname: equiv_sv.clean(text) for fname, text in sources}
     folder = r.scratch / "func_tree"
@@ -749,7 +898,6 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         before = json.loads(stages[0].read_text("latin-1"))
         unknown = equiv_tree.xz_parameter(tree, meta, list(cleaned))
         condition = equiv_tree.x_condition(before, meta, list(cleaned))
-        constant = equiv_tree.constant_call(before, meta, list(cleaned))  # judged last
         valued = equiv_tree.valued_calls(before, meta, list(cleaned))  # judged with Icarus's
         values = equiv_tree.parameter_values(tree, meta, list(cleaned))  # judged with Icarus's
         found = equiv_tree.impure_function(tree, meta, list(cleaned))  # judged after Yosys
@@ -760,10 +908,15 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     for root in (unknown, condition):
         if root is not None:
             return refuse("guard_sim_synth_differ", f"{root.sentence}.")
-    simulator = _icarus_checks(r, cleaned, name, values, valued)
+    simulator, simulated = _icarus_checks(r, cleaned, name, values, valued)
     r.timed("tree", t0)  # the Verilator and the Icarus run
     if simulator is not None:
         return simulator
+    try:  # judged last; a parameter counts with the one value both tools give it
+        agreed = equiv_tree.agreed_values(values, simulated)
+        constant = equiv_tree.constant_call(before, meta, list(cleaned), agreed)
+    except (ValueError, equiv_tree.TreeError, RecursionError) as exc:
+        return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
 
     # Yosys's elaboration of the same text, to see which blocks it keeps
     elab = r.scratch / "elab"
@@ -820,8 +973,9 @@ def _yosys_outside(log_text: str) -> str | None:
         f'(in a function it inlines or a loop it unrolls: "{clip(said, 160)}"). That bit is x '
         "to a simulator, and an `if` or `!` can turn it into a 0 or 1 that the gates need not "
         "give, so the check cannot vouch for the design. Keep every select inside the declared "
-        "range (Yosys also sees one in an arm of `?:` that a constant condition never selects: "
-        "choose with an `if` there instead)."
+        "range. A select in an arm of `?:` that a constant condition never selects is refused "
+        "too, since Yosys still works its index out (`(i == 7) ? 1'b0 : v[i + 1]` in a loop): "
+        "guard it with an `if` instead (`if (i < 7)`), and Yosys drops it."
     )
 
 
@@ -867,7 +1021,7 @@ def _icarus_checks(
     name: str,
     values: equiv_tree.ParamValues,
     valued: frozenset[equiv_tree.ParamKey],
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, equiv_tree.ParamValues]:
     """A `not_proven` verdict if the simulator (Icarus) elaborates a constant of the RTL to a
     value with an x or z bit, or a parameter to other values than Verilator did (`values`, from
     its tree, instance by instance), or if a parameter whose value holds a call that can give x
@@ -888,7 +1042,10 @@ def _icarus_checks(
       string, a parameter only one tool lists: `equiv_icarus.uncompared`):
       `guard_sim_synth_differ`;
     * Icarus cannot be started at all: inconclusive, logged, nothing is refused (it cannot happen
-      in practice: the worker runs inside the toolchain image, which holds Icarus)."""
+      in practice: the worker runs inside the toolchain image, which holds Icarus).
+
+    Also returns the simulator's parameter values (`equiv_icarus.parameter_values`; empty when
+    it gave none), for `equiv_tree.agreed_values`."""
     folder = r.scratch / "sim_elab"
     folder.mkdir(parents=True, exist_ok=True)
     for fname, text in cleaned.items():
@@ -901,10 +1058,10 @@ def _icarus_checks(
     run = _run_icarus(command, folder)
     if run is None:
         log.warning("iverilog could not be started: the simulator's constants were not checked")
-        return None
+        return None, {}
 
-    def refuse(reason: str, sentence: str) -> dict[str, Any]:
-        return r.verdict("not_proven", reason, f"Could not prove equivalence: {sentence}")
+    def refuse(reason: str, sentence: str) -> tuple[dict[str, Any], equiv_tree.ParamValues]:
+        return r.verdict("not_proven", reason, f"Could not prove equivalence: {sentence}"), {}
 
     if run.timed_out:
         return refuse(
@@ -946,7 +1103,7 @@ def _icarus_checks(
         )
     if found is not None:
         return refuse("guard_sim_synth_differ", f"{found.sentence}.")
-    return None
+    return None, simulated
 
 
 def check(
@@ -961,8 +1118,12 @@ def check(
     deadline_s: float = DEADLINE_S,
     yosys: YosysRunner = run_yosys,
     strict_core: bool = True,
+    race: YosysRace | None = None,
 ) -> dict[str, Any]:
     """Check the RTL in `rtl_dir` (`project.v`, `<name>.v`) against the netlist FILE `netlist`.
+
+    `yosys` runs one Yosys script, `race` several at once (stage 4); by default `race_yosys`
+    for the real runner, and the scripts in turn through `yosys` for any other (`in_turn`).
 
     `strict_core`: judge `<name>.v` by the two rules that only make sense for a core that does not
     list level signals itself (every level-sensitive `always @(a or b)` and every function or
@@ -989,9 +1150,10 @@ def check(
             yosys,
             t0,
             strict_core,
+            race,
         )
     except Exception as exc:
-        failed = _Run(scratch, yosys, Clock(budget_s, deadline_s), t0)
+        failed = _Run(scratch, yosys, Clock(budget_s, deadline_s), t0, race)
         return failed.verdict(
             "error",
             "internal_error",
@@ -1011,9 +1173,10 @@ def _check(
     yosys: YosysRunner,
     t0: float,
     strict_core: bool,
+    race: YosysRace | None,
 ) -> dict[str, Any]:
     scratch.mkdir(parents=True, exist_ok=True)
-    r = _Run(scratch, yosys, Clock(budget_s, deadline_s), t0)
+    r = _Run(scratch, yosys, Clock(budget_s, deadline_s), t0, race)
     try:
         for fname in ("project.v", f"{name}.v"):
             shutil.copyfile(rtl_dir / fname, scratch / fname)

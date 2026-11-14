@@ -371,10 +371,11 @@ def miter_model(golds: str, gates: str) -> str:
 
 
 def miter_once(tag: str, wires: Mapping[str, str], depth: int) -> str:
-    """The referee of stage 4, step 2, first try: the bounded search of `miter_bmc` as ONE `sat`
-    problem. The same constraints (per-side `power_up`, defined inputs, `rst_n` low at cycle 1)
-    and the same cycles: time steps 1 (power-up) to `depth + 1`, the outputs compared at steps
-    2 to `depth + 1` (`-prove-skip 1`), which are the `depth` base cases of `miter_bmc`. A
+    """The referee of stage 4, step 2, run at the same time as `miter_bmc` (`equiv._per_side`):
+    the bounded search of `miter_bmc` as ONE `sat` problem. The same constraints (per-side
+    `power_up`, defined inputs, `rst_n` low at cycle 1) and the same cycles: time steps 1
+    (power-up) to `depth + 1`, the outputs compared at steps 2 to `depth + 1`
+    (`-prove-skip 1`), which are the `depth` base cases of `miter_bmc`. A
     single solver call finds a proof that the step-by-step search, which solves one more cycle
     per call, can take far longer to reach (a registered table: steps 1-19 in under a second,
     step 23 not done after minutes). `equiv_parse.once_result` reads the log."""

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -210,6 +211,9 @@ def test_every_call_runs_in_the_private_scratch_folder_with_its_own_time_limit(
     assert "read_rtlil miter_ff.il" in once and "-set-init" not in once
     assert "-set-all-undef-at 1 ff_gold -set-def-at 1 ff_gate" in once
     assert "-seq 33 -prove-skip 1" in once and "-tempinduct" not in once
+    # the two searches run at once: each writes its own waveform file
+    assert "-dump_vcd cex_bmc.vcd" in bmc and "cex_bmc_once" not in bmc
+    assert "-dump_vcd cex_bmc_once.vcd" in once
     ff = (scratch / "miter_ff.il").read_text()
     assert "  wire width 8 \\ff_gold\n  connect \\ff_gold { \\gold.core.cnt }" in ff
     assert "  wire width 1 \\ff_gate\n  connect \\ff_gate { \\gate._1_.IQ }" in ff
@@ -418,7 +422,8 @@ PROVEN = {
 
 def test_a_one_shot_proof_ends_the_check_from_reset(tmp_path: Path) -> None:
     """Round 14 v62: a registered seven-segment decoder. The step-by-step search stalls after 19
-    cycles; the one-shot search proves all 32 in a second, so the step-by-step one never runs."""
+    cycles; the one-shot search proves all 32 in a second, which decides the race: the
+    step-by-step search is stopped (with this fake, which runs the two in turn, never started)."""
     fake = FakeYosys("counter_good", **PROVEN, bmc_once=(0, "seg7reg", "bmc_once.log"))
     got = go(tmp_path, fake)
     assert got["verdict"] == "equivalent" and got["ok"] is True and got["reason"] is None
@@ -531,38 +536,361 @@ def test_an_unclear_one_shot_log_falls_back_to_the_step_by_step_search(
     assert got["verdict"] == "not_proven" and got["reason"] == "time_limit"  # never a pass
 
 
-def test_the_one_shot_takes_only_the_time_the_step_by_step_search_does_not_need(
-    tmp_path: Path,
+@pytest.mark.parametrize(("budget", "deadline"), [(60.0, 1000.0), (120.0, 1000.0), (120.0, 100.0)])
+def test_both_searches_from_reset_get_the_whole_time_of_one_call(
+    tmp_path: Path, budget: float, deadline: float
 ) -> None:
-    """The one-shot gets at most ONCE_S seconds (whatever the budget), out of the deadline beyond
-    one full budget: the step-by-step search after it still gets its whole budget."""
-    assert equiv.ONCE_S == 8.0
-    for budget in (60.0, 120.0):
-        fake = FakeYosys("counter_good", **PROVEN, bmc=(0, "counter_good", "bmc.log"))
-        (tmp_path / str(budget)).mkdir()
-        go(tmp_path / str(budget), fake, budget_s=budget, deadline_s=1000.0)
-        timeouts = dict(fake.calls)
-        assert timeouts["bmc_once"] == pytest.approx(equiv.ONCE_S)
-        assert timeouts["bmc"] > budget - 1.0
+    """The two searches race (round 16): each gets what one call may take, no cap, no share."""
+    assert not hasattr(equiv, "ONCE_S") and not hasattr(equiv.Clock, "first_try")
     fake = FakeYosys("counter_good", **PROVEN, bmc=(0, "counter_good", "bmc.log"))
-    (tmp_path / "small").mkdir()
-    go(tmp_path / "small", fake, budget_s=5.0, deadline_s=1000.0)
-    assert dict(fake.calls)["bmc_once"] == pytest.approx(5.0)  # never more than one budget
-
-
-@pytest.mark.parametrize(("deadline", "once_max"), [(400.0, 8.0), (125.0, 5.0), (100.0, 0.0)])
-def test_near_the_deadline_the_one_shot_gets_only_the_spare_time(
-    tmp_path: Path, deadline: float, once_max: float
-) -> None:
-    fake = FakeYosys("counter_good", **PROVEN, bmc=(0, "counter_good", "bmc.log"))
-    got = go(tmp_path, fake, budget_s=120.0, deadline_s=deadline)
+    got = go(tmp_path, fake, budget_s=budget, deadline_s=deadline)
     timeouts = dict(fake.calls)
-    if once_max:
-        assert once_max - 2.0 < timeouts["bmc_once"] <= once_max
-    else:
-        assert timeouts["bmc_once"] == 0.0  # it does not run at all
-    assert timeouts["bmc"] > min(120.0, deadline) - 5.0  # what it had without the one-shot
+    assert timeouts["bmc_once"] == timeouts["bmc"]  # the same limit, set when the race starts
+    assert min(budget, deadline) - 2.0 < timeouts["bmc"] <= budget
     assert got["verdict"] == "equivalent"
+
+
+# -- the race of the two searches from reset (round 16) -------------------------------------------
+
+PROVED = {"status": "no_cex", "covered": 32}
+STOPPED = {"status": "no_cex", "covered": 18, "stopped": "time limit"}
+FAILED = {"status": "fail", "failure": {"verdict": "error", "reason": "yosys_failed"}}
+STEP_CEX = {"status": "cex", "first_mismatch": {"cycle": 4, "differs": []}, "trace": []}
+ONCE_CEX_LOG = (FIX / "counter_swap" / "bmc_once.log").read_text()
+
+
+@pytest.mark.parametrize(
+    ("once", "step", "want"),
+    [
+        # the one-shot proved every cycle: proved, whatever the other search is doing
+        ("proved", None, "proved"),
+        ("proved", STOPPED, "proved"),
+        ("proved", FAILED, "proved"),
+        # the step-by-step search found a difference: that one, at its first cycle
+        (None, STEP_CEX, "step"),
+        ("cex", STEP_CEX, "step"),
+        ("unclear", STEP_CEX, "step"),
+        # it reached the depth: proved, unless the one-shot found a difference
+        (None, PROVED, "step"),
+        ("unclear", PROVED, "step"),
+        ("cex", PROVED, "once"),  # it contradicts the one-shot: the one-shot's model
+        # a one-shot difference: wait for the first cycle; a time-out or a failure reports it
+        ("cex", None, "wait"),
+        ("cex", STOPPED, "once"),
+        ("cex", FAILED, "once"),
+        # the step-by-step search stopped or failed: wait for the one-shot, else its own result
+        (None, STOPPED, "wait"),
+        (None, FAILED, "wait"),
+        ("unclear", STOPPED, "step"),
+        ("unclear", FAILED, "step"),
+        # an unclear one-shot (time-out, error, a process that died): the other search decides
+        ("unclear", None, "wait"),
+        (None, None, "wait"),
+    ],
+)
+def test_the_race_decides_on_every_combination_and_never_passes_by_default(
+    once: str | None, step: dict[str, Any] | None, want: str
+) -> None:
+    got = equiv._race_decision(once, ONCE_CEX_LOG, step, 32)
+    if want == "wait":
+        assert got is None
+    elif want == "proved":
+        assert got == {"status": "no_cex", "covered": 32}
+    elif want == "step":
+        assert got is step
+    else:
+        assert got == {"status": "cex", **equiv_parse.parse_cex(ONCE_CEX_LOG)}
+        assert got["first_mismatch"]["differs"]
+
+
+class OrderedRace:
+    """A race whose scripts end in the order `order` (tags), answered by a FakeYosys. `killed`:
+    the scripts still running when the check closed the race."""
+
+    def __init__(self, fake: FakeYosys, order: list[str]) -> None:
+        self.fake, self.order = fake, order
+        self.started: list[str] = []
+        self.killed: list[str] | None = None
+
+    def __call__(self, cwd: Path, jobs: list[tuple[str, str]], timeout: float) -> Any:
+        scripts = {tag: script for script, tag in jobs}
+        self.started = [tag for _, tag in jobs]
+        pending = list(self.order)
+        try:
+            while pending:
+                tag = pending[0]
+                code, log = self.fake(cwd, scripts[tag], tag, timeout)
+                pending.pop(0)
+                yield tag, code, log
+        finally:
+            self.killed = pending
+
+
+def test_a_step_by_step_difference_ends_the_race_and_kills_the_one_shot(tmp_path: Path) -> None:
+    fake = FakeYosys("counter_good", **PROVEN, bmc=(0, "counter_swap", "bmc.log"))
+    race = OrderedRace(fake, ["bmc", "bmc_once"])
+    got = go(tmp_path, fake, race=race)
+    assert race.started == ["bmc_once", "bmc"] and race.killed == ["bmc_once"]
+    assert got["verdict"] == "not_equivalent" and got["first_mismatch"]["cycle"] == 4
+    step = equiv_parse.parse_cex((FIX / "counter_swap" / "bmc.log").read_text())
+    assert got["trace"] == equiv._trace(step["trace"], step["first_mismatch"])
+
+
+def test_a_step_by_step_search_that_reaches_the_depth_first_proves_it(tmp_path: Path) -> None:
+    fake = FakeYosys("counter_good", **PROVEN, bmc=(0, "counter_good", "bmc.log"))
+    race = OrderedRace(fake, ["bmc", "bmc_once"])
+    got = go(tmp_path, fake, race=race)
+    assert race.killed == ["bmc_once"]
+    assert got["verdict"] == "equivalent" and got["cycles_covered"] == 32
+
+
+def test_a_one_shot_proof_kills_the_step_by_step_search(tmp_path: Path) -> None:
+    fake = FakeYosys("counter_good", **PROVEN, bmc_once=(0, "seg7reg", "bmc_once.log"))
+    race = OrderedRace(fake, ["bmc_once", "bmc"])
+    got = go(tmp_path, fake, race=race)
+    assert race.killed == ["bmc"] and "bmc" not in fake.tags
+    assert got["verdict"] == "equivalent" and got["cycles_covered"] == 32
+
+
+@pytest.mark.parametrize(
+    "bmc", [(None, "seg7reg", "bmc.log"), (1, "inline", "ERROR: boom\n"), (-9, "inline", "")]
+)
+def test_a_one_shot_proof_after_the_step_by_step_search_gave_up_still_proves_it(
+    tmp_path: Path, bmc: tuple[int | None, str, str]
+) -> None:
+    """The step-by-step search stopped at its limit, failed, or was killed (OOM): the one-shot,
+    still running, may prove every cycle."""
+    fake = FakeYosys("counter_good", **PROVEN, bmc=bmc, bmc_once=(0, "seg7reg", "bmc_once.log"))
+    race = OrderedRace(fake, ["bmc", "bmc_once"])
+    got = go(tmp_path, fake, race=race)
+    assert race.killed == []
+    assert got["verdict"] == "equivalent" and got["cycles_covered"] == 32
+
+
+@pytest.mark.parametrize(
+    ("bmc", "verdict", "reason"),
+    [
+        ((None, "seg7reg", "bmc.log"), "not_proven", "time_limit"),
+        ((1, "inline", "ERROR: boom\n"), "error", "yosys_failed"),
+        ((-9, "inline", ""), "error", "yosys_failed"),  # killed (OOM): never a pass
+    ],
+)
+@pytest.mark.parametrize("once", [(None, "inline", ""), (-9, "seg7reg", "bmc_once.log")])
+def test_when_neither_search_decides_the_step_by_step_result_stands(
+    tmp_path: Path,
+    once: tuple[int | None, str, str],
+    bmc: tuple[int | None, str, str],
+    verdict: str,
+    reason: str,
+) -> None:
+    """The one-shot timed out or died (a killed process whose log shows a whole proof is still
+    unclear); the step-by-step search timed out, failed or died: never a pass."""
+    for order in (["bmc", "bmc_once"], ["bmc_once", "bmc"]):
+        fake = FakeYosys("counter_good", **PROVEN, bmc=bmc, bmc_once=once)
+        (tmp_path / order[0]).mkdir()
+        got = go(tmp_path / order[0], fake, race=OrderedRace(fake, order))
+        assert (got["verdict"], got["reason"]) == (verdict, reason), order
+        assert got["ok"] is False
+
+
+def test_a_one_shot_difference_waits_for_the_first_differing_cycle(tmp_path: Path) -> None:
+    """The one-shot ends first with a difference: the step-by-step search runs on and reports
+    it at its first cycle (not the one-shot's trace)."""
+    fake = FakeYosys(
+        "counter_good",
+        **PROVEN,
+        bmc_once=(0, "counter_swap", "bmc_once.log"),
+        bmc=(0, "counter_swap", "bmc.log"),
+    )
+    race = OrderedRace(fake, ["bmc_once", "bmc"])
+    got = go(tmp_path, fake, race=race)
+    assert race.killed == []
+    step = equiv_parse.parse_cex((FIX / "counter_swap" / "bmc.log").read_text())
+    assert got["verdict"] == "not_equivalent" and got["first_mismatch"] == step["first_mismatch"]
+
+
+# A stand-in for Yosys in the real race (`race_yosys`): `python helper.py <plan.json> <tag>` in
+# the scratch folder. The plan says, per tag, what to write to `<tag>.log`, how long to sleep
+# first, whether to start a child that sleeps (to see that the whole group is killed), whether
+# to kill itself (as the OOM killer would), and its exit code. It writes its pid (and its
+# child's) to `<tag>.pid`.
+HELPER = """
+import json, os, signal, subprocess, sys, time
+plan = json.load(open(sys.argv[1]))[sys.argv[2]]
+tag = sys.argv[2]
+pids = [os.getpid()]
+if plan.get("child"):
+    pids.append(subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"]).pid)
+open(f"{tag}.pid", "w").write(" ".join(map(str, pids)))
+time.sleep(plan.get("sleep", 0))
+open(f"{tag}.log", "w").write(plan.get("log", ""))
+sys.stderr.write(plan.get("stderr", ""))
+if plan.get("kill"):
+    os.kill(os.getpid(), signal.SIGKILL)
+sys.exit(plan.get("code", 0))
+"""
+
+
+def helper_race(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, plan: dict[str, dict[str, Any]]
+) -> None:
+    helper, plan_file = tmp_path / "helper.py", tmp_path / "plan.json"
+    helper.write_text(HELPER)
+    plan_file.write_text(json.dumps(plan))
+    monkeypatch.setattr(
+        equiv, "_yosys_argv", lambda tag: [sys.executable, str(helper), str(plan_file), tag]
+    )
+
+
+def gone(pid: int) -> bool:
+    """True once the process has ended (no such process, or a zombie no one reaped yet)."""
+    for _ in range(100):
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except OSError:
+            return True
+        if state in ("Z", "X"):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_the_real_race_reports_each_script_as_it_ends(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    helper_race(
+        monkeypatch,
+        tmp_path,
+        {
+            "slow": {"sleep": 1.0, "log": "slow log\n", "stderr": "warn\n", "code": 0},
+            "fast": {"log": "fast log\n", "code": 3},
+        },
+    )
+    started = time.monotonic()
+    got = list(equiv.race_yosys(tmp_path, [("script a", "slow"), ("script b", "fast")], 30.0))
+    assert got == [("fast", 3, "fast log\n"), ("slow", 0, "slow log\nwarn\n")]
+    assert time.monotonic() - started < 10.0  # at once, not one after the other
+    assert (tmp_path / "slow.ys").read_text() == "script a"  # each with its own script and log
+
+
+def test_closing_the_race_kills_the_other_search_and_its_children(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    helper_race(
+        monkeypatch,
+        tmp_path,
+        {"fast": {"log": "done\n"}, "slow": {"sleep": 60, "child": True}},
+    )
+    started = time.monotonic()
+    race = equiv.race_yosys(tmp_path, [("", "slow"), ("", "fast")], 60.0)
+    assert next(race) == ("fast", 0, "done\n")
+    for _ in range(100):  # the slow one has written its pids
+        if (tmp_path / "slow.pid").exists() and len(
+            (tmp_path / "slow.pid").read_text().split()
+        ) == 2:
+            break
+        time.sleep(0.05)
+    pids = [int(x) for x in (tmp_path / "slow.pid").read_text().split()]
+    race.close()
+    assert all(gone(pid) for pid in pids), pids  # the script and the child it started
+    assert time.monotonic() - started < 20.0
+
+
+def test_a_script_at_the_time_limit_is_killed_and_reported_as_stopped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    helper_race(monkeypatch, tmp_path, {"slow": {"sleep": 60, "child": True}})
+    got = list(equiv.race_yosys(tmp_path, [("", "slow")], 1.0))
+    assert got == [("slow", None, "")]
+    assert all(gone(int(pid)) for pid in (tmp_path / "slow.pid").read_text().split())
+
+
+def test_a_log_left_by_an_earlier_run_is_never_read_as_this_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A script stopped at the limit before it wrote its log: an old `<tag>.log` (here a whole
+    proof) is removed before the race starts, so the race reports an empty log."""
+    helper_race(monkeypatch, tmp_path, {"slow": {"sleep": 60}})
+    (tmp_path / "slow.log").write_text(ONCE_PROOF_LOG)
+    got = list(equiv.race_yosys(tmp_path, [("", "slow")], 1.0))
+    assert got == [("slow", None, "")]
+
+
+def test_the_real_yosys_runner_races_and_any_other_runs_in_turn(tmp_path: Path) -> None:
+    clock = equiv.Clock(10.0, 10.0)
+    assert equiv._Run(tmp_path, equiv.run_yosys, clock, 0.0).race is equiv.race_yosys
+    fake = FakeYosys("counter_good")
+    assert equiv._Run(tmp_path, fake, clock, 0.0).race is not equiv.race_yosys
+
+
+def test_a_race_with_no_time_left_runs_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    helper_race(monkeypatch, tmp_path, {"a": {}, "b": {}})
+    got = list(equiv.race_yosys(tmp_path, [("", "a"), ("", "b")], 0.0))
+    assert got == [("a", None, ""), ("b", None, "")]
+    assert not (tmp_path / "a.pid").exists()
+
+
+ONCE_PROOF_LOG = (FIX / "seg7reg" / "bmc_once.log").read_text()
+
+
+def real_race_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, plan: dict[str, dict[str, Any]], **kw: Any
+) -> dict[str, Any]:
+    """The whole check with the real race of real processes for stage 4 (FakeYosys before)."""
+    (tmp_path / "s").mkdir()
+    helper_race(monkeypatch, tmp_path / "s", plan)
+    fake = FakeYosys("counter_good", **PROVEN)
+    return go(tmp_path, fake, race=equiv.race_yosys, **kw)
+
+
+def test_the_real_race_ends_with_a_one_shot_proof_and_kills_the_slow_search(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    started = time.monotonic()
+    got = real_race_check(
+        monkeypatch,
+        tmp_path,
+        {"bmc_once": {"log": ONCE_PROOF_LOG}, "bmc": {"sleep": 60, "child": True}},
+    )
+    assert got["verdict"] == "equivalent" and got["cycles_covered"] == 32
+    assert time.monotonic() - started < 20.0
+    pids = (tmp_path / "scratch" / "bmc.pid").read_text().split()
+    assert all(gone(int(pid)) for pid in pids)
+
+
+def test_a_one_shot_killed_by_a_signal_is_never_a_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A one-shot that printed a whole proof but was then killed (the OOM killer, a signal) is
+    unclear; the step-by-step search times out: not proven."""
+    got = real_race_check(
+        monkeypatch,
+        tmp_path,
+        {
+            "bmc_once": {"log": ONCE_PROOF_LOG, "kill": True},
+            "bmc": {"sleep": 60, "log": (FIX / "seg7reg" / "bmc.log").read_text()},
+        },
+        budget_s=2.0,
+    )
+    assert (got["verdict"], got["reason"]) == ("not_proven", "time_limit")
+
+
+def test_a_step_by_step_search_killed_by_a_signal_is_never_a_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The step-by-step search printed its whole proof and was then killed: not a proof."""
+    got = real_race_check(
+        monkeypatch,
+        tmp_path,
+        {
+            "bmc_once": {"sleep": 60},
+            "bmc": {"log": (FIX / "counter_good" / "bmc.log").read_text(), "kill": True},
+        },
+        budget_s=2.0,
+    )
+    assert got["verdict"] == "error" and got["reason"] == "yosys_failed" and got["ok"] is False
 
 
 def test_the_x_only_recheck_also_tries_the_one_shot_first(tmp_path: Path) -> None:
@@ -1564,8 +1892,9 @@ def test_a_select_outside_the_range_that_yosys_finds_is_named_with_its_line() ->
     got = equiv._yosys_outside(f"1. Executing Verilog frontend.\n{OUT_OF_RANGE}End of script.\n")
     assert got is not None and got.startswith("the RTL (i15.v, line 8) selects outside the range")
     assert "Range select out of bounds on signal `\\pick$func$i15.v:11$2.v'" in got
-    assert "Keep every select inside the declared range (Yosys also sees one in an arm" in got
-    assert got.endswith("choose with an `if` there instead).")
+    assert "Keep every select inside the declared range. A select in an arm of `?:`" in got
+    assert "a constant condition never selects is refused too" in got
+    assert got.endswith("guard it with an `if` instead (`if (i < 7)`), and Yosys drops it.")
     # round 16 bpart: `v[k +: 2]` with k = 5 of a 4-bit `v`, a part-select
     part = (
         "bpart.v:4: Warning: Range select [6:5] out of bounds on signal "

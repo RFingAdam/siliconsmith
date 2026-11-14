@@ -628,8 +628,8 @@ supported, or the proof ran out of time. What is proven: the gates implement the
 Yosys reads it, with comments, attributes and \
 macros out of the way (synthesis did not change your logic). A simulator can read some \
 constructs differently from Yosys. The tool refuses the common ones as not proven and names \
-them: macros and `include, bit/int types (a loop index declared in a for header, for (int i = \
-0; ...), is fine), unique/priority, casex, ===, x or z literals, delays \
+them: macros and `include, bit/int types (a loop index declared in a for header with no range, \
+for (int i = 0; ...), is fine), unique/priority, casex, ===, x or z literals, delays \
 (#), characters outside plain ASCII, a lint_off of a race warning, every level-sensitive \
 always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational block that \
 can read a signal before it writes it on some path through the block (a branch, a case item \
@@ -648,11 +648,18 @@ refused), a ** whose base is not a plain nonzero number and whose exponent is no
 of 0 or more, or a call of one of your functions in the condition of a generate if, case or for \
 (compute the value in a localparam first), a call of one of your functions with constant \
 arguments anywhere but in the value of a parameter or localparam (its range or type is not its \
-value) when the function reads a vector at a computed index or divides (a simulator works the \
-call out itself: compute it in an integer localparam first; such a call in a real or string \
-parameter is refused too), a select outside the range that Yosys finds once it inlines a function \
-or unrolls a loop (pick(ui_in[3:0], 6) reading bit 6 of a 4-bit argument; also in an arm of ?: \
-that a constant condition never selects: guard it with an if), RTL that Icarus (iverilog -g2012) \
+value) when the function reads a vector at a computed index that the check cannot prove inside \
+the declared range, or divides by a value it cannot prove nonzero (proven: an index from a simple \
+for loop inside the range, an input argument whose declared width fits, constants and parameters \
+with one value and constant selects of these (k[1:0]), also through + - *, so rev(8'h81) with \
+for (i = 0; i < 8; i++) is fine; not proven: a 3-bit index into 4 bits, a loop to i <= 8 over 8 \
+bits, v[i - 1] from i = 0, a signed argument as index, a loop step other than 1, a $bits bound, \
+a shift, a call as an argument, another local or an array element as index, even through a \
+select (v[m[0]], v[loc[1:0]]); a simulator works the call out itself: compute it in an integer \
+localparam first; such a call in a real or string parameter is refused too), a select outside the \
+range that Yosys finds once it inlines a function or unrolls a loop (pick(ui_in[3:0], 6) reading \
+bit 6 of a 4-bit argument), also one in an arm of ?: that a constant condition never selects \
+(guard it with an if instead), RTL that Icarus (iverilog -g2012) \
 cannot compile or stops on with an internal error (a parameter of a typedef with two packed \
 dimensions: use a plain vector), an \
 unsized number of 2**31 or more (2147483648: Verilator reads it as negative, Yosys and Icarus as \
@@ -674,15 +681,15 @@ turn into a 0 or 1; some value in the gates), also a loop index passed into a fu
 selects with it and an array (memory) index inside a function (Yosys warns only about a vector \
 select), or a division by a signal that is 0 (also inside a generate loop or module \
 copy), a function that reads one of its own locals before it writes it (x in a simulator), an \
-inline call with constant arguments of a function that leaves its result unset for them (x in a \
-simulator) and has no computed-index select or division, a constant expression that Yosys \
-evaluates differently from a simulator (a size cast or an unbased '1 inside a localparam, $rtoi in \
-any constant expression: a localparam or a generate condition; a select outside the range inside \
-a constant function, whose value Yosys leaves undefined: the gates can differ even where the \
-simulator and Verilator agree; only a parameter value on which the simulator and Verilator \
-disagree is refused), or other effects of simulation event order: run gate-level simulation \
-(run_tests with gl=True) as well. A state machine that synthesis re-encodes can end as not \
-proven (unproven points).\n\
+inline call of a function that leaves its result unset for some constant arguments (x in a \
+simulator), a constant expression that Yosys evaluates differently from a simulator (a size cast \
+or an unbased '1 inside a localparam, $rtoi in any constant expression: a localparam or a \
+generate condition; a select outside the range inside a constant function, also in a \
+parameter's value, which Yosys 0.62 evaluates to an undefined value: the gates can differ even \
+where Icarus and Verilator agree, and the verdict can change with unrelated edits; only a \
+parameter value on which the simulator and Verilator disagree is refused), or other effects of \
+simulation event order: run gate-level simulation (run_tests with gl=True) as well. A state \
+machine that synthesis re-encodes can end as not proven (unproven points).\n\
 What it checks: every output value the RTL defines must match for every power-up state of \
 the chip's flip-flops, exactly (each netlist flip-flop takes any 0/1 value while the RTL \
 registers are x; an x or default-don't-care in the RTL means any value is accepted; when the \
@@ -699,7 +706,14 @@ value is caught. What it does NOT check: bugs in the RTL itself (a wrong or miss
 the same on both sides, so it is not found), reset held longer than one cycle, and timing. \
 Gate-level simulation (run_tests with gl=True) stays the check for reset and power-up \
 behaviour, and the tests you wrote are still what says the design does the right thing: \
-equivalence only says the gates match the RTL.\n\
+equivalence only says the gates match the RTL. A NOT equivalent on a design whose RTL tests \
+pass can be a bug in the synthesis program: run_tests with gl=True runs the tests on the gates \
+and shows it. A known one: Yosys 0.62 (fixed in 0.68; LibreLane 3.0.14 and Tiny Tapeout pin 0.62) \
+builds wrong gates when a design holds an unsigned subtract wider than its operands (a - b into a \
+wider result) and a signed compare of the same operands ($signed(a) < $signed(b)), in one case, \
+an if chain, a ?: or separate assigns alike, also from Amaranth (a.as_signed() < b.as_signed()) \
+or MyHDL (a.signed() < b.signed()): write the compare from the sign bits instead \
+(lt = (a[3] != b[3]) ? a[3] : (a < b) for 4-bit a and b).\n\
 It uses time limits of 120 s per proof step and 300 s for the check, on top of the synthesis \
 time (up to 900 s). Typical time: seconds for a small design (a counter takes about 10 s), a \
 minute or more for memories and wide multipliers, which can end as not proven. The netlist is \
