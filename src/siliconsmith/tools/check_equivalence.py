@@ -633,8 +633,15 @@ them: macros and `include, bit/int types, unique/priority, casex, ===, x or z li
 always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational block that \
 can read a signal before it writes it on some path through the block (a branch, a case item \
 or a loop pass that does not write it first: write each signal at the top of the block), a \
-parameter, localparam or genvar value with an x or z bit (1/0, 5 % 0, 0 ** -1; with or \
-without an always block), an unsized number of 2**31 or more (2147483648: Verilator reads it as \
+parameter, localparam or genvar value with an x or z bit as Verilator or the simulator Icarus \
+works it out (1/0, 5 % 0, 0 ** -1, a constant select outside the range, a constant function \
+that returns x), any other constant in your files that Verilator works out with an x bit \
+(8'd5 / 8'd0 in an assign; with or without an always block), a constant select or array index \
+outside the declared range (A[6] of a 4-bit A), a / or % whose divisor is not a plain nonzero \
+number, a ** whose base is not a plain nonzero number and whose exponent is not a plain number \
+of 0 or more, or a call of one of your functions in the condition of a generate if, case or \
+for (compute the value in a localparam first), RTL that Icarus (iverilog -g2012) cannot \
+compile, an unsized number of 2**31 or more (2147483648: Verilator reads it as \
 negative, Yosys and Icarus as positive; write 32'd2147483648), a function argument that is not \
 an input (output, inout, ref: Icarus cannot compile one either; return the value), a function \
 that reads anything other than its arguments and any task, an always block (any keyword) or \
@@ -650,8 +657,10 @@ arrays), \
 a MyHDL level-sensitive block that is not the plain shape @always_comb writes and does not \
 list every signal it reads (use @always_comb), a carriage return that no line feed follows, \
 and a function without automatic. It does NOT detect an out-of-range index or a division by \
-zero (x in a simulator, some value in the gates), a constant that is x to a simulator \
-steering a case inside a block, or the values inside a generate loop or module copy, a \
+zero applied to a signal (x in a simulator, some value in the gates; also inside a generate \
+loop or module copy), a function call written in an expression (not in a parameter) that \
+returns x for constant arguments, a function that reads one of its own locals before it writes \
+it (x in a simulator), a \
 constant expression that Yosys evaluates differently from a simulator (a size cast, an \
 unbased '1 or $rtoi inside a localparam, an untyped localparam whose value overflows), or \
 other effects of simulation event order: run gate-level simulation (run_tests with gl=True) \
@@ -665,7 +674,9 @@ registers that nothing resets are only compared for a consistent power-up (the R
 shows x there); an RTL register that keeps an initial value (reg x = 0, initial blocks, Amaranth \
 reset_less or init) which reset does not set is reported, as not equivalent when it shows on a pin \
 within 32 cycles of reset and otherwise as not proven (never a pass), with the message to reset \
-those registers with rst_n; a gate register that reset never sets while the RTL defines the \
+those registers with rst_n, unless in the reset cycle the register's next value depends on \
+another register's power-up value (that x hides the initial value: it is then not seen); a gate \
+register that reset never sets while the RTL defines the \
 value is caught. What it does NOT check: bugs in the RTL itself (a wrong or missing reset is \
 the same on both sides, so it is not found), reset held longer than one cycle, and timing. \
 Gate-level simulation (run_tests with gl=True) stays the check for reset and power-up \

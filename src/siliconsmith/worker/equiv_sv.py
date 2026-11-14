@@ -13,9 +13,12 @@ the common constructs where they differ and the check answers `not_proven` (with
 named) instead of a verdict. What it does NOT spot is left to gate-level simulation
 (`run_tests` with `gl=true`):
 
-* an out-of-range index or a division by zero (x in a simulator, some value in the gates, because
-  an x in the RTL is a don't-care), a constant that is x to a simulator steering a case inside a
-  block, and the values inside a generate loop or module copy;
+* an out-of-range index or a division by zero applied to a signal (x in a simulator, some value in
+  the gates, because an x in the RTL is a don't-care; also inside a generate loop or module copy),
+  a function call written in an expression (not in a parameter) that returns x for constant
+  arguments, and a function that reads one of its own locals before it writes it (a constant
+  that comes out x, a constant index outside the range and a generate condition that can be x
+  are refused by the checks on Verilator's tree and Icarus's elaboration in `equiv`);
 * a constant expression that Yosys evaluates differently from a simulator: a size cast, an
   unbased `'1` or `$rtoi` inside a localparam, an untyped `localparam` whose value overflows
   (`localparam K = 8'hff + 1`: the tools can size it differently);

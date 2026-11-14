@@ -267,6 +267,17 @@ def test_scripts_never_use_the_banned_api_words() -> None:
         assert banned not in text
 
 
+@pytest.mark.parametrize("mode", ["proof", "rtl", "rtl_noinit"])
+def test_the_rtl_side_keeps_a_case_of_constants_as_logic(mode: str) -> None:
+    """Round 14 v66/a13: as a ROM (`proc_rom`), a registered seven-segment table with a constant
+    output bit lost that bit's data input once `memory` merged the output register into the ROM,
+    and `check -assert` refused the model as an undriven net. `proc -norom` keeps it as logic
+    (the same function); every RTL model of the check (stages 1 to 4) is built this way."""
+    gold = lines(es.gold("chip", mode))
+    assert gold[len(es._read_rtl("chip"))] == "proc -norom"
+    assert "proc" not in gold and "proc_rom" not in " ".join(gold)
+
+
 def test_the_elaboration_reads_the_rtl_like_the_proof_and_writes_it_unprocessed() -> None:
     """C5: exactly the `_read_rtl` lines and `write_rtlil`: no `proc` (it would turn the processes
     whose positions are compared into cells) and nothing else that could change them."""

@@ -378,6 +378,22 @@ RTL_SEEDS = [
     ("attrhide", "verilog", "not_proven", "guard_sim_synth_differ"),
     # `unique case`: synthesis assumes what a simulator does not
     ("uniquecase", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # Round 14: a generate condition that can be x (`1 / Z`, `g / Z`, `Z ** -1`, `$clog2(1 / Z)`
+    # with Z = 0). Verilator takes the first branch of an x `if` and drops the condition, Icarus
+    # and Yosys may take the other one, where a block reads before it writes or a function is
+    # impure (judged on Verilator's tree before it evaluates the parameters)
+    ("b03arr", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("b08genlp", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("x11genifbare", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("x07genforx", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("b06impure", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("x10clogif", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # a constant that Verilator folds to 0 and the simulator reads as x (judged on Icarus's
+    # elaboration): a select outside the range in a localparam or in the generate `case` itself,
+    # and a constant function that returns x
+    ("xsel", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("xseld", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("qf2", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
 
 
@@ -494,6 +510,70 @@ async def test_equiv_the_expose_guard_runs_and_fails_closed(
         got = json.loads(proc.stdout.strip().splitlines()[-1])
         assert got["real"][0] == 0 and got["real"][1] == "equal" and got["real"][2] is True
         assert got["broken"][0] != 0 and got["broken"][1] == "unusable"
+
+
+GOLD_PROBE = """
+import json, subprocess
+from pathlib import Path
+from siliconsmith.worker import equiv_script, equiv_sv
+
+work = Path("/work/build/gold_probe")
+work.mkdir(parents=True, exist_ok=True)
+for f in ("project.v", "segsync.v"):
+    text = Path("/work/src/" + f).read_text("latin-1")
+    (work / f).write_text(equiv_sv.clean(text), "latin-1")
+out = {}
+for mode in ("proof", "rtl", "rtl_noinit"):
+    real = equiv_script.gold("segsync", mode)
+    # the same script with Yosys's ROM step: the table becomes a memory
+    rom = real.replace("\\nproc -norom\\n", "\\nproc\\n")
+    for tag, script in ((mode, real), (mode + "-rom", rom)):
+        (work / f"{tag}.ys").write_text(script)
+        run = subprocess.run(
+            ["yosys", "-q", "-l", f"{tag}.log", "-s", f"{tag}.ys"], cwd=work, capture_output=True
+        )
+        log = (work / f"{tag}.log").read_text()
+        out[tag] = [run.returncode, equiv_script.M_OK in log, "problems in 'check -assert'" in log]
+    out[mode].append(rom != real)
+print(json.dumps(out))
+"""
+
+
+async def test_a_registered_table_with_a_constant_bit_is_a_sound_model_of_the_rtl(
+    server: Client, tmp_path: Path, image: str
+) -> None:
+    """segsync (round 14 v66): a seven-segment `case` registered with a sync reset, bit 7 is 0 in
+    every entry. As a ROM, `memory` merged the output register into it and dropped the data input
+    of the constant bit, so `check -assert` refused the RTL side (`error structure`). The RTL side
+    keeps the `case` as logic (`proc -norom`): every mode of it passes the structure guard, and
+    the ROM version of the proof mode still fails it (so this probe sees the difference). The whole
+    check is not run here: its check from reset stops at its time limit on this design."""
+    async with server as client:
+        project = await design_project(client, tmp_path, "segsync", "verilog")
+        emitted = await call(client, "emit_verilog", project="segsync")
+        assert emitted["ok"] is True, emitted["summary"]
+        proc = run_hardened(image, project, "python", "-c", GOLD_PROBE, timeout=300)
+        assert proc.returncode == 0, proc.stderr
+        got = json.loads(proc.stdout.strip().splitlines()[-1])
+        for mode in ("proof", "rtl", "rtl_noinit"):
+            assert got[mode] == [0, True, False, True], (mode, got)
+        assert got["proof-rom"][0] != 0 and got["proof-rom"][2] is True, got
+
+
+@pytest.mark.parametrize("fe", ["verilog", "amaranth"])
+async def test_a_registered_table_with_a_constant_bit_is_equivalent(
+    server: Client, tmp_path: Path, fe: str
+) -> None:
+    """segrom (round 14 v69 and a13): a seven-segment table registered on an enable, bit 7 is 0
+    in every entry (a `case` in Verilog, an Array of constants in Amaranth). It used to be
+    `error structure` (see the probe above); the RTL side keeps the table as logic now."""
+    async with server as client:
+        await design_project(client, tmp_path, "segrom", fe)
+        result = await call(client, "check_equivalence", project="segrom")
+        details = result["details"]
+        print(f"\nsegrom-{fe}: {details.get('verdict')} {details.get('method')}")
+        assert result["ok"] is True, result["summary"]
+        assert details["verdict"] == "equivalent" and details["reason"] is None, details
 
 
 # Designs that must NOT be refused by the sim/synth guard, on every front-end they have: the
@@ -749,12 +829,23 @@ PURE_CASES = {
 
 IMPURE_CASES = {
     # pure, but an output argument is refused by the token rules (`equiv_sv`) before the tree is
-    # read, and the read-before-write walk never counts one as written (round 13 w01ifctl)
+    # read; here, past them, Icarus cannot compile it (round 13 w01ifctl)
     "a void function that writes its outputs, read after the call": (
         MOD.format(
             "  reg [3:0] h, l;\n"
             "  function automatic void split(input [7:0] v, output [3:0] hi, output [3:0] lo);\n"
             "    hi = v[7:4];\n    lo = v[3:0];\n  endfunction\n"
+            "  always @(*) begin\n    split(ui_in, h, l);\n    y = {l, h};\n  end"
+        ),
+        "port hi is not an input port",
+    ),
+    # the same as a task (refused by the token rules too): Icarus compiles it, and the
+    # read-before-write walk never counts an output argument as written
+    "a task that writes its outputs, read after the call": (
+        MOD.format(
+            "  reg [3:0] h, l;\n"
+            "  task automatic split(input [7:0] v, output [3:0] hi, output [3:0] lo);\n"
+            "    begin\n      hi = v[7:4];\n      lo = v[3:0];\n    end\n  endtask\n"
             "  always @(*) begin\n    split(ui_in, h, l);\n    y = {l, h};\n  end"
         ),
         "can read `l` before it writes it",

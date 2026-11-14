@@ -46,7 +46,8 @@ gate-level simulation (`run_tests` with `gl=true`) is the check against simulati
     method       "equiv_induct" | "k-induction length L" | None
     message      one or two plain-English sentences; not_proven ends with "This is NOT a pass."
     seconds      {tree, elab, stage1, initdep, base, stage4, total}: seconds per stage that ran
-                 (tree: Verilator's syntax tree, elab: Yosys's elaboration of the RTL)
+                 (tree: Verilator's syntax tree and Icarus's elaboration, elab: Yosys's
+                 elaboration of the RTL)
     stage1       {status, proven, unproven, unproven_signals, unpaired_outputs} or None
     base         {status, run, cycle, differs} or None
     first_mismatch  {cycle, differs: [{signal, rtl, netlist}]} or None. Cycle 1 is power-up with
@@ -83,6 +84,7 @@ from typing import Any
 from siliconsmith.worker import (
     emit,
     equiv_elab,
+    equiv_icarus,
     equiv_parse,
     equiv_script,
     equiv_sv,
@@ -501,6 +503,16 @@ class LintRun:
 
 def _run_verilator(argv: list[str], cwd: Path) -> LintRun | None:
     """Run Verilator; None only if it could not be STARTED at all (no binary)."""
+    return _run_tool(argv, cwd)
+
+
+def _run_icarus(argv: list[str], cwd: Path) -> LintRun | None:
+    """Run Icarus Verilog (`iverilog`); None only if it could not be STARTED at all."""
+    return _run_tool(argv, cwd)
+
+
+def _run_tool(argv: list[str], cwd: Path) -> LintRun | None:
+    """Run a tool with the emit lint's time limit; None only if it could not be STARTED."""
     try:
         proc = subprocess.run(
             argv, cwd=cwd, capture_output=True, text=True, timeout=COMB_LINT_TIMEOUT_S, check=False
@@ -601,14 +613,20 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        is refused (it cannot happen in practice: the worker runs inside the toolchain image,
        which holds Verilator, and the emit lint that ran before this check would have failed).
     2. `equiv_tree.xz_parameter`: no parameter, localparam or genvar-derived constant may have an
-       x or z bit (`1/0`): the tools can elaborate it differently.
-    3. Yosys elaborates the same cleaned RTL to RTLIL (only if Verilator gave a tree). A failure
+       x or z bit (`1/0`): the tools can elaborate it differently. `equiv_tree.x_condition`, on
+       the tree Verilator dumps before it evaluates the parameters (`--dump-tree-json`, the
+       `linkinc` stage): no generate condition may hold an operator that can give x (`1/Z`):
+       Verilator takes the first branch for an x `if` condition and drops it from the tree.
+    3. `_icarus_checks`: the simulator's own elaboration (Icarus): it must compile the RTL, and
+       no parameter may have an x or z bit there, nor a constant select be out of range
+       (Verilator folds those to a value, Icarus and Yosys read x).
+    4. Yosys elaborates the same cleaned RTL to RTLIL (only if Verilator gave a tree). A failure
        or a time out is the verdict of `equiv_parse.guard_failure`, never a pass.
-    4. `equiv_elab.unmatched`: every block and call Yosys keeps must be in Verilator's tree
+    5. `equiv_elab.unmatched`: every block and call Yosys keeps must be in Verilator's tree
        (they can elaborate a constant that is x, such as `1/0`, differently; Verilator drops a
        call that a constant makes dead), and no function is called by a hierarchical name.
-    5. `equiv_tree.impure_function`: a function may read only its arguments.
-    6. `equiv_tree.early_read`: a combinational block may not read a signal before it writes it
+    6. `equiv_tree.impure_function`: a function may read only its arguments.
+    7. `equiv_tree.early_read`: a combinational block may not read a signal before it writes it
        on any path through the block (the ALWCOMBORDER pass, `_comb_order`, runs after this as
        a second line).
     """
@@ -621,9 +639,11 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     # -fno-dfg: Verilator's dataflow pass would fold a one-assignment `always` into the code that
     # reads it, and the block would have no node at its keyword for the position cross-check
     # (nor statements for the read-before-write walk)
+    # --dump-tree-json: the tree of every stage as well, for the one before V3Param (`linkinc`)
     command = [
-        "verilator", "--json-only", "-fno-dfg", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
-        "-Wno-DECLFILENAME", "--top-module", top, "project.v", f"{name}.v",
+        "verilator", "--json-only", "--dump-tree-json", "-fno-dfg", "-Wno-fatal", "--timing",
+        "--timescale", "1ns/1ps", "-Wno-DECLFILENAME", "--top-module", top, "project.v",
+        f"{name}.v",
     ]  # fmt: skip
     t0 = time.monotonic()
     run = _run_verilator(command, folder)
@@ -656,13 +676,24 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     try:
         tree = json.loads((folder / "obj_dir" / f"V{top}.tree.json").read_text("latin-1"))
         meta = json.loads((folder / "obj_dir" / f"V{top}.tree.meta.json").read_text("latin-1"))
+        stages = sorted((folder / "obj_dir").glob(f"V{top}_*_linkinc.tree.json"))
+        if len(stages) != 1:
+            raise equiv_tree.TreeError("no tree of the stage before the parameters are evaluated")
+        before = json.loads(stages[0].read_text("latin-1"))
         unknown = equiv_tree.xz_parameter(tree, meta, list(cleaned))
+        condition = equiv_tree.x_condition(before, meta, list(cleaned))
         found = equiv_tree.impure_function(tree, meta, list(cleaned))  # judged after Yosys
         early = equiv_tree.early_read(tree, meta, list(cleaned))  # judged after purity
     except (OSError, ValueError, equiv_tree.TreeError, RecursionError) as exc:
         return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
-    if unknown is not None:  # the root cause of a different elaboration: named first
-        return refuse("guard_sim_synth_differ", f"{unknown.sentence}.")
+    # the root causes of a different elaboration: named first
+    for root in (unknown, condition):
+        if root is not None:
+            return refuse("guard_sim_synth_differ", f"{root.sentence}.")
+    simulator = _icarus_checks(r, cleaned, name)
+    r.timed("tree", t0)  # the Verilator and the Icarus run
+    if simulator is not None:
+        return simulator
 
     # Yosys's elaboration of the same text, to see which blocks it keeps
     elab = r.scratch / "elab"
@@ -688,6 +719,70 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         return refuse("guard_sim_synth_differ", f"{found.sentence}.")
     if early is not None:
         return refuse("guard_sim_synth_differ", f"{early.sentence}.")
+    return None
+
+
+def _icarus_checks(r: _Run, cleaned: dict[str, str], name: str) -> dict[str, Any] | None:
+    """A `not_proven` verdict if the simulator (Icarus) elaborates a constant of the RTL to a
+    value with an x or z bit, else None (`equiv_icarus`). `cleaned` is the cleaned RTL that Yosys
+    reads. Like the Verilator run it must not pass by giving up:
+
+    * the run takes longer than the emit lint may: `time_limit`;
+    * Icarus does not compile the RTL (a failing exit code or no output): `guard_sim_synth_differ`,
+      naming the first error: the check cannot see what a simulator makes of it;
+    * output it cannot read: `guard_sim_synth_differ`;
+    * a parameter, localparam or genvar with an x or z bit (`equiv_icarus.x_parameter`), then a
+      constant select outside the range (`equiv_icarus.x_select`): `guard_sim_synth_differ`;
+    * Icarus cannot be started at all: inconclusive, logged, nothing is refused (it cannot happen
+      in practice: the worker runs inside the toolchain image, which holds Icarus)."""
+    folder = r.scratch / "sim_elab"
+    folder.mkdir(parents=True, exist_ok=True)
+    for fname, text in cleaned.items():
+        (folder / fname).write_bytes(text.encode("latin-1"))
+    (folder / "sim.vvp").unlink(missing_ok=True)
+    command = [
+        "iverilog", "-g2012", "-Wselect-range", "-o", "sim.vvp", "-s", f"tt_um_{name}",
+        "project.v", f"{name}.v",
+    ]  # fmt: skip
+    run = _run_icarus(command, folder)
+    if run is None:
+        log.warning("iverilog could not be started: the simulator's constants were not checked")
+        return None
+
+    def refuse(reason: str, sentence: str) -> dict[str, Any]:
+        return r.verdict("not_proven", reason, f"Could not prove equivalence: {sentence}")
+
+    if run.timed_out:
+        return refuse(
+            "time_limit",
+            "the simulator (Icarus) did not compile the RTL within "
+            f"{COMB_LINT_TIMEOUT_S:.0f} s, so the check cannot see its constants.",
+        )
+    ours = list(cleaned)
+    try:
+        vvp = (folder / "sim.vvp").read_text("latin-1") if run.code == 0 else None
+    except OSError:
+        vvp = None
+    if vvp is None:
+        lines = [x.strip() for x in run.output.splitlines() if x.strip()]
+        first = next((x for x in lines if ": error:" in x or ": sorry:" in x), None)
+        first = first or next((x for x in lines if "error" in x.lower()), None)
+        why = clip(first or (lines[-1] if lines else "it failed"), 200)
+        return refuse(
+            "guard_sim_synth_differ",
+            f"the simulator (Icarus, iverilog -g2012) cannot compile the RTL ({why}), so the "
+            "check cannot see what a simulator makes of it. Write the RTL so that Icarus "
+            "compiles it.",
+        )
+    try:
+        found = equiv_icarus.x_parameter(vvp, ours) or equiv_icarus.x_select(run.output, ours)
+    except equiv_icarus.IcarusError as exc:
+        return refuse(
+            "guard_sim_synth_differ",
+            f"the check could not read the simulator's (Icarus) elaboration of the RTL: {exc}.",
+        )
+    if found is not None:
+        return refuse("guard_sim_synth_differ", f"{found.sentence}.")
     return None
 
 

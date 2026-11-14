@@ -21,7 +21,9 @@ Fail closed: a name or call that does not resolve, a missing position and the li
 `taskp`, hierarchical names, a list of hidden-state nodes), not a whitelist of node types: a node
 of an unknown type that reaches state some other way is not noticed (nothing Yosys accepts did).
 
-The same tree answers two more questions (`early_read`, `xz_parameter`):
+The same tree answers two more questions (`early_read`, `xz_parameter`), and the tree Verilator
+dumps before it evaluates the parameters (`--dump-tree-json`, the `linkinc` stage) a third one
+(`x_condition`):
 
 * Can a combinational block read a variable before it writes it, on SOME path through the block?
   A simulator does not rerun the block for its own write; the gates do. Verilator's ALWCOMBORDER
@@ -32,6 +34,9 @@ The same tree answers two more questions (`early_read`, `xz_parameter`):
 * Does a parameter, localparam or genvar-derived constant have an x or z bit (`1/0`, `5 % 0`,
   `0 ** -1`)? A simulator then compares with `===` semantics in a generate `case`, the tools pick
   generate branches differently, and the other checks would judge a different design.
+* Can the condition of a generate `if`, `case` or `for` be x (a `/` or `%` by a value that is not
+  a plain nonzero number, a `**`, a function call)? V3Param takes the first branch for an x `if`
+  condition and drops the condition, so the evaluated tree cannot show it.
 """
 
 from __future__ import annotations
@@ -315,6 +320,102 @@ def xz_parameter(tree: Any, meta: Any, ours: list[str]) -> Unknown | None:
         "`5 % 0` or `0 ** -1`): a simulator and the synthesis can choose generate branches "
         "and case items differently for it, so the check cannot vouch for the design. Give it "
         "a defined value",
+    )
+
+
+# -- generate conditions that can be x ----------------------------------------------------------
+
+_DIVIDES = frozenset({"DIV", "DIVS", "MODDIV", "MODDIVS"})
+_POWERS = frozenset({"POW", "POWSS", "POWSU", "POWUS"})
+# Where a generate construct keeps the expressions that choose its branches and loop passes.
+_GENERATE_CONDITIONS = {
+    "GENIF": ("condp",),
+    "GENCASE": ("exprp",),
+    "GENCASEITEM": ("condsp",),
+    "GENFOR": ("initsp", "condp", "incsp"),
+}
+# A number as Verilator prints it before V3Width: `?32?sh5` (unsized) or `4'ha` (sized).
+_EARLY_CONST = re.compile(r"^(?:\?(\d+)\?|(\d+)')(s?)([bodh])([0-9a-fA-F_]+)$")
+
+
+def _number(node: dict[str, Any] | None) -> tuple[int, bool] | None:
+    """`(value, negative)` of a CONST node that is a plain number (no x or z bit), else None."""
+    if node is None or node.get("type") != "CONST":
+        return None
+    match = _EARLY_CONST.match(str(node.get("name", "")))
+    if match is None:
+        return None
+    width = int(match.group(1) or match.group(2))
+    value = int(match.group(5).replace("_", ""), _BASES[match.group(4)])
+    negative = bool(match.group(3)) and width > 0 and (value >> (width - 1)) & 1 == 1
+    return value, negative
+
+
+def _x_operator(node: dict[str, Any]) -> str | None:
+    """What makes `node` able to give x for some values of its operands, or None: a `/` or `%`
+    whose divisor is not a plain nonzero number, a `**` whose base is not a plain nonzero number
+    and whose exponent is not a plain non-negative number (`0 ** -1`), or a function call."""
+    kind = node.get("type")
+    if kind in _DIVIDES:
+        divisor = _number(_only(node, "rhsp"))
+        if divisor is None or divisor[0] == 0:
+            return "a `/` or `%` whose divisor is not a plain nonzero number"
+    elif kind in _POWERS:
+        base, exponent = _number(_only(node, "lhsp")), _number(_only(node, "rhsp"))
+        if (base is None or base[0] == 0) and (exponent is None or exponent[1]):
+            return (
+                "a `**` whose base is not a plain nonzero number and whose exponent is not a "
+                "plain number of 0 or more"
+            )
+    elif kind == "FUNCREF":
+        return f"a call of the function `{node.get('name', '?')}`"
+    return None
+
+
+def x_condition(tree: Any, meta: Any, ours: list[str]) -> Unknown | None:
+    """The first operator (by file order, line, column) that can give x inside the condition of
+    a generate `if`, `case` (expression and item labels) or `for` (all three parts of the header)
+    of our files, else None. `tree` must be Verilator's tree BEFORE V3Param (the `linkinc` stage
+    of `--dump-tree-json`): V3Param evaluates these conditions and keeps only the chosen branch.
+
+    A simulator and Yosys treat an x `if` condition as false, Verilator takes the first branch,
+    and the three match an x `case` label differently: the other checks would judge a branch
+    that the proof or a simulator does not use. Such an x comes from a `/` or `%` by 0, from
+    `0 ** -1` or from a constant function, which is why these are refused unless the operand
+    shows they are safe (`WIDTH % 2`, `2 ** N`); a value computed in a localparam is judged by
+    its value instead (`xz_parameter`, and the simulator's own values in `equiv_icarus`), and an
+    index outside the range by the simulator's warning (`equiv_icarus.x_select`)."""
+    if not isinstance(tree, dict):
+        raise TreeError("the tree is not an object")
+    files = _file_letters(meta)
+    found: list[tuple[int, int, int, str, str]] = []
+    for node in _subtree(tree):
+        keys = _GENERATE_CONDITIONS.get(str(node.get("type")))
+        if keys is None:
+            continue
+        for key in keys:
+            roots = node.get(key) or []
+            if not isinstance(roots, list):
+                raise TreeError(f"a `{node.get('type')}` node has an unexpected `{key}`")
+            for inner in (n for root in roots if isinstance(root, dict) for n in _subtree(root)):
+                what = _x_operator(inner)
+                if what is None:
+                    continue
+                file, line, col = _place(inner if "loc" in inner else node, files)
+                if file in ours:
+                    found.append((ours.index(file), line, col, what, file))
+    if not found:
+        return None
+    _, line, _, what, file = min(found)
+    return Unknown(
+        "",
+        file,
+        line,
+        f"the RTL ({file}, line {line}) has {what} in the condition of a generate `if`, "
+        "`case` or `for`: a divisor of 0, `0 ** -1` or a function that returns x makes that "
+        "condition x, and a simulator, Yosys and Verilator can choose different branches for "
+        "it, so the check cannot vouch for the design. Compute the value in a localparam "
+        "first (a localparam with an x or z bit is refused)",
     )
 
 

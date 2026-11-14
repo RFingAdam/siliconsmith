@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -20,9 +21,10 @@ from typing import Any
 import pytest
 from conftest import REPO_ROOT
 
-from siliconsmith.worker import equiv
+from siliconsmith.worker import equiv, equiv_script
 
 REAL_RUN_VERILATOR = equiv._run_verilator  # the autouse fixture replaces it
+REAL_RUN_ICARUS = equiv._run_icarus  # this one too
 
 FIX = REPO_ROOT / "tests" / "fixtures" / "equiv"
 FIXTURES_MYHDL = REPO_ROOT / "tests" / "fixtures" / "equiv_myhdl"
@@ -97,8 +99,25 @@ class FakeYosys:
 
 @pytest.fixture(autouse=True)
 def no_verilator(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The ALWCOMBORDER pass runs Verilator; unit tests do not have it (it is inconclusive)."""
+    """The ALWCOMBORDER pass runs Verilator and the tree checks Icarus too; unit tests do not
+    have them (each is inconclusive)."""
     monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: None)  # cannot start
+    monkeypatch.setattr(equiv, "_run_icarus", lambda argv, cwd: None)  # cannot start
+
+
+# The tree Verilator dumps before V3Param (`--dump-tree-json`): by default one with no generate
+# construct, so `equiv_tree.x_condition` finds nothing.
+EARLY_STAGE = "Vtt_um_chip_008_linkinc.tree.json"
+NO_GENERATE = json.dumps({"type": "NETLIST", "modulesp": []})
+
+
+def write_trees(cwd: Path, tree: str, before: str = NO_GENERATE) -> None:
+    """What a `verilator --json-only --dump-tree-json` run leaves in `cwd/obj_dir`."""
+    out = cwd / "obj_dir"
+    out.mkdir(exist_ok=True)
+    (out / "Vtt_um_chip.tree.json").write_text(tree)
+    (out / "Vtt_um_chip.tree.meta.json").write_text(TREE_META)
+    (out / EARLY_STAGE).write_text(before)
 
 
 def inputs(tmp_path: Path, netlist: str = "module tt_um_chip(); endmodule\n") -> tuple[Path, Path]:
@@ -971,9 +990,7 @@ def answer_tree(argv: list[str], cwd: Path) -> equiv.LintRun | None:
     """The `--json-only` run of the purity check, for a fake Verilator: the tree of star_core."""
     if "--json-only" not in argv:
         return None
-    (cwd / "obj_dir").mkdir()
-    (cwd / "obj_dir" / "Vtt_um_chip.tree.json").write_text(json.dumps(STAR_TREE))
-    (cwd / "obj_dir" / "Vtt_um_chip.tree.meta.json").write_text(TREE_META)
+    write_trees(cwd, json.dumps(STAR_TREE))
     return equiv.LintRun(0, "")
 
 
@@ -1163,18 +1180,17 @@ def purity(
     tree: str | None = None,
     text: str = FUNC_RTL,
     fake: FakeYosys | None = None,
+    before: str = NO_GENERATE,
 ) -> tuple[tuple[str, str] | None, list[list[str]]]:
-    """`equiv._tree_checks` with a fake Verilator that answers `run` and writes `tree`, and a fake
-    Yosys (`fake`, answering the "elab" call). Gives `(reason, sentence)` or None."""
+    """`equiv._tree_checks` with a fake Verilator that answers `run` and writes `tree` (and
+    `before`, the tree before V3Param), and a fake Yosys (`fake`, answering the "elab" call).
+    Gives `(reason, sentence)` or None."""
     argvs: list[list[str]] = []
 
     def verilator(argv: list[str], cwd: Path) -> equiv.LintRun | None:
         argvs.append(argv)
         if tree is not None:
-            out = cwd / "obj_dir"
-            out.mkdir()
-            (out / "Vtt_um_chip.tree.json").write_text(tree)
-            (out / "Vtt_um_chip.tree.meta.json").write_text(TREE_META)
+            write_trees(cwd, tree, before)
         return run
 
     monkeypatch.setattr(equiv, "_run_verilator", verilator)
@@ -1351,9 +1367,7 @@ def test_a_divergent_elaboration_stops_check_before_stage_1_and_a_matched_one_go
         def run(argv: list[str], cwd: Path) -> equiv.LintRun | None:
             if "--json-only" not in argv:
                 return None
-            (cwd / "obj_dir").mkdir()
-            (cwd / "obj_dir" / "Vtt_um_chip.tree.json").write_text(tree)
-            (cwd / "obj_dir" / "Vtt_um_chip.tree.meta.json").write_text(TREE_META)
+            write_trees(cwd, tree)
             return equiv.LintRun(0, "")
 
         return run
@@ -1424,9 +1438,7 @@ def test_check_refuses_an_impure_function_before_any_proof(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def verilator(argv: list[str], cwd: Path) -> equiv.LintRun:
-        (cwd / "obj_dir").mkdir()
-        (cwd / "obj_dir" / "Vtt_um_chip.tree.json").write_text(json.dumps(IMPURE_TREE))
-        (cwd / "obj_dir" / "Vtt_um_chip.tree.meta.json").write_text(TREE_META)
+        write_trees(cwd, json.dumps(IMPURE_TREE))
         return equiv.LintRun(0, "")
 
     monkeypatch.setattr(equiv, "_run_verilator", verilator)
@@ -1522,3 +1534,216 @@ def test_an_x_parameter_is_refused_first_without_running_the_elaboration(
     assert got is not None and got[0] == "guard_sim_synth_differ"
     assert "computes the parameter `Q` with an x or z bit" in got[1]
     assert fake.calls == []  # the root cause, before Yosys elaborates anything
+
+
+# -- round 14: generate conditions and the simulator's constants (`_tree_checks`) --------------
+
+# `if ((1 / Z) == 0) begin : g ... end` as Verilator's tree has it before V3Param (b03arr)
+X_CONDITION = json.dumps(
+    {
+        "type": "NETLIST",
+        "modulesp": [
+            {
+                "type": "GENIF",
+                "loc": "e,3:3,3:5",
+                "condp": [
+                    {
+                        "type": "DIV",
+                        "loc": "e,3:10,3:11",
+                        "lhsp": [{"type": "CONST", "name": "?32?sh1", "loc": "e,3:8,3:9"}],
+                        "rhsp": [{"type": "VARREF", "name": "Z", "loc": "e,3:12,3:13"}],
+                    }
+                ],
+            }
+        ],
+    }
+)
+
+
+def test_a_generate_condition_that_can_be_x_is_refused_before_the_simulator_and_yosys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started: list[list[str]] = []
+    monkeypatch.setattr(equiv, "_run_icarus", lambda argv, cwd: started.append(argv))
+    fake = fake_elab("")
+    got, argvs = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, before=X_CONDITION,
+        fake=fake,
+    )  # fmt: skip
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert "(chip.v, line 3) has a `/` or `%` whose divisor is not a plain nonzero number" in got[1]
+    assert "--dump-tree-json" in argvs[0] and "--json-only" in argvs[0]
+    assert started == [] and fake.tags == []
+
+
+@pytest.mark.parametrize("stages", [[], [EARLY_STAGE, "Vtt_um_chip_009_linkinc.tree.json"]])
+def test_without_exactly_one_tree_of_the_stage_before_the_parameters_it_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stages: list[str]
+) -> None:
+    def verilator(argv: list[str], cwd: Path) -> equiv.LintRun:
+        write_trees(cwd, EMPTY_TREE)
+        (cwd / "obj_dir" / EARLY_STAGE).unlink()
+        for name in stages:
+            (cwd / "obj_dir" / name).write_text(NO_GENERATE)
+        return equiv.LintRun(0, "")
+
+    monkeypatch.setattr(equiv, "_run_verilator", verilator)
+    r = equiv._Run(tmp_path / "s", fake_elab(""), equiv.Clock(60, 120), time.monotonic())
+    got = equiv._tree_checks(r, [("project.v", "// wrapper\n"), ("chip.v", FUNC_RTL)], "chip")
+    assert got is not None and got["reason"] == "guard_sim_synth_differ"
+    assert "no tree of the stage before the parameters are evaluated" in got["message"]
+
+
+SIM_TABLE = (
+    ':file_names 5;\n    "N/A";\n    "<interactive>";\n    "-";\n    "project.v";\n    "chip.v";\n'
+)
+SIM_CLEAN = 'P_0x1 .param/l "W" 1 4 2, +C4<00000000000000000000000000001000>;\n' + SIM_TABLE
+SIM_X = 'P_0x1 .param/l "Q" 1 4 8, C4<x>;\n' + SIM_TABLE  # xsel: Q = A[6] of a 4-bit A
+SELECT = "chip.v:9: warning: Constant bit select [6] is after A[3:0].\n"
+
+
+def simulator(
+    monkeypatch: pytest.MonkeyPatch, run: equiv.LintRun | None, vvp: str | None
+) -> list[tuple[list[str], dict[str, str]]]:
+    """A fake Icarus that answers `run` and writes `vvp` as `sim.vvp`; records each call."""
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def icarus(argv: list[str], cwd: Path) -> equiv.LintRun | None:
+        calls.append((argv, {f.name: f.read_text() for f in cwd.glob("*.v")}))
+        if vvp is not None:
+            (cwd / "sim.vvp").write_text(vvp)
+        return run
+
+    monkeypatch.setattr(equiv, "_run_icarus", icarus)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("run", "vvp", "shown"),
+    [
+        # xsel: Verilator folds `A[6]` to 0, the simulator reads x
+        (equiv.LintRun(0, ""), SIM_X, "(chip.v, line 8) gives the parameter `Q` a value with an x"),
+        (equiv.LintRun(0, SELECT), SIM_CLEAN, "(chip.v, line 9) selects outside the range"),
+        (equiv.LintRun(0, SELECT), SIM_X, "line 8) gives the parameter `Q`"),  # the value first
+        # it does not compile: the first error, or the last line, is named
+        (
+            equiv.LintRun(3, "chip.v:2: warning: odd\nchip.v:7: sorry: break statements\n"),
+            None,
+            "cannot compile the RTL (chip.v:7: sorry: break statements)",
+        ),
+        (
+            equiv.LintRun(5, "chip.v:4: syntax error\nI give up.\n"),
+            None,
+            "(chip.v:4: syntax error)",
+        ),
+        (equiv.LintRun(1, ""), SIM_CLEAN, "cannot compile the RTL (it failed)"),
+        (equiv.LintRun(0, ""), None, "cannot compile the RTL"),  # no output file
+        (equiv.LintRun(0, ""), 'P_0x1 .param/l "Q" 1 4 8, C4<x;\n' + SIM_TABLE, "could not read"),
+        (equiv.LintRun(0, ""), SIM_CLEAN.replace(":file_names", ":nofiles"), "could not read"),
+    ],
+)
+def test_the_simulators_constants_refuse_an_x_and_it_must_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run: equiv.LintRun, vvp: str | None, shown: str
+) -> None:
+    calls = simulator(monkeypatch, run, vvp)
+    fake = fake_elab("")
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, fake=fake)
+    assert got is not None and got[0] == "guard_sim_synth_differ" and shown in got[1], got
+    assert fake.tags == []  # named before Yosys's elaboration
+    argv, files = calls[0]
+    assert argv[:3] == ["iverilog", "-g2012", "-Wselect-range"]
+    assert argv[-4:] == ["-s", "tt_um_chip", "project.v", "chip.v"]
+    assert set(files) == {"project.v", "chip.v"}  # the cleaned RTL that Yosys reads
+
+
+def test_a_clean_simulator_run_goes_on_to_the_elaboration_and_a_stale_output_is_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    simulator(monkeypatch, equiv.LintRun(0, "chip.v:3: warning: @* found no sensitivities\n"),
+              SIM_CLEAN)  # fmt: skip
+    fake = fake_elab("module \\tt_um_chip\nend\n")
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, fake=fake)
+    assert got is None and fake.tags == ["elab"]
+    # the next run fails and writes nothing: the output of the run before must not count
+    simulator(monkeypatch, equiv.LintRun(2, "chip.v:1: syntax error\n"), None)
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, fake=fake)
+    assert got is not None and "cannot compile the RTL" in got[1]
+
+
+def test_a_simulator_that_times_out_or_cannot_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    simulator(monkeypatch, equiv.LintRun(-1, "", True), None)
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE)
+    assert got is not None and got[0] == "time_limit" and "(Icarus) did not compile" in got[1]
+    simulator(monkeypatch, None, None)
+    with caplog.at_level("WARNING"):
+        got, _ = purity(
+            tmp_path / "b", monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE,
+            fake=fake_elab("module \\tt_um_chip\nend\n"),
+        )  # fmt: skip
+    assert got is None and "iverilog could not be started" in caplog.text
+
+
+def test_the_run_icarus_helper_starts_iverilog(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+
+    def run(argv: list[str], **kw: Any) -> Any:
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "out", "err")
+
+    monkeypatch.setattr(equiv.subprocess, "run", run)
+    monkeypatch.setattr(equiv, "_run_icarus", REAL_RUN_ICARUS)
+    got = equiv._run_icarus(["iverilog", "-V"], Path("."))
+    assert got == equiv.LintRun(0, "err\nout") and seen == [["iverilog", "-V"]]
+
+
+# -- round 14: the referee and the k-induction re-check -----------------------------------------
+
+
+def test_the_referee_compares_the_rtl_without_its_initial_values(tmp_path: Path) -> None:
+    """Stage 2 showed the initial values change nothing after reset; an `init` in the referee
+    would fix a power-up value that the RTL's x power-up must leave open."""
+    fake = FakeYosys(
+        "counter_good",
+        equiv=(0, "counter_good", "equiv.log"),
+        base=(0, "counter_good", "base.log"),
+        bmc=(0, "counter_good", "bmc.log"),
+    )
+    assert go(tmp_path, fake)["verdict"] == "equivalent"
+    model = (tmp_path / "scratch" / "bmc_model.ys").read_text()
+    noinit = equiv_script.stash(equiv_script.gold("chip", "rtl_noinit"), "chip", "gold")
+    assert noinit in model and equiv_script.gold("chip", "rtl") not in model
+
+
+def test_a_clean_recheck_is_never_a_pass_even_when_the_zero_start_induction_closes(
+    tmp_path: Path,
+) -> None:
+    """Round 13 n23v shape, with a `kind_zero` that closes: the x-only difference of `kind_x` is
+    not confirmed by the per-side search (bounded), so `kind_x` proved nothing, and the
+    zero-start induction alone covers only the all-zero power-up: not proven."""
+    fake = FakeYosys(
+        "counter_good",
+        equiv=(0, "counter_m0115", "equiv.log"),
+        kind_x=(0, "counter_m0115", "kind_x.log"),  # uo_out[5]: RTL 0, netlist x
+        kind_x_check=(0, "counter_good", "bmc.log"),  # the per-side search: no difference
+        kind_zero=(0, "shiftnr_m0165", "kind_x.log"),  # closes
+    )
+    got = go(tmp_path, fake)
+    assert fake.tags == ["equiv", "kind_x", "kind_x_check_model", "kind_x_check", "kind_zero"]
+    assert got["verdict"] == "not_proven" and got["reason"] == "unproven_points"
+    assert "no difference was found in the first 16 cycles from reset" in got["message"]
+
+
+def test_a_recheck_that_fails_is_an_error_and_ends_the_check(tmp_path: Path) -> None:
+    fake = FakeYosys(
+        "counter_good",
+        equiv=(0, "counter_m0115", "equiv.log"),
+        kind_x=(0, "counter_m0115", "kind_x.log"),
+        kind_x_check=(1, "inline", "ERROR: boom\n"),
+        kind_zero=(0, "shiftnr_m0165", "kind_x.log"),
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "error" and got["ok"] is False
+    assert fake.tags == ["equiv", "kind_x", "kind_x_check_model", "kind_x_check"]
+    assert got["message"].startswith("Could not run the check from reset")

@@ -12,8 +12,9 @@ orchestration is in `equiv.py`. Stdlib only: this runs in the container.
 0. The netlist text must not contain an `x`/`z` constant (our synthesis ties undefined inputs
    low, so a correct netlist has none).
 1. Guards plus the proof. The RTL side ("gold") is the design as the PRODUCTION synthesis sees it
-   just before technology mapping (same `proc`, `flatten`, `opt -nodffe -nosdff`, `fsm`, `opt`,
-   memories to flops, `$pmux` to gates, `$print`/`$assert` removed, initial values removed). The
+   just before technology mapping (`proc` without its ROM step, `flatten`, `opt -nodffe
+   -nosdff`, `fsm`, `opt`, memories to flops, `$pmux` to gates, `$print`/`$assert` removed,
+   initial values removed). The
    netlist side ("gate") is read from the netlist FILE the synthesis wrote. Both sides refuse
    what the proof cannot model (see the `GUARD_*` blocks). `equiv_make` pairs signals by name,
    `equiv_simple -seq 5` and `equiv_induct -seq 5` prove the induction step.
@@ -147,7 +148,10 @@ def gold(name: str, mode: str, expose: bool = False) -> str:
     if mode not in ("proof", "rtl", "rtl_noinit"):
         raise ValueError(f"unknown mode {mode!r}")
     s = _read_rtl(name)
-    s += ["proc", "flatten", DELETE_NON_HARDWARE, "opt_expr", "opt_clean"]
+    # -norom: a `case` of constants stays logic. As a ROM (`proc_rom`) a registered table with a
+    # constant output bit loses that bit's data input once `memory` merges the output register
+    # into the ROM, and `check -assert` refuses the model; the logic is the same either way.
+    s += ["proc -norom", "flatten", DELETE_NON_HARDWARE, "opt_expr", "opt_clean"]
     if mode == "proof":
         s += [*PRODUCTION_FSM_PASSES, "opt_clean"]
         s += [

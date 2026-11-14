@@ -530,3 +530,184 @@ def test_an_unresolved_or_strange_reference_raises() -> None:
         early(assign(w("(nothing)", "t", 3), r("(I)", "a", 3)))
     with pytest.raises(et.TreeError):
         early(write_t_first(), assign(w("(Y)", "y", 4), r("(T)", "t", 4, access="ODD")))
+
+
+# -- read before write: every place a statement reads (round 14 g23, g24, g25, g36, g39) ---------
+
+
+def half_t() -> dict[str, Any]:
+    """`if (a) t = a;`: `t` is written on one path only, so a later read can see the old `t`."""
+    return if_(r("(I)", "a", 3), [write_t_first()])
+
+
+def to_y(line: int) -> dict[str, Any]:
+    return assign(w("(Y)", "y", line), r("(I)", "a", line))
+
+
+def test_an_if_condition_reads_its_signals() -> None:
+    """g24: `if (t)` after a write of `t` on one path only reads the old `t`."""
+    got = early(half_t(), if_(r("(T)", "t", 4), [to_y(5)], [to_y(6)]))
+    assert got is not None and (got.name, got.line) == ("t", 4)
+    assert early(write_t_first(), if_(r("(T)", "t", 4), [to_y(5)], [to_y(6)])) is None
+
+
+def test_a_case_label_and_a_case_expression_read_their_signals() -> None:
+    """g23: a case item labelled `t`; g36: `case (t)`."""
+    label = {"type": "CASEITEM", "condsp": [r("(T)", "t", 4)], "stmtsp": [to_y(4)]}
+    got = early(half_t(), case(label, item([to_y(5)])))
+    assert got is not None and (got.name, got.line) == ("t", 4)
+    on_t = r("(T)", "t", 4) | {"dtypep": "(D8)"}
+    by_t = {"type": "CASE", "kwd": "case", "exprp": [on_t], "itemsp": [item([to_y(5)])]}
+    got = early(half_t(), by_t)
+    assert got is not None and (got.name, got.line) == ("t", 4)
+    assert early(write_t_first(), by_t) is None
+
+
+def test_the_index_of_a_target_reads_its_signals() -> None:
+    """g25: `y[t] = 1'b1` reads `t` to know which bit it writes."""
+    target = {"type": "SEL", "fromp": [w("(Y)", "y", 4)], "lsbp": [r("(T)", "t", 4)],
+              "widthConst": 1}  # fmt: skip
+    got = early(half_t(), assign(target, const("1'h1", 4)))
+    assert got is not None and (got.name, got.line) == ("t", 4)
+    assert early(write_t_first(), assign(target, const("1'h1", 4))) is None
+
+
+ARRAY = {"type": "UNPACKARRAYDTYPE", "addr": "(DA)", "declRange": "[0:2]", "refDTypep": "(D8)"}
+M = var("(MA)", "m", 2, varType="VAR", dtypep="(DA)")
+
+
+def element(index: int, access: str, line: int) -> dict[str, Any]:
+    ref_m = ref(f"(m{next(_N)})", "(MA)", "m", line, access=access, dtypep="(DA)")
+    return {"type": "ARRAYSEL", "fromp": [ref_m], "bitp": [const(f"2'h{index}", line)],
+            "dtypep": "(D8)"}  # fmt: skip
+
+
+def array_early(*stmts: dict[str, Any]) -> et.EarlyRead | None:
+    tree = module(*TYPES, ARRAY, T, Y, A, S, M, comb(*stmts))
+    return et.early_read(tree, META, OURS)
+
+
+def test_an_array_element_counts_its_own_bits_at_its_own_place() -> None:
+    """g39: `m[0] = a; m[2] = ~a; y = m[1]; m[1] = ...`: the elements written first are 8 bits
+    each at index * 8, so they do not cover `m[1]`; after all three, all of `m` is written."""
+    first = assign(element(0, "WR", 3), r("(I)", "a", 3))
+    last = assign(element(2, "WR", 4), r("(I)", "a", 4))
+    read_m1 = assign(w("(Y)", "y", 5), element(1, "RD", 5))
+    write_m1 = assign(element(1, "WR", 6), r("(I)", "a", 6))
+    got = array_early(first, last, read_m1, write_m1)
+    assert got is not None and (got.name, got.line) == ("m", 5)
+    whole = assign(w("(Y)", "y", 7), ref("(mw)", "(MA)", "m", 7, dtypep="(DA)"))
+    assert array_early(first, last, write_m1, read_m1, whole) is None
+    got = array_early(first, write_m1, whole)  # m[2] is never written before the read of all m
+    assert got is not None and got.line == 7
+
+
+def test_a_label_wider_than_the_case_expression_does_not_make_the_case_full() -> None:
+    """A 3-bit label never matches a 2-bit expression once that is 0..3: labels 4..7 cover none
+    of its values, so the case may match nothing and `t` keeps its old value."""
+    wide = [item([write_t_first()], f"3'h{v}") for v in (4, 5, 6, 7)]
+    got = early(case(*wide), read_t())
+    assert got is not None and got.line == 9
+    narrow = [item([write_t_first()], f"2'h{v}") for v in (0, 1, 2, 3)]
+    assert early(case(*narrow), read_t()) is None
+
+
+# -- generate conditions that can be x (x_condition) ------------------------------------------
+
+
+def gen_if(cond: dict[str, Any], line: int = 4) -> dict[str, Any]:
+    block = {"type": "GENBLOCK", "name": "g", "loc": f"e,{line}:20,{line}:21", "itemsp": []}
+    return {"type": "GENIF", "loc": f"e,{line}:3,{line}:5", "condp": [cond], "thensp": [block]}
+
+
+def op(kind: str, lhs: dict[str, Any], rhs: dict[str, Any], line: int = 4) -> dict[str, Any]:
+    return {"type": kind, "loc": f"e,{line}:10,{line}:11", "lhsp": [lhs], "rhsp": [rhs]}
+
+
+Z_REF = ref("(Zr)", "(Zp)", "Z", 4)
+
+
+def number(text: str, line: int = 4) -> dict[str, Any]:
+    return const(text, line)
+
+
+ONE_BY_Z = op("DIV", number("?32?sh1"), Z_REF)
+MINUS_ONE = {"type": "NEGATE", "loc": "e,4:15,4:16", "lhsp": [number("?32?sh1")]}
+CLOG2 = {"type": "CLOG2", "loc": "e,4:8,4:14", "lhsp": [ONE_BY_Z]}
+PICK = {"type": "FUNCREF", "name": "pick", "loc": "e,4:8,4:12", "taskp": "(F)"}
+
+
+@pytest.mark.parametrize(
+    ("cond", "what"),
+    [
+        (op("EQ", ONE_BY_Z, number("?32?sh0")), "`/` or `%`"),  # b03arr: (1 / Z) == 0
+        (op("MODDIV", number("?32?sh5"), number("?32?sh0")), "`/` or `%`"),  # 5 % 0
+        (op("EQ", CLOG2, number("?32?sh0")), "`/` or `%`"),  # x10clogif: $clog2(1 / Z) == 0
+        (op("POW", Z_REF, MINUS_ONE), "`**`"),  # b06impure: Z ** -1
+        (op("POW", number("?32?sh0"), Z_REF), "`**`"),  # 0 ** N
+        (PICK, "call of the function `pick`"),
+    ],
+)
+def test_a_generate_if_condition_that_can_be_x_is_refused(cond: dict[str, Any], what: str) -> None:
+    got = et.x_condition(module(gen_if(cond)), META, OURS)
+    assert got is not None and (got.file, got.line) == ("core.v", 4)
+    assert what in got.sentence and "condition of a generate `if`, `case` or `for`" in got.sentence
+    assert "Compute the value in a localparam first" in got.sentence
+
+
+@pytest.mark.parametrize(
+    "cond",
+    [
+        op("MODDIV", Z_REF, number("?32?sh2")),  # WIDTH % 2
+        op("DIV", Z_REF, number("8'h4")),  # N / 4'd4
+        op("POW", number("?32?sh2"), Z_REF),  # 2 ** N
+        op("POW", Z_REF, number("?32?sh3")),  # N ** 3
+        op("POWSS", Z_REF, number("?32?sh3")),  # signed, non-negative exponent
+        op("LT", Z_REF, number("?32?sh8")),
+    ],
+)
+def test_a_generate_condition_with_safe_operands_passes(cond: dict[str, Any]) -> None:
+    assert et.x_condition(module(gen_if(cond)), META, OURS) is None
+
+
+def test_a_negative_or_unknown_exponent_or_divisor_is_refused() -> None:
+    minus_one = number("?32?shffffffff")  # a signed -1
+    assert et.x_condition(module(gen_if(op("POW", Z_REF, minus_one))), META, OURS) is not None
+    assert et.x_condition(module(gen_if(op("DIV", Z_REF, number("4'b10z1")))), META, OURS)
+    assert et.x_condition(module(gen_if(op("POW", Z_REF, number("?32?ux3")))), META, OURS)
+
+
+def test_generate_case_labels_and_for_headers_are_conditions_too() -> None:
+    div = op("DIV", number("?32?sh2"), Z_REF, 6)
+    label = {"type": "GENCASEITEM", "loc": "e,6:13,6:14", "condsp": [number("?32?sh1", 6), div]}
+    gencase = {"type": "GENCASE", "loc": "e,5:3,5:7", "exprp": [Z_REF], "itemsp": [label]}
+    got = et.x_condition(module(gencase), META, OURS)
+    assert got is not None and got.line == 6
+    on = {"type": "GENCASE", "loc": "e,5:3,5:7", "exprp": [op("MODDIV", Z_REF, Z_REF, 5)]}
+    assert (got := et.x_condition(module(on), META, OURS)) is not None and got.line == 5
+    for part in ("initsp", "condp", "incsp"):
+        loop = {"type": "GENFOR", "loc": "e,7:3,7:6", part: [op("DIV", Z_REF, Z_REF, 7)]}
+        got = et.x_condition(module({"type": "GENBLOCK", "genforp": [loop]}), META, OURS)
+        assert got is not None and got.line == 7, part
+
+
+def test_an_x_operator_outside_a_generate_condition_is_not_this_rule() -> None:
+    """A parameter's value and an expression in a block are judged by their values elsewhere
+    (`xz_parameter`, the simulator's parameters)."""
+    value = var("(P)", "P", 3, varType="LPARAM", isParam=True,
+                valuep=[op("DIV", number("?32?sh1"), Z_REF, 3)])  # fmt: skip
+    assert et.x_condition(module(value), META, OURS) is None
+
+
+def test_the_first_x_condition_by_file_order_then_line_and_other_files_are_not_judged() -> None:
+    late = gen_if(op("DIV", number("?32?sh1"), Z_REF, 9), 9)
+    first = gen_if(op("DIV", number("?32?sh1"), Z_REF) | {"loc": "f,2:10,2:11"})  # project.v
+    got = et.x_condition(module(late, first), META, OURS)
+    assert got is not None and (got.file, got.line) == ("project.v", 2)
+    std = gen_if(op("DIV", number("?32?sh1"), Z_REF) | {"loc": "d,3:10,3:11"})  # Verilator's own
+    assert et.x_condition(module(std), META, OURS) is None
+    with pytest.raises(et.TreeError):
+        et.x_condition([], META, OURS)
+    odd = {"type": "GENIF", "loc": "e,4:3,4:5", "condp": {"odd": 1}}
+    with pytest.raises(et.TreeError):
+        et.x_condition(module(odd), META, OURS)

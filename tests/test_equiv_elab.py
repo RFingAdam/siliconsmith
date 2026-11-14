@@ -304,6 +304,16 @@ def test_an_escaped_name_in_a_value_is_a_name_not_a_call() -> None:
     assert [(c.word, c.col) for c in ee.initializer_calls(text, found)] == [("f", 21)]
 
 
+def test_a_call_of_an_escaped_name_in_a_value_is_listed() -> None:
+    """`\\f (a)`: an escaped name ends at the blank, and the `(` after it opens a call, which
+    Verilator must keep like any other call in the value."""
+    text = "module m;\n  wire w = \\f (a) + g(b), v = \\h  (c);\nendmodule"
+    found = ee.anchor(text, 2, 8)
+    assert found == ee.Anchor("decl", "w", 2, 8)
+    calls = ee.initializer_calls(text, found)
+    assert [(c.word, c.line, c.col) for c in calls] == [("\\f", 2, 12), ("g", 2, 21)]
+
+
 def test_a_hierarchical_call_is_still_a_call_for_the_position_check() -> None:
     text = "module m;\n  assign z = g.f(a);\nendmodule"
     assert ee.anchor(text, 2, 14) == ee.Anchor("call", "g", 2, 14)
