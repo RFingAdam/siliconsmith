@@ -13,19 +13,21 @@ the common constructs where they differ and the check answers `not_proven` (with
 named) instead of a verdict. What it does NOT spot is left to gate-level simulation
 (`run_tests` with `gl=true`):
 
-* an index computed from a signal that goes outside the range or a division by a signal that is
-  0 (x in a simulator, some value in the gates, because an x in the RTL is a don't-care; also
-  inside a generate loop or module copy), a function call written in an expression (not in a
-  parameter) that returns x for constant arguments, and a function that reads one of its own
-  locals before it writes it (a constant that comes out x, a constant index outside the range, a
-  parameter value that the simulator and Verilator work out differently and a generate condition
-  that can be x are refused by the checks on Verilator's tree and Icarus's elaboration in
-  `equiv`);
+* an index computed from a signal or a variable that goes outside the range (x in a simulator,
+  which an `if` or `!` can turn into a defined 0 or 1; some value in the gates, because an x in
+  the RTL is a don't-care), also a loop index passed into a function that selects with it (Yosys
+  works such a call out without a warning), a division by a signal that is 0 (also inside a
+  generate loop or module copy), and a function that reads one of its own locals before it
+  writes it (a constant that comes out x, a constant index outside the range, a parameter value
+  that the simulator and Verilator work out differently, a generate condition that can be x, a
+  call with constant arguments of a function that selects at a computed index or divides, and a
+  select outside the range that Yosys finds after inlining are refused by the checks on
+  Verilator's tree and Icarus's and Yosys's elaborations in `equiv`);
 * a constant expression that Yosys evaluates differently from a simulator: a size cast or an
   unbased `'1` inside a localparam, `$rtoi` in any constant expression (a localparam or a
-  generate condition), an untyped `localparam` whose value overflows (`localparam K = 8'hff + 1`:
-  the tools can size it differently); only a parameter value on which the simulator and
-  Verilator disagree is refused;
+  generate condition); only a parameter value on which the simulator and Verilator disagree is
+  refused (an untyped `localparam` that overflows, `localparam K = 8'hff + 8'h01`, is: Icarus
+  makes it 9'h100, Verilator 8'h00);
 * anything else that depends on the order in which a simulator runs events.
 
 ## What this module does
@@ -47,7 +49,9 @@ In every file:
   `include has its own reason. A macro can build text the check never sees; use a parameter;
 * the keywords `unique`, `unique0`, `priority`, `primitive`, `casex`, `inside`;
 * the two-state types `bit`, `byte`, `shortint`, `int`, `longint`, and an `enum` without a
-  four-state base type (`enum logic [1:0] {...}` is fine): they start at 0 in a simulator;
+  four-state base type (`enum logic [1:0] {...}` is fine): they start at 0 in a simulator. The
+  one exception is the index of a `for` loop declared in its header (`for (int i = 0; ...)`,
+  `_loop_indexes`): it belongs to the loop and the header sets it before every run;
 * `===` and `!==`: the check models them differently from a simulator;
 * `==?`, `!=?` and `inside` (wildcard comparisons);
 * x digits in a based literal (`4'b1x0`, `'hx`) and the unbased `'x`; z or ? digits and `'z`
@@ -392,6 +396,51 @@ def _scope_names(scan: str) -> set[str]:
         for m in pattern.finditer(scan)
         if not (pattern is _CALL_OR_INSTANCE and _after_dot(scan, m.start(1)))
     }
+
+
+_FOR_HEADER = re.compile(r"(?<![\w$'])for\s*\(", re.ASCII)
+_LOOP_DECLARATION = re.compile(
+    r"(?:\s+(?:signed|unsigned)\b)?\s+[A-Za-z_][\w$]*\s*=(?!=)", re.ASCII
+)  # after the type word: `[signed|unsigned] NAME =`
+
+
+def _loop_indexes(scan: str) -> set[int]:
+    """Where a two-state type word (`TWO_STATE`) is the type of a variable declared in the
+    initialization of a `for` header (`for (int i = 0; ...)`, also `int unsigned i = 0` and a
+    second `, int j = 7`): the start of each such word. Such a variable is automatic, belongs to
+    the loop and is set by the header before every run of the loop, so it never shows the 0 a
+    two-state variable starts at. Only a word at the top level of the header's first clause (up
+    to its first `;`), right after the `(` or a `,`, and followed by a name and a single `=`
+    counts: a cast (`int'(x)`) or any other use is not a declaration."""
+    found: set[int] = set()
+    for header in _FOR_HEADER.finditer(scan):
+        depth, k, previous = 0, header.end(), "("
+        while k < len(scan):
+            c = scan[k]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                if depth == 0:
+                    break  # the header ended before a `;`: no initialization clause
+                depth -= 1
+            elif depth == 0 and c == ";":
+                break
+            elif depth == 0 and previous in "(," and (c.isalpha() or c == "_"):
+                word = _WORD.match(scan, k)
+                if (
+                    word is not None
+                    and word.group(0) in TWO_STATE
+                    and _LOOP_DECLARATION.match(scan, word.end())
+                ):
+                    found.add(k)
+                if word is not None:
+                    k = word.end()
+                    previous = "w"
+                    continue
+            if c not in ASCII_BLANKS:
+                previous = c if depth == 0 else "x"
+            k += 1
+    return found
 
 
 def _split_top(text: str, sep: str) -> list[str]:
@@ -1278,8 +1327,11 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
         if word is None or m.group(0) == "``" or word not in ALLOWED_DIRECTIVES:
             return refuse(f"the macro or directive `{word or ''}", m.start())
     cases = _case_constructs(scan)
+    loop_indexes = _loop_indexes(scan)
     for m in _WORD.finditer(scan):
         word = m.group(0)
+        if word in TWO_STATE and m.start() in loop_indexes:
+            continue  # the index of a for loop, declared in its header: set before every run
         if word in KEYWORDS or word in TWO_STATE:
             kind = "two-state type" if word in TWO_STATE else "keyword"
             return refuse(f"the {kind} `{word}`", m.start())
@@ -1374,8 +1426,9 @@ _ADVICE = (
      "`@always_seq`, converted by MyHDL): the check reads only the plain single module it writes."),
     ("macro or directive", "Use a `localparam` or `parameter` instead: a macro can build text the "
      "check never sees."),
-    ("two-state", "Use `reg` or `logic` and reset it with rst_n: a two-state type starts at 0 in "
-     "a simulator, which the check cannot see."),
+    ("two-state", "Use `reg` or `logic` (reset a register with rst_n): a two-state type starts "
+     "at 0 in a simulator and turns an x into 0, which the check cannot see. For a loop index, "
+     "declare it in the for header (`for (int i = 0; i < 8; i++)`) or use `integer`."),
     ("enum", "Write `enum logic [1:0] {...}`: without a base type it is a two-state int."),
     ("keyword", "Use a plain `case` or `if`: synthesis assumes things a simulator does not."),
     ("delay", "Remove it: a simulator waits, synthesis ignores it."),

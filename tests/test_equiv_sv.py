@@ -211,8 +211,66 @@ def test_the_synthesis_assuming_keywords_are_refused(word: str) -> None:
 @pytest.mark.parametrize("word", ["bit", "byte", "shortint", "int", "longint"])
 def test_two_state_types_are_refused_with_the_reason(word: str) -> None:
     found = refused(f"  {word} [3:0] x;", f"`{word}`")
-    assert "reg" in sv.plain_message(found) and "reset" in sv.plain_message(found)
+    advice = sv.plain_message(found)
+    assert "reg" in advice and "reset" in advice
+    assert "for header" in advice and "integer" in advice  # what to write for a loop index
     ok(f"wire {word}_x, x_{word}; integer i; reg r; logic l;\n")
+
+
+@pytest.mark.parametrize("word", ["bit", "byte", "shortint", "int", "longint"])
+@pytest.mark.parametrize("sign", ["", " unsigned", " signed"])
+def test_a_two_state_loop_index_declared_in_the_for_header_is_accepted(
+    word: str, sign: str
+) -> None:
+    """A variable declared in a for header is automatic and the header sets it before every
+    run of the loop: it never shows the 0 a two-state variable starts at (r15 ia20, ib17)."""
+    index = f"{word}{sign} i = 0"
+    ok(f"always_comb begin y = '0; for ({index}; i < 8; i++) y[i] = a[7-i]; end\n")
+    split = f"(\n  {index};\n  i < 8;\n  i = i + 1)"  # the header over several lines
+    ok(f"always @* begin\n y = 0;\n for {split}\n y[i] = a[i];\nend\n")
+    ok(f"always_ff @(posedge clk) for ({index}; i < 4; i++) q[i] <= d[3-i];\n")
+    ok(f"always @(posedge clk) begin for ({index}, j = 7; i < 4; i++) q[i] <= d[j]; end\n")
+    ok(f"always_comb for ({index}, {word} j = 7; i < 4; i++) y[i] = d[j];\n")
+    ok(  # a loop inside a function
+        "function automatic [7:0] rev(input [7:0] v);\n"
+        f"  for ({index}; i < 8; i++) rev[i] = v[7 - i];\n"
+        "endfunction\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "int count;",  # a module-level variable: it starts at 0
+        "bit r;\nalways @(posedge clk) r <= ~r;",  # a register
+        "always_comb begin int i; for (i = 0; i < 8; i++) y[i] = a[i]; end",  # declared outside
+        "function automatic [7:0] f(input [7:0] v); int k; f = v; endfunction",
+        "function automatic int f(input [7:0] v); f = v; endfunction",  # the return type
+        "function automatic [7:0] f(input int v); f = v; endfunction",  # an argument
+        "always_comb for (i = int'(a); i < 8; i++) y[i] = 0;",  # a cast in the header
+        "always_comb for (i = 0; i < 8; i++) begin int t; t = a; y[i] = t; end",  # in the body
+        "always_comb for (i = 0; i < int'(n); i++) y[i] = 0;",  # the condition
+        "always_comb for (i = 0; i < 8; i++) y[i] = byte'(a);",
+        "always_comb for (int i = 0; i < 8; i++) begin bit b; b = a[i]; y[i] = b; end",
+        "always_comb for (int i == 0; i < 8; i++) y[i] = 0;",  # not a declaration
+        "always_comb for (int i; i < 8; i++) y[i] = 0;",  # no value from the header
+        "always_comb for (j = f(a, int'(b)); j < 8; j++) y[j] = 0;",  # inside a call
+        "always_comb for ((int i = 0); i < 8; i++) y[i] = 0;",
+        "for (int i = 0; i < 8; i++) assign y[i] = a[i];\nint k;",  # another use stays refused
+        "always_comb for (int i = 0; i < 8; i++) y[i] = 0;\nwire [7:0] t = int'(a);",
+        # round 16: only the first clause of the header, only right after `(` or `,`, and only
+        # a `for` header counts
+        "always_comb for (i = 0; int k = 0; i++) y[i] = 0;",  # after the first `;`
+        "always_comb for (i = 0; i < 8; i++, int k = 0) y[i] = 0;",  # in the step clause
+        "always_comb for (static int i = 0; i < 8; i++) y[i] = 0;",  # after another word
+        "always_comb for (automatic int i = 0; i < 8; i++) y[i] = 0;",
+        "always_comb for (var int i = 0; i < 8; i++) y[i] = 0;",
+        "always_comb foreach (int i = 0) y[i] = 0;",  # not a `for`
+        "always_comb begin y = 0; xfor (int i = 0); end",
+    ],
+)
+def test_a_two_state_type_anywhere_but_a_for_header_declaration_is_refused(text: str) -> None:
+    refused(text, "two-state type")
 
 
 def test_an_enum_needs_a_four_state_base_type() -> None:

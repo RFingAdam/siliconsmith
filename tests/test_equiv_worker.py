@@ -534,16 +534,23 @@ def test_an_unclear_one_shot_log_falls_back_to_the_step_by_step_search(
 def test_the_one_shot_takes_only_the_time_the_step_by_step_search_does_not_need(
     tmp_path: Path,
 ) -> None:
-    """The one-shot gets at most ONCE_SHARE of the budget, out of the deadline beyond one full
-    budget: the step-by-step search after it still gets its whole budget."""
+    """The one-shot gets at most ONCE_S seconds (whatever the budget), out of the deadline beyond
+    one full budget: the step-by-step search after it still gets its whole budget."""
+    assert equiv.ONCE_S == 8.0
+    for budget in (60.0, 120.0):
+        fake = FakeYosys("counter_good", **PROVEN, bmc=(0, "counter_good", "bmc.log"))
+        (tmp_path / str(budget)).mkdir()
+        go(tmp_path / str(budget), fake, budget_s=budget, deadline_s=1000.0)
+        timeouts = dict(fake.calls)
+        assert timeouts["bmc_once"] == pytest.approx(equiv.ONCE_S)
+        assert timeouts["bmc"] > budget - 1.0
     fake = FakeYosys("counter_good", **PROVEN, bmc=(0, "counter_good", "bmc.log"))
-    go(tmp_path, fake, budget_s=60.0, deadline_s=1000.0)
-    timeouts = dict(fake.calls)
-    assert timeouts["bmc_once"] == pytest.approx(60.0 * equiv.ONCE_SHARE)
-    assert timeouts["bmc"] > 59.0
+    (tmp_path / "small").mkdir()
+    go(tmp_path / "small", fake, budget_s=5.0, deadline_s=1000.0)
+    assert dict(fake.calls)["bmc_once"] == pytest.approx(5.0)  # never more than one budget
 
 
-@pytest.mark.parametrize(("deadline", "once_max"), [(400.0, 20.0), (130.0, 10.0), (100.0, 0.0)])
+@pytest.mark.parametrize(("deadline", "once_max"), [(400.0, 8.0), (125.0, 5.0), (100.0, 0.0)])
 def test_near_the_deadline_the_one_shot_gets_only_the_spare_time(
     tmp_path: Path, deadline: float, once_max: float
 ) -> None:
@@ -1547,6 +1554,53 @@ def test_a_failing_elaboration_or_an_unreadable_result_is_never_a_pass(
     assert "could not read the elaboration of the RTL" in got[1]
 
 
+OUT_OF_RANGE = (
+    "i15.v:8: Warning: Range select out of bounds on signal `\\pick$func$i15.v:11$2.v': "
+    "Setting result bit to undef.\n"
+)
+
+
+def test_a_select_outside_the_range_that_yosys_finds_is_named_with_its_line() -> None:
+    got = equiv._yosys_outside(f"1. Executing Verilog frontend.\n{OUT_OF_RANGE}End of script.\n")
+    assert got is not None and got.startswith("the RTL (i15.v, line 8) selects outside the range")
+    assert "Range select out of bounds on signal `\\pick$func$i15.v:11$2.v'" in got
+    assert "Keep every select inside the declared range (Yosys also sees one in an arm" in got
+    assert got.endswith("choose with an `if` there instead).")
+    # round 16 bpart: `v[k +: 2]` with k = 5 of a 4-bit `v`, a part-select
+    part = (
+        "bpart.v:4: Warning: Range select [6:5] out of bounds on signal "
+        "`\\pk$func$bpart.v:7$2.v': Setting all 2 result bits to undef.\n"
+    )
+    got = equiv._yosys_outside(part)
+    assert got is not None and got.startswith("the RTL (bpart.v, line 4) selects outside")
+    assert '"Range select [6:5] out of bounds on signal' in got
+    bare = equiv._yosys_outside("Warning: Range select out of bounds on signal `\\v'.\n")
+    assert bare is not None and bare.startswith("the RTL selects outside")
+    assert equiv._yosys_outside("Warning: Replacing memory \\m with list of registers.\n") is None
+    assert equiv._yosys_outside("") is None
+
+
+def test_a_select_outside_the_range_in_the_elaboration_is_refused_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Yosys warns about `v[6]` of a 4-bit `v` once it inlines `pick(ui_in[3:0], 6)`: a simulator
+    reads x there (round 15). Judged after every other finding about the RTL."""
+    tree = json.dumps({"type": "NETLIST", "modulesp": [STAR_NODE]})
+    fake = fake_elab(il("chip.v:2.3-5.6"), elab=(0, "inline", OUT_OF_RANGE))
+    got, _ = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=tree, text=STAR_TEXT, fake=fake
+    )
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert got[1].startswith("the RTL (i15.v, line 8) selects outside the range"), got[1]
+    # a block Yosys keeps and Verilator dropped is named first
+    fake = fake_elab(il("chip.v:2.3-5.6"), elab=(0, "inline", OUT_OF_RANGE))
+    got, _ = purity(
+        tmp_path / "x", monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, text=STAR_TEXT,
+        fake=fake,
+    )  # fmt: skip
+    assert got is not None and "Yosys keeps the always block at chip.v, line 2" in got[1]
+
+
 def test_a_stale_elaboration_is_never_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An `elab.il` left by an earlier run is deleted before Yosys runs: a Yosys that writes
     nothing (exit 0) is unreadable, never the old file's clean result."""
@@ -1807,8 +1861,12 @@ def test_without_exactly_one_tree_of_the_stage_before_the_parameters_it_is_refus
 SIM_TABLE = (
     ':file_names 5;\n    "N/A";\n    "<interactive>";\n    "-";\n    "project.v";\n    "chip.v";\n'
 )
-SIM_CLEAN = 'P_0x1 .param/l "W" 1 4 2, +C4<00000000000000000000000000001000>;\n' + SIM_TABLE
-SIM_X = 'P_0x1 .param/l "Q" 1 4 8, C4<x>;\n' + SIM_TABLE  # xsel: Q = A[6] of a 4-bit A
+# Icarus writes every parameter after the scope it is in (here the top module)
+SIM_TOP = 'S_0x9 .scope module, "tt_um_chip" "tt_um_chip" 3 7;\n'
+SIM_CLEAN = (
+    SIM_TOP + 'P_0x1 .param/l "W" 1 4 2, +C4<00000000000000000000000000001000>;\n' + SIM_TABLE
+)
+SIM_X = SIM_TOP + 'P_0x1 .param/l "Q" 1 4 8, C4<x>;\n' + SIM_TABLE  # xsel: Q = A[6] of a 4-bit A
 SELECT = "chip.v:9: warning: Constant bit select [6] is after A[3:0].\n"
 
 
@@ -1848,7 +1906,12 @@ def simulator(
         ),
         (equiv.LintRun(1, ""), SIM_CLEAN, "cannot compile the RTL (it failed)"),
         (equiv.LintRun(0, ""), None, "cannot compile the RTL"),  # no output file
-        (equiv.LintRun(0, ""), 'P_0x1 .param/l "Q" 1 4 8, C4<x;\n' + SIM_TABLE, "could not read"),
+        (
+            equiv.LintRun(0, ""),
+            SIM_TOP + 'P_0x1 .param/l "Q" 1 4 8, C4<x;\n' + SIM_TABLE,
+            "could not read",
+        ),
+        (equiv.LintRun(0, ""), SIM_CLEAN.removeprefix(SIM_TOP), "outside every scope"),
         (equiv.LintRun(0, ""), SIM_CLEAN.replace(":file_names", ":nofiles"), "could not read"),
     ],
 )
@@ -1864,6 +1927,46 @@ def test_the_simulators_constants_refuse_an_x_and_it_must_compile(
     assert argv[:3] == ["iverilog", "-g2012", "-Wselect-range"]
     assert argv[-4:] == ["-s", "tt_um_chip", "project.v", "chip.v"]
     assert set(files) == {"project.v", "chip.v"}  # the cleaned RTL that Yosys reads
+
+
+ASSERT_DIMS = "chip.v:6: assert: netmisc.cc:1821: failed assertion packed_dims.size() == 1"
+ASSERT_DIM = "chip.v:2: assert: eval_tree.cc:2175: failed assertion dim == 1"
+PACKED_ADVICE = "declare it as a plain vector (`localparam [7:0] P`)"
+
+
+@pytest.mark.parametrize(
+    ("run", "shown"),
+    [
+        # round 14: `localparam [1:0][3:0] P = 8'h5a;` (and `P[1]`); `$size(K2, 2)` of such a K2
+        (
+            equiv.LintRun(134, f"{ASSERT_DIMS}\nAborted (core dumped)\n"),
+            [ASSERT_DIMS, PACKED_ADVICE],
+        ),
+        (equiv.LintRun(-6, f"{ASSERT_DIM}\nAborted (core dumped)\n"), [ASSERT_DIM, PACKED_ADVICE]),
+        # an assertion the check does not know, and an abort with no assertion line
+        (
+            equiv.LintRun(134, "chip.v:3: warning: odd\nchip.v:9: assert: x.cc:5: failed z\n"),
+            ["chip.v:9: assert: x.cc:5: failed z", "simpler form"],
+        ),
+        (equiv.LintRun(-11, "Segmentation fault\n"), ["(`Segmentation fault`)", "simpler form"]),
+        (equiv.LintRun(-6, ""), ["(`exit code -6`)", "simpler form"]),
+    ],
+)
+def test_an_icarus_crash_is_refused_with_its_assertion_and_what_to_write_instead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run: equiv.LintRun, shown: list[str]
+) -> None:
+    """Icarus 12 aborts on some constructs: still a refusal (fail closed), but the message
+    quotes the assertion line, says it is a limit of the simulator and, for a known assertion,
+    what to write instead; never the bare "Aborted (core dumped)"."""
+    simulator(monkeypatch, run, None)
+    fake = fake_elab("")
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, fake=fake)
+    assert got is not None and got[0] == "guard_sim_synth_differ", got
+    assert "internal error" in got[1] and "limit of the simulator" in got[1], got[1]
+    assert "cannot compile" not in got[1]
+    for text in shown:
+        assert text in got[1], (text, got[1])
+    assert fake.tags == []
 
 
 def test_a_clean_simulator_run_goes_on_to_the_elaboration_and_a_stale_output_is_never_read(
@@ -1891,7 +1994,7 @@ def param_tree(value: str) -> str:
     return json.dumps({"type": "NETLIST", "modulesp": [top]})
 
 
-SIM_M = 'P_0x1 .param/l "M" 1 4 11, +C4<00000000000000000000000000000001>;\n' + SIM_TABLE
+SIM_M = SIM_TOP + 'P_0x1 .param/l "M" 1 4 11, +C4<00000000000000000000000000000001>;\n' + SIM_TABLE
 
 
 @pytest.mark.parametrize(
@@ -1912,6 +2015,106 @@ def test_a_parameter_the_simulator_and_verilator_compute_differently_is_refused(
         assert fake.tags == []  # named before Yosys's elaboration
     else:
         assert got is None and fake.tags == ["elab"]
+
+
+# Round 16 breal: `localparam real R = pick(4'b1010, 6);` on line 7 of chip.v. Before V3Param the
+# value holds the call (`pick` reads `v[k]`); Verilator's value is the real 0.0, Icarus's 1.0.
+def pick_tree(where: str) -> str:
+    """The `linkinc` tree with `pick` and one call `pick(4'b1010, 6)` at line 7: in the value of
+    the real localparam R (`where="value"`) or in an `assign` (`where="assign"`)."""
+
+    def at(line: int) -> str:
+        return f"e,{line}:3,{line}:5"
+
+    v = {"type": "VAR", "addr": "(v)", "name": "v", "varType": "PORT", "loc": at(3)}
+    k = {"type": "VAR", "addr": "(k)", "name": "k", "varType": "PORT", "loc": at(3)}
+    read = {
+        "type": "SELBIT",
+        "loc": at(4),
+        "fromp": [{"type": "VARREF", "varp": "(v)", "name": "v", "loc": at(4)}],
+        "bitp": [{"type": "VARREF", "varp": "(k)", "name": "k", "loc": at(4)}],
+    }
+    func = {"type": "FUNC", "addr": "(F)", "name": "pick", "loc": at(2), "stmtsp": [v, k, read]}
+    args = [
+        {"type": "ARG", "exprp": [{"type": "CONST", "name": n, "loc": at(7)}]}
+        for n in ("4'ha", "?32?sh6")
+    ]
+    calls = [{"type": "FUNCREF", "taskp": "(F)", "name": "pick", "loc": at(7), "argsp": args}]
+    if where == "value":
+        item = {
+            "type": "VAR",
+            "addr": "(R)",
+            "name": "R",
+            "varType": "LPARAM",
+            "loc": at(7),
+            "valuep": calls,
+        }
+    else:
+        item = {"type": "ASSIGNW", "loc": at(7), "rhsp": calls}
+    top = {
+        "type": "MODULE",
+        "addr": "(T)",
+        "name": "tt_um_chip",
+        "level": 1,
+        "stmtsp": [func, item],
+    }
+    return json.dumps({"type": "NETLIST", "modulesp": [top]})  # fmt: skip
+
+
+def real_tree() -> str:
+    r = {
+        "type": "VAR",
+        "addr": "(R)",
+        "name": "R",
+        "varType": "LPARAM",
+        "isParam": True,
+        "loc": "e,7:3,7:5",
+        "valuep": [{"type": "CONST", "name": "0.0", "loc": "e,7:9,7:12"}],
+    }
+    top = {"type": "MODULE", "addr": "(T)", "name": "tt_um_chip", "level": 1, "stmtsp": [r]}
+    return json.dumps({"type": "NETLIST", "modulesp": [top]})  # fmt: skip
+
+
+SIM_REAL = (
+    SIM_TOP + 'P_0x1 .param/real "R" 1 4 7, Cr<m4000000000000000gfc2>; value=1.00000\n' + SIM_TABLE
+)
+
+
+def test_a_call_that_can_give_x_in_a_value_that_is_not_compared_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real is not compared, so a call that `constant_call` lets through in its value is
+    refused (`equiv_icarus.uncompared`), before Yosys's elaboration."""
+    simulator(monkeypatch, equiv.LintRun(0, ""), SIM_REAL)
+    fake = fake_elab("module \\tt_um_chip\nend\n")
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=real_tree(),
+                    before=pick_tree("value"), fake=fake)  # fmt: skip
+    assert got is not None and got[0] == "guard_sim_synth_differ", got
+    assert "(chip.v, line 7) gives the parameter `R` a value with a call of a function" in got[1]
+    assert "Compute the call in an integer localparam first" in got[1]
+    assert fake.tags == []
+    # the same tree without the call: a real parameter alone is no problem
+    simulator(monkeypatch, equiv.LintRun(0, ""), SIM_REAL)
+    got, _ = purity(tmp_path / "b", monkeypatch, equiv.LintRun(0, ""), tree=real_tree(),
+                    fake=fake_elab("module \\tt_um_chip\nend\n"))  # fmt: skip
+    assert got is None
+
+
+def test_a_constant_call_outside_a_parameter_value_is_refused_after_the_elaboration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 15 inlcase/inlfn: `pick(4'b1010, 6)` outside a parameter value is refused
+    (`equiv_tree.constant_call`), after Yosys's elaboration and its other findings."""
+    fake = fake_elab("module \\tt_um_chip\nend\n")
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE,
+                    before=pick_tree("assign"), fake=fake)  # fmt: skip
+    assert got is not None and got[0] == "guard_sim_synth_differ", got
+    assert "(chip.v, line 7) calls the function `pick` with constant arguments" in got[1]
+    assert fake.tags == ["elab"]
+    fake = fake_elab("module \\tt_um_chip\nend\n", elab=(0, "inline", OUT_OF_RANGE))
+    got, _ = purity(tmp_path / "b", monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE,
+                    before=pick_tree("assign"), fake=fake)  # fmt: skip
+    assert got is not None and "calls the function `pick`" in got[1]  # before Yosys's warning
 
 
 def test_a_simulator_that_times_out_or_cannot_start(

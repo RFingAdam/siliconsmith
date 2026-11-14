@@ -19,9 +19,13 @@ hand):
 * `x_select`: a warning that a constant select or index of our files is outside the range (the
   simulator reads x there, Yosys reads x or a value of its own, and the gates some value);
 * `disagreement`: a parameter or localparam whose defined values differ from the ones in
-  Verilator's tree (`equiv_tree.parameter_values`), which the other checks judge. A select
-  outside the range inside a constant function warns nowhere and leaves no x bit: Icarus reads
-  x there and an `if (!v[6])` turns it into a defined value, while Verilator and Yosys read 0.
+  Verilator's tree (`equiv_tree.parameter_values`), which the other checks judge, in some module
+  instance or loop pass. A select outside the range inside a constant function warns nowhere
+  and leaves no x bit: Icarus reads x there and an `if (!v[6])` turns it into a defined value,
+  while Verilator and Yosys read 0;
+* `uncompared`: a parameter whose value holds a call that can give a simulator x
+  (`equiv_tree.valued_calls`) but whose value is not compared (a real, a string, or a parameter
+  only one tool lists).
 
 Fail closed: text this module cannot read raises `IcarusError`, which the caller turns into a
 refusal.
@@ -30,9 +34,9 @@ refusal.
 from __future__ import annotations
 
 import re
-from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import NamedTuple
 
 
 class IcarusError(Exception):
@@ -50,10 +54,20 @@ class Finding:
 
 _FILE_TABLE = re.compile(r"^:file_names (\d+);\s*$")
 _FILE_NAME = re.compile(r'^\s*"(.*)";\s*$')
+# `S_0x... .scope module, "u0" "sub" 4 7, 4 14 0, S_0x...;`: a scope (module instance, generate
+# block or loop pass, named block, function, package), its instance name, its type name, where
+# it is, and the label of the scope that holds it (none for the top module or a package). The
+# declarations after it (`.param` lines) belong to it; `.scope S_0x...;` returns to a scope.
+_SCOPE_LINE = re.compile(r"^\S+\s+\.scope\b")
+_SCOPE = re.compile(
+    r'^(\S+)\s+\.scope\s+[\w.$]+,\s*"((?:[^"\\]|\\.)*)"\s+"(?:[^"\\]|\\.)*"\s+\d+\s+\d+'
+    r"(?:,\s*\d+\s+\d+\s+\d+,\s*(\S+))?;\s*$"
+)
+_RECALL = re.compile(r"^\s+\.scope\s+(\S+);\s*$")
 # `P_0x... .param/l "NAME" <local> <file> <line>, <value>;` (a real carries a comment after `;`)
 _PARAM_LINE = re.compile(r"^\S+\s+\.param/")
 _PARAM = re.compile(r'^\S+\s+\.param/(\w+)\s+"((?:[^"\\]|\\.)*)"\s+(\d+)\s+(\d+)\s+(\d+),\s*(.*)$')
-_VECTOR = re.compile(r"^\+?C4<([01xz]*)>;\s*$")
+_VECTOR = re.compile(r"^(\+?)C4<([01xz]*)>;\s*$")  # `+`: a signed value
 _OTHER_KINDS = frozenset({"str", "real"})  # a string or a real number has no x or z bit
 _WARNING = re.compile(r"^([^\n:]+):(\d+): warning: (.*)$", re.M)
 # The warnings of `-Wselect-range`, and the x index of an array, as Icarus 12 words them
@@ -79,12 +93,60 @@ def files(vvp: str) -> list[str]:
     raise IcarusError("the simulator's output has no file table")
 
 
-def _parameters(vvp: str) -> Iterator[tuple[str, int, str, str | None]]:
-    """`(file, line, name, bits)` of every parameter, localparam and genvar line, once per module
-    instance and loop pass; `bits` is None for a string or a real. Every such line must be
-    readable, and a vector value must be a `C4<...>` of 0, 1, x and z."""
+# Where a value is: the instance names from the top module (or package) down, as the simulator
+# names its scopes (`("tt_um_x", "core", "b[0]")`).
+Path = tuple[str, ...]
+
+
+class _Param(NamedTuple):
+    file: str
+    line: int
+    name: str
+    bits: str | None  # None for a string or a real
+    signed: bool
+    path: Path
+
+
+def _scopes(rows: list[str]) -> dict[str, Path]:
+    """`{label: path}` of every scope the `.vvp` text declares (a parent may come later)."""
+    declared: dict[str, tuple[str, str | None]] = {}
+    for row in rows:
+        if _SCOPE_LINE.match(row) is None:
+            continue
+        scope = _SCOPE.match(row)
+        if scope is None or scope.group(1) in declared:
+            raise IcarusError("a scope in the simulator's output is unreadable")
+        declared[scope.group(1)] = (_unescape(scope.group(2)), scope.group(3))
+    paths: dict[str, Path] = {}
+    for label in declared:
+        chain: list[str] = []
+        at: str | None = label
+        while at is not None and at not in paths:
+            if at not in declared or at in chain:
+                raise IcarusError("a scope in the simulator's output has no readable parent")
+            chain.append(at)
+            at = declared[at][1]
+        path = paths[at] if at is not None else ()
+        for step in reversed(chain):
+            path = (*path, declared[step][0])
+            paths[step] = path
+    return paths
+
+
+def _parameters(vvp: str) -> Iterator[_Param]:
+    """Every parameter, localparam and genvar line, once per module instance and loop pass, with
+    the path of the scope it is in (the last scope declared, or returned to, before it). Every
+    such line and every scope must be readable, and a vector value must be a `C4<...>` of 0, 1,
+    x and z."""
     table = files(vvp)
-    for row in vvp.splitlines():
+    rows = vvp.splitlines()
+    scopes = _scopes(rows)
+    current: Path | None = None
+    for row in rows:
+        scope = _SCOPE.match(row) or _RECALL.match(row)
+        if scope is not None:
+            current = scopes.get(scope.group(1))  # None: a label never declared
+            continue
         if _PARAM_LINE.match(row) is None:
             continue
         match = _PARAM.match(row)
@@ -93,14 +155,21 @@ def _parameters(vvp: str) -> Iterator[tuple[str, int, str, str | None]]:
         kind, name, _, index, line, value = match.groups()
         if int(index) >= len(table):
             raise IcarusError(f"the parameter `{name}` names a file that is not in the table")
-        shown = name.replace('\\"', '"')
+        if current is None:
+            raise IcarusError(f"the parameter `{name}` is outside every scope")
+        shown = _unescape(name)
         if kind in _OTHER_KINDS:
-            yield table[int(index)], int(line), shown, None
+            yield _Param(table[int(index)], int(line), shown, None, False, current)
             continue
         vector = _VECTOR.match(value) if kind == "l" else None
         if vector is None:
             raise IcarusError(f"the value of the parameter `{name}` is unreadable")
-        yield table[int(index)], int(line), shown, vector.group(1)
+        signed, bits = vector.groups()
+        yield _Param(table[int(index)], int(line), shown, bits, signed == "+", current)
+
+
+def _unescape(name: str) -> str:
+    return name.replace('\\"', '"')
 
 
 def x_parameter(vvp: str, ours: list[str]) -> Finding | None:
@@ -108,7 +177,7 @@ def x_parameter(vvp: str, ours: list[str]) -> Finding | None:
     whose value in the elaborated design has an x or z bit, else None. Every line that defines
     a parameter must be readable (`_parameters`)."""
     found: list[tuple[int, int, str, str, str]] = []
-    for file, line, name, bits in _parameters(vvp):
+    for file, line, name, bits, _, _ in _parameters(vvp):
         if bits is not None and file in ours and ("x" in bits or "z" in bits):
             found.append((ours.index(file), line, name, bits, file))
     if not found:
@@ -149,17 +218,18 @@ def x_select(output: str, ours: list[str]) -> Finding | None:
 
 
 # A parameter's declaration (`(file, line, name)`) and its values, one per module instance (or
-# loop pass), as `(width, value)`; None when some value is not a plain vector of 0 and 1 (a
-# string, a real, an x or z bit): such a parameter is not compared.
+# loop pass), as `(path, number)`: the number is the value with its sign (a signed value whose
+# top bit is set is negative). None when some value is not a plain vector of 0 and 1 (a string,
+# a real, an x or z bit): such a parameter is not compared.
 Key = tuple[str, int, str]
-Values = dict[Key, list[tuple[int, int]] | None]
+Values = dict[Key, list[tuple[Path, int]] | None]
 
 
 def parameter_values(vvp: str, ours: list[str]) -> Values:
     """The value of every parameter, localparam and genvar of the files in `ours` in the
     simulator's elaboration, once per module instance and loop pass (`_parameters`)."""
     found: Values = {}
-    for file, line, name, bits in _parameters(vvp):
+    for file, line, name, bits, signed, path in _parameters(vvp):
         if file not in ours:
             continue
         key = (file, line, name)
@@ -167,13 +237,53 @@ def parameter_values(vvp: str, ours: list[str]) -> Values:
         if bits is None or bits.strip("01") or not bits or known is None:
             found[key] = None
         else:
-            known.append((len(bits), int(bits, 2)))
+            number = int(bits, 2)
+            if signed and bits[0] == "1":
+                number -= 1 << len(bits)
+            known.append((path, number))
     return found
 
 
-def _shown(values: Counter[int]) -> str:
-    listed = [str(v) for v, n in sorted(values.items()) for _ in range(n)]
+def _shown(values: list[tuple[Path, int]]) -> str:
+    listed = [str(v) for v in sorted(v for _, v in values)]
     return ", ".join(listed[:4]) + (", ..." if len(listed) > 4 else "")
+
+
+def _where(paths: list[Path]) -> str:
+    named = sorted({".".join(p) for p in paths})
+    return ", ".join(f"`{p}`" for p in named[:2]) + (", ..." if len(named) > 2 else "")
+
+
+def _differ(mine: list[tuple[Path, int]], theirs: list[tuple[Path, int]]) -> tuple[str, bool]:
+    """How the two tools' values of one parameter differ ("" if they do not), and whether that
+    is a different value (True) or instances the check cannot pair (False)."""
+    a, b = dict(mine), dict(theirs)
+    if len(a) == len(mine) and len(b) == len(theirs) and a.keys() == b.keys():
+        wrong = sorted(p for p in a if a[p] != b[p])
+        if not wrong:
+            return "", True
+        at = wrong[0]
+        return (
+            f"the value {a[at]} in a simulator (Icarus) but {b[at]} in Verilator's elaboration "
+            f"(in `{'.'.join(at)}`)",
+            True,
+        )
+    values = {v for _, v in mine}
+    if values == {v for _, v in theirs}:
+        if len(values) == 1:
+            return "", True  # every instance has the one value in both tools
+        return (
+            f"the values {_shown(mine)} in its instances and loop passes, and the check cannot "
+            f"pair the simulator's (Icarus) instances ({_where([p for p, _ in mine])}) with "
+            f"Verilator's ({_where([p for p, _ in theirs])}) to see that each one has the same "
+            "value in both",
+            False,
+        )
+    return (
+        f"the value {_shown(mine)} in a simulator (Icarus) but {_shown(theirs)} in Verilator's "
+        "elaboration",
+        True,
+    )
 
 
 def disagreement(simulator: Values, verilator: Values, ours: list[str]) -> Finding | None:
@@ -181,34 +291,73 @@ def disagreement(simulator: Values, verilator: Values, ours: list[str]) -> Findi
     simulator's elaboration (`parameter_values`) differ from those in Verilator's tree
     (`equiv_tree.parameter_values`), else None.
 
-    Both are compared as a multiset, one value per module instance, on the low bits that both
-    widths hold (Icarus can make an untyped localparam a bit wider). A parameter only one tool
-    lists (a genvar has no value in Verilator's tree) or that holds a string, a real or an x is
-    not compared here (an x is `x_parameter`'s). The other checks judge the design Verilator
-    elaborated and the proof the one Yosys did; a simulator that uses another value for a
-    parameter (an index, a generate branch, a case item) runs a different design."""
-    found: list[tuple[int, int, str, str, Counter[int], Counter[int]]] = []
+    The values are compared in full, as numbers with their sign (Icarus can make an untyped
+    localparam wider, which does not change the number), instance by instance: each path from
+    the top module (`tt_um_x.core.b[0]`, an instance, generate block or loop pass, named block
+    or function) must have the same value in both tools. When the two tools' paths of a
+    parameter cannot be paired one to one (a block without a name: Icarus calls it
+    `$unm_blk_2`, Verilator `unnamedblk1`), the values still pass if every instance has the one
+    same value in both tools, and are refused otherwise. A parameter only one tool lists (a
+    genvar has no value in Verilator's tree) or that holds a string, a real or an x is not
+    compared here (an x is `x_parameter`'s, a call that can give x in a real or a string
+    `uncompared`'s). The other checks judge the design Verilator elaborated and the proof the
+    one Yosys did; a simulator that uses another value for a parameter (an index, a generate
+    branch, a case item) runs a different design."""
+    found: list[tuple[int, int, str, str, str, bool]] = []
     for key in simulator.keys() & verilator.keys():
         mine, theirs = simulator[key], verilator[key]
         if not mine or not theirs or key[0] not in ours:
             continue
-        mask = (1 << min(w for w, _ in mine + theirs)) - 1
-        a = Counter(v & mask for _, v in mine)
-        b = Counter(v & mask for _, v in theirs)
-        if a != b:
+        what, valued = _differ(mine, theirs)
+        if what:
             file, line, name = key
-            found.append((ours.index(file), line, name, file, a, b))
+            found.append((ours.index(file), line, name, file, what, valued))
     if not found:
         return None
-    _, line, name, file, a, b = min(found, key=lambda f: f[:3])
+    _, line, name, file, what, valued = min(found, key=lambda f: f[:3])
+    why = (
+        "which the other checks judge (a select outside the range inside a constant function "
+        "does this: the simulator reads x there, and an `if` or `!` can turn that x into a "
+        "defined value; so does an untyped localparam that overflows, which the simulator "
+        "makes wider): a simulator and the synthesis can then index, choose generate branches "
+        "and case items differently, so the check cannot vouch for the design. Compute it so "
+        "that every tool gives the same value: keep every select inside the declared range, "
+        "and give a localparam that can overflow a type or a size (`localparam [31:0] M = 1 "
+        "<< 31;`)"
+        if valued
+        else "so it cannot vouch for the design. Give every block that holds this parameter "
+        "a name (`begin : name`)"
+    )
+    return Finding(
+        file, line, f"the RTL ({file}, line {line}) gives the parameter `{name}` {what}, {why}"
+    )
+
+
+def uncompared(
+    simulator: Values, verilator: Values, keys: frozenset[Key], ours: list[str]
+) -> Finding | None:
+    """The first parameter of `keys` (by file order, line, name) whose value is not compared by
+    `disagreement`, else None. `keys` are the parameters whose value holds a call that can give
+    a simulator x (`equiv_tree.valued_calls`): such a call is only allowed there because its
+    value is compared, so it must be a plain number in both tools' every instance. A parameter
+    that neither tool instantiates is fine."""
+    found: list[tuple[int, int, str, str]] = []
+    for file, line, name in keys:
+        if file not in ours:
+            continue
+        mine, theirs = simulator.get((file, line, name), []), verilator.get((file, line, name), [])
+        if (mine and theirs) or (mine == [] and theirs == []):
+            continue
+        found.append((ours.index(file), line, name, file))
+    if not found:
+        return None
+    _, line, name, file = min(found)
     return Finding(
         file,
         line,
-        f"the RTL ({file}, line {line}) gives the parameter `{name}` the value {_shown(a)} in a "
-        f"simulator (Icarus) but {_shown(b)} in Verilator's elaboration, which the other checks "
-        "judge (a select outside the range inside a constant function does this: the simulator "
-        "reads x there, and an `if` or `!` can turn that x into a defined value): a simulator "
-        "and the synthesis can then index, choose generate branches and case items "
-        "differently, so the check cannot vouch for the design. Compute it so that every tool "
-        "gives the same value: keep every select inside the declared range",
+        f"the RTL ({file}, line {line}) gives the parameter `{name}` a value with a call of a "
+        "function that can give a simulator x (it reads a vector at a computed index or "
+        "divides), and the check cannot compare that value between the simulator (Icarus) and "
+        "Verilator (a real or a string, or a parameter only one tool lists), so it cannot "
+        "vouch for the design. Compute the call in an integer localparam first and use that",
     )

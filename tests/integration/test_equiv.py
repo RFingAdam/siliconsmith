@@ -401,6 +401,31 @@ RTL_SEEDS = [
     ("c02ifnot", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("e05genlaunder", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("c14sub", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # the same function called inline (not in a parameter, so no value is compared): with
+    # constant arguments as a case label, inside another function, in a clocked `if` and as a
+    # part-select base; and with a signal and the constant 6 (Yosys warns once it inlines it)
+    ("inlcase", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("inlfn", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("inlff", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("inlpart", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("inlsig", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # Icarus 12 aborts on a localparam with two packed dimensions: still refused
+    ("icapack", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # Round 16: the laundered value swapped between loop passes, instances and overrides (the
+    # same set of values in both tools), wider in Icarus (2'b11 against 1'h1: the bit both hold
+    # agrees) in a generate condition and a defparam, in a real localparam (whose value is not
+    # compared), in a localparam's range, and in every element of an instance array; and untyped
+    # localparams that overflow 32 bits, which Icarus makes wider (4294967295 against -1)
+    ("swaploop", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("swapinst", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("swapover", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("widegen", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("widedefp", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("realcall", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("realcallu", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("rangecall", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("arrpick", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("ovfmask", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
 
 
@@ -670,6 +695,14 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # in range, so every tool gives the same value); blinkmux and seg7mux (a multiplexer whose select
 # is a flip-flop with no value before reset: the run from power-up used to read the netlist side
 # through the RTL's values, saw x on a pin the netlist defines and called it "NOT equivalent").
+# Round 15: forint, forpat and forfunc (a loop index declared as `int` in the for header, in an
+# always_comb and in a function: it belongs to the loop, so the two-state type is accepted there);
+# inlok (the control of the inline-call seeds: constant calls of functions without a computed
+# index, and the function with one called with a signal or in a localparam).
+# Round 16: arrinv, arrbit, arradd and arrnest (an instance array of a module with a parameter or
+# localparam, also nested: Verilator keeps the array as one instance, a simulator makes one per
+# element, and each element must be counted to compare the values). ovfmaskok (the control of
+# ovfmask: the same masks with a size, so every tool gives them the same 32-bit value).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -682,6 +715,15 @@ EQUIVALENT = [
     "c12inrange",
     "blinkmux",
     "seg7mux",
+    "forint",
+    "forpat",
+    "forfunc",
+    "inlok",
+    "arrinv",
+    "arrbit",
+    "arradd",
+    "arrnest",
+    "ovfmaskok",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
@@ -702,6 +744,41 @@ async def test_equiv_normal_designs_are_equivalent(
         assert result["ok"] is True, result["summary"]
         assert details["verdict"] == "equivalent" and details["method"] == "equiv_induct", details
         assert "tree" in details["seconds"], details["seconds"]  # the tree checks ran
+
+
+# What each refusal says to write instead (round 15), and where the values differ (round 16: the
+# instance or loop pass, as a simulator names it).
+REFUSAL_ADVICE = {
+    "inlcase": "Compute it in a localparam first",
+    "inlfn": "Compute it in a localparam first",
+    "inlsig": "Keep every select inside the declared range",
+    "icapack": "declare it as a plain vector",
+    "realcall": "Compute the call in an integer localparam first",
+    "rangecall": "outside the value of a parameter or localparam",
+    "swaploop": "the value 1 in a simulator (Icarus) but 0 in Verilator's elaboration (in "
+    "`tt_um_swaploop.core.b[0]`)",
+    "swapinst": "(in `tt_um_swapinst.core.u0`)",
+    "widegen": "the value 3 in a simulator (Icarus) but 1 in Verilator's elaboration",
+    "arrpick": "(in `tt_um_arrpick.core.u[0]`)",
+    "ovfmask": "give a localparam that can overflow a type or a size",
+}
+
+
+@pytest.mark.parametrize("design", sorted(REFUSAL_ADVICE))
+async def test_an_inline_call_or_an_icarus_crash_is_refused_with_what_to_write_instead(
+    server: Client, tmp_path: Path, design: str
+) -> None:
+    async with server as client:
+        await design_project(client, tmp_path, design, "verilog")
+        result = await call(client, "check_equivalence", project=design)
+        details = result["details"]
+        print(f"\n{design}: {details.get('verdict')} {details.get('reason')}: {details['message']}")
+        assert (details["verdict"], details["reason"]) == ("not_proven", "guard_sim_synth_differ")
+        assert REFUSAL_ADVICE[design] in details["message"], details["message"]
+        if design == "icapack":  # the assertion line itself, and whose limit it is
+            assert "assert: netmisc.cc" in details["message"]
+            assert "limit of the simulator" in details["message"]
+            assert "Aborted" not in details["message"]
 
 
 async def test_the_one_shot_search_from_reset_proves_a_registered_table(

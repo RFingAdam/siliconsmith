@@ -161,12 +161,16 @@ def test_a_warning_in_the_first_of_our_files_counts_and_file_order_comes_before_
 LAUNDERED = vvp('P_0x5f6c3b2fe620 .param/l "M" 1 4 11, +C4<00000000000000000000000000000001>;')
 
 
+CORE = ("tt_um_core", "core")  # the path of the scope `vvp` puts every parameter in
+
+
 def test_the_simulators_values_once_per_instance_and_pass() -> None:
+    """With the path of the scope each one is in, and with its sign (`+C4<...>`)."""
     got = ei.parameter_values(CLEAN, OURS)
     assert got == {
-        ("core.v", 8, "g"): [(2, 0), (2, 1)],
-        ("core.v", 1, "N"): [(32, 3)],
-        ("core.v", 6, "NEG"): [(8, 0xFD)],
+        ("core.v", 8, "g"): [(CORE, 0), (CORE, 1)],
+        ("core.v", 1, "N"): [(CORE, 3)],
+        ("core.v", 6, "NEG"): [(CORE, -3)],  # +C4<11111101>: signed
         ("core.v", 3, "R"): None,
         ("core.v", 2, "S"): None,
     }
@@ -174,49 +178,229 @@ def test_the_simulators_values_once_per_instance_and_pass() -> None:
     assert ei.parameter_values(QF2, ["project.v"]) == {}
 
 
+# round 16 p11sw64: `for (genvar g = 0; g < 2; g++) begin : b localparam integer M = (g == 0) ?
+# pick(4'b1010, 64) : 1 - pick(4'b1010, 64); ... end` as Icarus 12 wrote it: one scope per loop
+# pass (b[0], b[1]) inside `core`, the function's scope after them, and code that returns to a
+# scope declared further down (`.scope S_0x9;` before `S_0x9 .scope ...`).
+SWAPPED = (
+    '#! /usr/bin/vvp\n:ivl_version "12.0 (stable)";\n'
+    'S_0x1 .scope package, "$unit" "$unit" 2 1;\n'
+    'S_0x2 .scope module, "tt_um_core" "tt_um_core" 3 7;\n'
+    'S_0x3 .scope module, "core" "core" 3 18, 4 2 0, S_0x2;\n'
+    'S_0x4 .scope generate, "b[0]" "b[0]" 4 11, 4 11 0, S_0x3;\n'
+    'P_0x10 .param/l "M" 1 4 12, +C4<00000000000000000000000000000001>;\n'
+    'P_0x11 .param/l "g" 1 4 11, +C4<00>;\n'
+    'S_0x5 .scope generate, "b[1]" "b[1]" 4 11, 4 11 0, S_0x3;\n'
+    'P_0x12 .param/l "M" 1 4 12, +C4<00000000000000000000000000000000>;\n'
+    'P_0x13 .param/l "g" 1 4 11, +C4<01>;\n'
+    "    .scope S_0x9;\n"
+    'S_0x6 .scope autofunction.vec4.u32, "pick" "pick" 4 7, 4 7 0, S_0x3;\n'
+    'S_0x9 .scope autobegin, "$ivl_for_loop0" "$ivl_for_loop0" 4 4, 4 4 0, S_0x6;\n'
+    "    .scope S_0x3;\n    %end;\n" + TABLE
+)
+B0, B1 = (*CORE, "b[0]"), (*CORE, "b[1]")
+M = ("core.v", 12, "M")
+
+
+def test_every_value_has_the_path_of_its_scope() -> None:
+    got = ei.parameter_values(SWAPPED, OURS)
+    assert got == {M: [(B0, 1), (B1, 0)], ("core.v", 11, "g"): [(B0, 0), (B1, 1)]}
+
+
+def test_values_swapped_between_loop_passes_or_instances_are_named_with_the_pass() -> None:
+    """Round 16: Verilator gave b[0] M = 0 and b[1] M = 1. As a multiset both tools have {0, 1},
+    but every pass indexes another bit in a simulator than in the gates."""
+    simulator = ei.parameter_values(SWAPPED, OURS)
+    got = ei.disagreement(simulator, {M: [(B0, 0), (B1, 1)]}, OURS)
+    assert got is not None and (got.file, got.line) == ("core.v", 12)
+    assert (
+        "gives the parameter `M` the value 1 in a simulator (Icarus) but 0 in Verilator's "
+        "elaboration (in `tt_um_core.core.b[0]`)" in got.sentence
+    )
+    assert "keep every select inside the declared range" in got.sentence
+    assert ei.disagreement(simulator, {M: [(B1, 0), (B0, 1)]}, OURS) is None  # any order
+
+
 def test_a_parameter_the_simulator_computes_differently_from_verilator_is_named() -> None:
     simulator = ei.parameter_values(LAUNDERED, OURS)
-    got = ei.disagreement(simulator, {("core.v", 11, "M"): [(32, 0)]}, OURS)
+    got = ei.disagreement(simulator, {("core.v", 11, "M"): [(CORE, 0)]}, OURS)
     assert got is not None and (got.file, got.line) == ("core.v", 11)
     assert (
         "gives the parameter `M` the value 1 in a simulator (Icarus) but 0 in Verilator's "
         "elaboration" in got.sentence
     )
     assert "keep every select inside the declared range" in got.sentence
-    assert ei.disagreement(simulator, {("core.v", 11, "M"): [(32, 1)]}, OURS) is None
+    assert ei.disagreement(simulator, {("core.v", 11, "M"): [(CORE, 1)]}, OURS) is None
 
 
-def test_values_are_compared_per_instance_on_the_bits_both_widths_hold() -> None:
+def test_values_are_compared_in_full_as_numbers_with_their_sign() -> None:
+    """Round 16 brep and p12rep64: `localparam V = {(pick(4'b1010, 6) + 1){1'b1}};` is 2'b11 to
+    Icarus and 1'h1 to Verilator: the bit both widths hold agrees, the numbers (3, 1) do not."""
+    key = ("core.v", 7, "V")
+
+    def differ(bits: str, theirs: int) -> bool:
+        line = f'P_0x3 .param/l "V" 1 4 7, {bits};'
+        return ei.disagreement(ei.parameter_values(vvp(line), OURS), {key: [(CORE, theirs)]},
+                               OURS) is not None  # fmt: skip
+
+    assert differ("C4<11>", 1)  # brep: 3 against 1
+    assert not differ("C4<11>", 3)
+    assert not differ("C4<000000000000000000000000000000110>", 6)  # `4'd5 + 1`, 33 bits wide
+    assert differ("C4<100000000>", 0)  # `8'hff + 8'h01`: Icarus 9'h100, Verilator 8'h00
+    assert not differ("+C4<111111111111111111111111111111111>", -1)  # -1, 33 bits signed
+    assert differ("C4<111111111111111111111111111111111>", -1)  # unsigned: 2**33 - 1
+    assert differ("+C4<1101>", 13)  # -3, not 13
+    assert not differ("+C4<0101>", 5)
+    # an untyped `(1 << 32) - 1` and `1 << 31`: Icarus makes them wider and positive, Verilator
+    # keeps 32 signed bits; the low 32 bits agree, but `M > 0` does not
+    assert differ("C4<0" + "1" * 32 + ">", -1)
+    assert differ("C4<01" + "0" * 31 + ">", -(1 << 31))
+    assert not differ("C4<" + "1" * 32 + ">", (1 << 32) - 1)  # `localparam [31:0]`
+    wide = ei.parameter_values(vvp('P_0x3 .param/l "V" 1 4 7, C4<0' + "1" * 32 + ">;"), OURS)
+    got = ei.disagreement(wide, {key: [(CORE, -1)]}, OURS)
+    assert got is not None and "the value 4294967295 in a simulator (Icarus) but -1" in got.sentence
+    assert "give a localparam that can overflow a type or a size" in got.sentence
+
+
+def test_paths_that_cannot_be_paired_pass_only_with_one_value_in_both() -> None:
+    """A block without a name: Icarus calls it `$unm_blk_2`, Verilator `unnamedblk1`."""
     key = ("core.v", 5, "P")
+    a, b, c = (*CORE, "$unm_blk_2"), (*CORE, "unnamedblk1"), (*CORE, "x")
 
-    def differ(mine: list[tuple[int, int]] | None, theirs: list[tuple[int, int]] | None) -> bool:
-        return ei.disagreement({key: mine}, {key: theirs}, OURS) is not None
+    def differ(mine: list[tuple[tuple[str, ...], int]], theirs: list) -> str | None:
+        got = ei.disagreement({key: mine}, {key: theirs}, OURS)
+        return None if got is None else got.sentence
 
-    assert not differ([(33, 6)], [(32, 6)])  # Icarus makes `4'd5 + 1` 33 bits wide
-    assert not differ([(33, 2**33 - 1)], [(32, 2**32 - 1)])  # -1
-    assert differ([(33, 2**32 + 6)], [(32, 7)])
-    # three instances: the laundered one looks like the third in Icarus, like the second in
-    # Verilator, so the sets match; the counts do not
-    assert differ([(32, 1), (32, 0), (32, 1)], [(32, 0), (32, 0), (32, 1)])
-    assert not differ([(32, 1), (32, 0), (32, 1)], [(32, 1), (32, 1), (32, 0)])
-    assert not differ(None, [(32, 0)]) and not differ([(32, 1)], None)  # a string, real or x
-    assert not differ([(32, 1)], [])  # a module copy nothing instantiates
-    assert ei.disagreement({key: [(32, 1)]}, {}, OURS) is None  # only one tool lists it
+    assert differ([(a, 4)], [(b, 4)]) is None
+    assert differ([(a, 4), (c, 4)], [(b, 4)]) is None  # every instance has 4 in both
+    assert differ([(a, 4)], [(a, 4), (a, 4)]) is None  # a path twice: not paired, one value
+    got = differ([(a, 4)], [(b, 5)])
+    assert got is not None and "the value 4 in a simulator (Icarus) but 5 in Verilator" in got
+    got = differ([(a, 4), (c, 5)], [(b, 4), (c, 5)])
+    assert got is not None and "the values 4, 5 in its instances and loop passes" in got
+    assert "cannot pair the simulator's (Icarus) instances (`tt_um_core.core.$unm_blk_2`" in got
+    assert "Give every block that holds this parameter a name" in got
+    assert "keep every select" not in got
+
+
+@pytest.mark.parametrize("order", [["1", "x"], ["x", "1"], ["x", "x"]])
+def test_an_x_in_one_instance_makes_the_whole_parameter_uncompared(order: list[str]) -> None:
+    """Whichever instance comes first: one x is enough (`x_parameter` refuses it)."""
+    rows = [
+        f'S_0x{i + 5} .scope module, "u{i}" "sub" 4 7, 4 14 0, S_0x2;\n'
+        f'P_0x{i + 5} .param/l "P" 1 4 5, C4<{bit}>;'
+        for i, bit in enumerate(order)
+    ]
+    assert ei.parameter_values(vvp(*rows), OURS) == {("core.v", 5, "P"): None}
+
+
+def test_a_parameter_only_one_tool_lists_or_without_a_plain_value_is_not_compared() -> None:
+    key = ("core.v", 5, "P")
+    for mine, theirs in [(None, [(CORE, 0)]), ([(CORE, 1)], None), ([(CORE, 1)], [])]:
+        assert ei.disagreement({key: mine}, {key: theirs}, OURS) is None
+    assert ei.disagreement({key: [(CORE, 1)]}, {}, OURS) is None
 
 
 def test_the_first_disagreement_by_file_order_then_line_is_named_with_every_value() -> None:
+    five = [((*CORE, f"u{i}"), 1) for i in range(5)]
     simulator = {
-        ("core.v", 3, "A"): [(32, 1)],
-        ("project.v", 9, "W"): [(8, 1)] * 5,
-        ("core.v", 2, "B"): [(32, 1)],
+        ("core.v", 3, "A"): [(CORE, 1)],
+        ("project.v", 9, "W"): five,
+        ("core.v", 2, "B"): [(CORE, 1)],
     }
     verilator = {
-        ("core.v", 3, "A"): [(32, 0)],
-        ("project.v", 9, "W"): [(8, 2)] * 5,
-        ("core.v", 2, "B"): [(32, 0)],
+        ("core.v", 3, "A"): [(CORE, 0)],
+        ("project.v", 9, "W"): [((*CORE, "v"), 2)],
+        ("core.v", 2, "B"): [(CORE, 0)],
     }
     got = ei.disagreement(simulator, verilator, OURS)
     assert got is not None and (got.file, got.line) == ("project.v", 9)
-    assert "the value 1, 1, 1, 1, ... in a simulator (Icarus) but 2, 2, 2, 2, ..." in got.sentence
+    assert "the value 1, 1, 1, 1, ... in a simulator (Icarus) but 2 in Verilator's" in got.sentence
     got = ei.disagreement(simulator, verilator, ["core.v"])
     assert got is not None and (got.file, got.line) == ("core.v", 2)
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        ['S_0x7 .scope module "core" "core" 3 18;'],  # no comma
+        ['S_0x7 .scope module, "core" "core" 3 18, 4 2 0, S_0x8;'],  # a parent never declared
+        [  # each the other's parent
+            'S_0x7 .scope module, "a" "a" 3 18, 4 2 0, S_0x8;',
+            'S_0x8 .scope module, "b" "b" 3 18, 4 2 0, S_0x7;',
+        ],
+        ['S_0x1 .scope module, "again" "again" 3 7;'],  # a label declared twice
+    ],
+)
+def test_a_scope_that_cannot_be_read_fails_closed(rows: list[str]) -> None:
+    with pytest.raises(ei.IcarusError):
+        ei.parameter_values(vvp(*rows), OURS)
+
+
+def test_a_parameter_outside_every_scope_fails_closed() -> None:
+    lone = 'P_0x3 .param/l "Q" 1 4 8, C4<0>;\n' + TABLE
+    with pytest.raises(ei.IcarusError, match="outside every scope"):
+        ei.parameter_values(lone, OURS)
+    with pytest.raises(ei.IcarusError, match="outside every scope"):  # a scope never declared
+        ei.parameter_values(vvp("    .scope S_0x9;", 'P_0x3 .param/l "Q" 1 4 8, C4<0>;'), OURS)
+    declared_later = 'S_0x9 .scope module, "t" "t" 3 7;\n' + TABLE
+    later = "    .scope S_0x9;\n" + lone.replace(TABLE, declared_later)
+    assert ei.parameter_values(later, OURS) == {("core.v", 8, "Q"): [(("t",), 0)]}
+
+
+def test_a_parent_declared_after_its_child_still_gives_the_path() -> None:
+    text = (
+        'S_0x7 .scope generate, "g" "g" 4 3, 4 3 0, S_0x8;\n'
+        'P_0x3 .param/l "Q" 1 4 8, C4<1>;\n'
+        'S_0x8 .scope module, "top" "top" 3 1;\n' + TABLE
+    )
+    assert ei.parameter_values(text, OURS) == {("core.v", 8, "Q"): [(("top", "g"), 1)]}
+
+
+# -- round 16: a call that can give x in a value that is not compared ---------------------------
+
+
+def test_a_call_in_a_value_that_is_not_compared_is_refused() -> None:
+    """Round 16 breal: `localparam real R = pick(4'b1010, 6);` is 1.0 to Icarus and 0.0 to
+    Verilator; a real is not compared, so the call that `constant_call` lets through there is
+    refused (`equiv_tree.valued_calls` names R)."""
+    key = ("core.v", 7, "R")
+    real = vvp('P_0x3 .param/real "R" 1 4 7, Cr<m4000000000000000gfc2>; value=1.00000')
+    simulator = ei.parameter_values(real, OURS)
+    got = ei.uncompared(simulator, {key: None}, frozenset({key}), OURS)
+    assert got is not None and (got.file, got.line) == ("core.v", 7)
+    assert "gives the parameter `R` a value with a call of a function that can give" in got.sentence
+    assert "Compute the call in an integer localparam first" in got.sentence
+    assert ei.uncompared(simulator, {key: None}, frozenset(), OURS) is None  # no such call
+
+
+@pytest.mark.parametrize(
+    ("mine", "theirs", "refused"),
+    [
+        ([(CORE, 1)], [(CORE, 1)], False),  # compared by `disagreement`
+        ([(CORE, 1)], [], True),  # Verilator has no instance of it
+        (None, [(CORE, 1)], True),  # a string or real to the simulator
+        ([(CORE, 1)], None, True),
+        ("absent", [(CORE, 1)], True),  # only Verilator lists it
+        ([(CORE, 1)], "absent", True),
+        ("absent", [], False),  # neither tool instantiates it
+        ("absent", "absent", False),
+    ],
+)
+def test_only_a_value_that_both_tools_give_in_every_instance_is_compared(
+    mine: object, theirs: object, refused: bool
+) -> None:
+    key = ("core.v", 7, "R")
+    simulator = {} if mine == "absent" else {key: mine}
+    verilator = {} if theirs == "absent" else {key: theirs}
+    got = ei.uncompared(simulator, verilator, frozenset({key}), OURS)  # type: ignore[arg-type]
+    assert (got is not None) is refused
+    assert ei.uncompared(simulator, verilator, frozenset({key}), ["project.v"]) is None
+
+
+def test_the_first_uncompared_value_by_file_order_then_line() -> None:
+    keys = frozenset({("core.v", 9, "B"), ("project.v", 30, "W"), ("core.v", 4, "A")})
+    got = ei.uncompared({}, {k: None for k in keys}, keys, OURS)
+    assert got is not None and (got.file, got.line) == ("project.v", 30)
+    got = ei.uncompared({}, {k: None for k in keys}, keys, ["core.v"])
+    assert got is not None and (got.file, got.line) == ("core.v", 4)

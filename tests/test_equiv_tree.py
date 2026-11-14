@@ -728,12 +728,19 @@ def mod(addr: str, name: str, level: int, *kids: dict[str, Any], kind: str = "MO
     return {"type": kind, "addr": addr, "name": name, "level": level, "stmtsp": list(kids)}
 
 
-def cell(name: str, to: str) -> dict[str, Any]:
-    return {"type": "CELL", "name": name, "modp": to, "loc": "e,1:1,1:2"}
+def cell(name: str, to: str, *bounds: str) -> dict[str, Any]:
+    """An instance; with `bounds` (`"32'sh3", "32'sh0"`) an instance array, which Verilator keeps
+    as one CELL with a range (`sub u [3:0] (...)`)."""
+    got = {"type": "CELL", "name": name, "modp": to, "loc": "e,1:1,1:2"}
+    if bounds:
+        got["rangep"] = [{"type": "RANGE", "leftp": [const(bounds[0])],
+                          "rightp": [const(bounds[1])]}]  # fmt: skip
+    return got
 
 
 # The shape of round 15's probe: `core` instantiates `mid` twice with Z = 1 (Verilator shares
-# one copy) and once with Z = 5; each `mid` holds one `leaf`, whose K follows Z.
+# one copy) and once with Z = 5; each `mid` holds one `leaf`, whose K follows Z. Round 16: `core`
+# also holds an array of two `mid`s with Z = 1 (`mid ma [1:0]`) inside a generate block.
 PARAM_TREE = {
     "type": "NETLIST",
     "modulesp": [
@@ -749,7 +756,10 @@ PARAM_TREE = {
             {
                 "type": "GENBLOCK",
                 "name": "genblk1",
-                "stmtsp": [elab_param("(Q)", "Q", 33, "8'h33")],
+                "stmtsp": [
+                    elab_param("(Q)", "Q", 33, "8'h33"),
+                    cell("ma", "(M)", "32'sh1", "32'sh0"),
+                ],
             },
             var("(G)", "g", 14, varType="GENVAR"),
             elab_param("(R)", "R", 21, "1.5"),
@@ -776,18 +786,91 @@ PARAM_TREE = {
 }
 
 
-def test_every_parameter_value_counts_once_per_module_instance() -> None:
-    got = et.parameter_values(PARAM_TREE, META, OURS)
+TOP, CORE = ("tt_um_core",), ("tt_um_core", "core")
+GEN = (*CORE, "genblk1")
+
+
+def test_every_parameter_value_has_the_path_of_each_module_instance() -> None:
+    """Every instance and loop pass, named as a simulator names it: through every level, the
+    blocks around a CELL and each element of an instance array."""
+    got = {k: v and sorted(v) for k, v in et.parameter_values(PARAM_TREE, META, OURS).items()}
+    mids = [(*CORE, "m0"), (*CORE, "m1"), (*GEN, "ma[0]"), (*GEN, "ma[1]")]  # the copy with Z = 1
     assert got == {
-        ("core.v", 3, "PP"): [(32, 7)],  # a package once
-        ("core.v", 33, "Q"): [(8, 0x33)],
-        ("core.v", 21, "R"): None,  # a real is not a plain number
-        ("core.v", 22, "N"): [(4, 14)],
-        ("core.v", 18, "Z"): [(32, 1), (32, 1), (32, 5)],  # m0 and m1 share one copy
-        ("core.v", 6, "K"): [(32, 1), (32, 1), (32, 5)],  # through every level
-        ("core.v", 13, "FL"): [(32, 5)] * 3,  # inside a function too
-        ("core.v", 40, "UK"): [],  # nothing instantiates it
+        k: v and sorted(v)
+        for k, v in {
+            ("core.v", 3, "PP"): [(("pk",), 7)],  # a package once, by its name
+            ("core.v", 33, "Q"): [(GEN, 0x33)],
+            ("core.v", 21, "R"): None,  # a real is not a plain number
+            ("core.v", 22, "N"): [(CORE, 14)],
+            ("core.v", 18, "Z"): [(m, 1) for m in mids] + [((*CORE, "m2"), 5)],
+            ("core.v", 6, "K"): [((*m, "l0"), 1) for m in mids] + [((*CORE, "m2", "l0"), 5)],
+            # inside a function too
+            ("core.v", 13, "FL"): [((*m, "l0", "f"), 5) for m in [*mids, (*CORE, "m2")]],
+            ("core.v", 40, "UK"): [],  # nothing instantiates it
+        }.items()
     }  # the genvar has no value: left out
+
+
+def test_a_value_is_negative_when_its_type_is_signed() -> None:
+    """Verilator 5.046 writes `32'hfffffffe` for -2 in the final tree: the sign comes from the
+    parameter's data type (through a typedef), or from an `'s` on the constant when the type is
+    not known."""
+    types = [
+        {"type": "BASICDTYPE", "addr": "(i32)", "keyword": "integer", "signed": True},
+        {"type": "BASICDTYPE", "addr": "(u8)", "keyword": "logic"},
+        {"type": "REFDTYPE", "addr": "(ref)", "refDTypep": "(i32)"},
+    ]
+    tree = {
+        "type": "NETLIST",
+        "modulesp": [
+            mod(
+                "(T)", "tt_um_core", 1,
+                elab_param("(A)", "A", 2, "32'hfffffffe", dtypep="(i32)"),
+                elab_param("(B)", "B", 3, "8'hfe", dtypep="(u8)"),
+                elab_param("(D)", "D", 4, "32'hfffffffe", dtypep="(ref)"),
+                elab_param("(E)", "E", 5, "8'shfe"),
+                elab_param("(F)", "F", 6, "8'shfe", dtypep="(u8)"),
+            ),
+        ],
+        "typeTablep": [{"type": "TYPETABLE", "typesp": types}],
+    }  # fmt: skip
+    got = et.parameter_values(tree, META, OURS)
+    assert got == {
+        ("core.v", 2, "A"): [(TOP, -2)],
+        ("core.v", 3, "B"): [(TOP, 0xFE)],
+        ("core.v", 4, "D"): [(TOP, -2)],
+        ("core.v", 5, "E"): [(TOP, 0xFE)],  # no data type: not signed
+        ("core.v", 6, "F"): [(TOP, 0xFE)],  # the parameter's type decides
+    }
+
+
+@pytest.mark.parametrize(
+    ("bounds", "names"),
+    [
+        (("32'sh3", "32'sh0"), ["u[0]", "u[1]", "u[2]", "u[3]"]),
+        (("32'sh1", "32'sh3"), ["u[1]", "u[2]", "u[3]"]),  # [1:3]
+        (("32'shffffffff", "32'sh0"), ["u[-1]", "u[0]"]),  # [-1:0]
+    ],
+)
+def test_an_instance_array_counts_each_element_by_its_index(
+    bounds: tuple[str, str], names: list[str]
+) -> None:
+    """Round 16 s37, t01, g2: `sub #(.W(2)) u [3:0] (...)` is one CELL in Verilator's tree and four
+    instances (`u[0]` to `u[3]`) in a simulator's."""
+    tree = {
+        "type": "NETLIST",
+        "modulesp": [
+            mod("(T)", "tt_um_core", 1, cell("u", "(S)", *bounds)),
+            mod("(S)", "sub", 2, elab_param("(W)", "W", 4, "32'sh2")),
+        ],
+    }
+    got = et.parameter_values(tree, META, OURS)
+    assert got == {("core.v", 4, "W"): [((*TOP, n), 2) for n in names]}
+    unreadable = cell("u", "(S)", *bounds)
+    unreadable["rangep"][0]["leftp"] = [{"type": "VARREF", "name": "N"}]
+    tree["modulesp"][0]["stmtsp"] = [unreadable]
+    with pytest.raises(et.TreeError, match="not a plain number"):
+        et.parameter_values(tree, META, OURS)
 
 
 def test_only_our_files_and_plain_values_count() -> None:
@@ -807,11 +890,11 @@ def test_only_our_files_and_plain_values_count() -> None:
     }  # fmt: skip
     got = et.parameter_values(tree, META, OURS)
     assert got == {
-        ("core.v", 2, "A"): [(32, 1)],
+        ("core.v", 2, "A"): [(TOP, 1)],
         ("core.v", 4, "C"): None,
         ("core.v", 5, "D"): None,
         ("core.v", 6, "E"): None,  # an x is `xz_parameter`'s
-        ("core.v", 7, "F"): [(32, 2)],
+        ("core.v", 7, "F"): [(TOP, 2)],
     }
 
 
@@ -822,6 +905,14 @@ def test_only_our_files_and_plain_values_count() -> None:
         ([mod("(T)", "t", 2)], "exactly one top module"),
         ([mod("(T)", "t", 1), mod("(S)", "s", 1)], "exactly one top module"),
         ([mod("(T)", "t", 1, cell("a", "(A)")), mod("(A)", "a", 2, cell("a", "(A)"))], "loop"),
+        ([mod("(T)", "t", 1, cell("u", "(T)", "32'sh0", "32'sh186a0"))], "more than"),
+        (
+            [
+                mod("(T)", "t", 1, {**cell("u", "(A)", "32'sh1", "32'sh0"), "rangep": [{}, {}]}),
+                mod("(A)", "a", 2),
+            ],
+            "unreadable range",
+        ),
     ],
 )
 def test_an_instance_count_that_cannot_be_trusted_raises(modules: list[Any], why: str) -> None:
@@ -829,3 +920,233 @@ def test_an_instance_count_that_cannot_be_trusted_raises(modules: list[Any], why
         et.parameter_values({"type": "NETLIST", "modulesp": modules}, META, OURS)
     with pytest.raises(et.TreeError):
         et.parameter_values({"type": "NETLIST"}, META, OURS)
+
+
+# -- constant arguments to a function that can give x (constant_call) ----------------------------
+
+VEC = var("(V)", "v", 5, varType="PORT", isFuncLocal=True, direction="INPUT")
+IDX = var("(K)", "k", 5, varType="PORT", isFuncLocal=True, direction="INPUT")
+PICKED = var("(PR)", "pick", 5, isFuncReturn=True, isFuncLocal=True)
+NAMED = [
+    var("(LP)", "P", 2, varType="LPARAM", isParam=True, valuep=[const("32'h6", 2)]),
+    var("(GP)", "W", 2, varType="GPARAM", isParam=True, valuep=[const("32'h6", 2)]),
+    var("(GV)", "g", 2, varType="GENVAR"),
+    var("(WS)", "w", 2, varType="VAR"),
+]
+
+
+def set_return(value: dict[str, Any], to: str = "(PR)", name: str = "pick") -> dict[str, Any]:
+    target = ref(f"({next(_N)})", to, name, 6, access="WR")
+    return {"type": "ASSIGN", "rhsp": [value], "lhsp": [target]}
+
+
+def bit(index: dict[str, Any], kind: str = "SELBIT", access: str = "RD") -> dict[str, Any]:
+    """`v[index]`, read (or written, with access="WR")."""
+    return {"type": kind, "fromp": [ref(f"({next(_N)})", "(V)", "v", 6, access=access)],
+            "bitp": [index], "loc": "e,6:5,6:8"}  # fmt: skip
+
+
+def pick(body: dict[str, Any], name: str = "pick", addr: str = "(F)") -> dict[str, Any]:
+    """`function pick(input [3:0] v, input integer k)` with `body`."""
+    return func(addr, name, 5, PICKED, VEC, IDX, body)
+
+
+def k() -> dict[str, Any]:
+    return ref(f"({next(_N)})", "(K)", "k", 6)
+
+
+def pick_call(*args: dict[str, Any], line: int = 9, to: str = "(F)") -> dict[str, Any]:
+    """`pick(args...)` at `line`, as Verilator links it (each argument under an ARG)."""
+    return call(f"({next(_N)})", to, "pick", line) | {
+        "argsp": [{"type": "ARG", "exprp": [a]} for a in args]
+    }
+
+
+def named(addr: str, name: str) -> dict[str, Any]:
+    return ref(f"({next(_N)})", addr, name, 9)
+
+
+def constant(*kids: dict[str, Any]) -> et.Unknown | None:
+    return et.constant_call(module(*NAMED, *kids), META, OURS)
+
+
+READS_AT_K = pick(set_return({"type": "LOGNOT", "lhsp": [bit(k())]}))  # pick = !v[k]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [const("4'ha"), const("32'h6")],  # pick(4'b1010, 6)
+        [const("4'ha"), named("(LP)", "P")],  # a localparam
+        [const("4'ha"), named("(GP)", "W")],  # a parameter
+        [const("4'ha"), named("(GV)", "g")],  # a genvar (in a generate loop)
+        [const("4'ha"), {"type": "ATTROF", "fromp": [named("(WS)", "w")]}],  # $bits(w)
+    ],
+)
+def test_a_constant_call_of_a_function_that_reads_at_a_computed_index_is_refused(
+    args: list[dict[str, Any]],
+) -> None:
+    got = constant(READS_AT_K, pick_call(*args))
+    assert got is not None and (got.name, got.file, got.line) == ("pick", "core.v", 9)
+    assert "calls the function `pick` with constant arguments" in got.sentence
+    assert "Compute it in a localparam first (`localparam integer V = pick(...);`" in got.sentence
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pick(set_return(bit(k(), kind="SELPLUS") | {"widthp": [const("32'h2")]})),  # v[k +: 2]
+        pick(set_return({"type": "DIV", "lhsp": [const("32'h8")], "rhsp": [k()]})),  # 8 / k
+        pick(set_return({"type": "MODDIV", "lhsp": [k()], "rhsp": [const("32'h0")]})),  # k % 0
+    ],
+)
+def test_a_part_select_or_a_divide_in_the_function_counts_too(body: dict[str, Any]) -> None:
+    assert constant(body, pick_call(const("4'ha"), const("32'h6"))) is not None
+
+
+def test_a_function_that_calls_such_a_function_counts_too_and_so_does_an_unknown_one() -> None:
+    outer = func("(O)", "outer", 7, set_return(pick_call(ref("(o1)", "(K)", "k", 8), line=8)))
+    got = constant(READS_AT_K, outer, call("(c)", "(O)", "outer", 11))
+    assert got is not None and (got.name, got.line) == ("outer", 11)
+    assert constant(pick_call(const("4'ha"), line=12, to="(nowhere)")) is not None
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        # localparam integer V = pick(4'b1010, 6);
+        var(
+            "(L)",
+            "V",
+            9,
+            varType="LPARAM",
+            isParam=True,
+            valuep=[pick_call(const("4'ha"), const("32'h6"))],
+        ),
+        # child #(.W(pick(4'b1010, 6))) u (...); (and `defparam u.W = ...`, the same PIN)
+        {
+            "type": "CELL",
+            "name": "u",
+            "paramsp": [
+                {
+                    "type": "PIN",
+                    "modVarp": "(GP)",
+                    "exprp": [pick_call(const("4'ha"), const("32'h6"))],
+                }
+            ],
+        },
+    ],
+)
+def test_a_constant_call_in_a_parameter_value_is_fine(where: dict[str, Any]) -> None:
+    assert constant(READS_AT_K, where) is None
+
+
+def override(to: str | None) -> dict[str, Any]:
+    """`#(.X(pick(4'b1010, 6)))` whose PIN points at `to` (`modVarp`)."""
+    pin = {"type": "PIN", "exprp": [pick_call(const("4'ha"), const("32'h6"))]}
+    return {"type": "CELL", "name": "u", "paramsp": [pin | ({"modVarp": to} if to else {})]}
+
+
+RANGED = {
+    "type": "BASICDTYPE",
+    "rangep": [
+        {
+            "type": "RANGE",
+            "leftp": [pick_call(const("4'ha"), const("32'h6"))],
+            "rightp": [const("32'h0")],
+        }
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        # round 16 brange3 and p13typ64: `localparam logic [pick(4'b1010, 6):0] V = ...;` the
+        # range is not compared (only the value), so a call there is refused
+        var(
+            "(L)",
+            "V",
+            9,
+            varType="LPARAM",
+            isParam=True,
+            childDTypep=[RANGED],
+            valuep=[const("32'h1")],
+        ),
+        var("(W2)", "w2", 9, varType="WIRE", childDTypep=[RANGED]),  # `wire [pick(...):0] w2`
+        override(None),  # an override whose parameter does not resolve
+        override("(WS)"),  # ... or is not a parameter
+        override("(GV)"),  # ... a genvar
+    ],
+)
+def test_a_constant_call_in_a_declarations_range_or_an_unknown_override_is_refused(
+    where: dict[str, Any],
+) -> None:
+    got = constant(READS_AT_K, where)
+    assert got is not None and (got.name, got.line) == ("pick", 9)
+    assert "outside the value of a parameter or localparam" in got.sentence
+
+
+def test_the_parameters_whose_value_holds_such_a_call_are_named() -> None:
+    """Round 16 breal: `localparam real R = pick(4'b1010, 6);` is allowed by `constant_call`
+    only if R's value is compared: `valued_calls` names R (for an override, the child's
+    parameter), and `equiv_icarus.uncompared` refuses it when R is a real."""
+    value = var("(R)", "R", 7, varType="LPARAM", isParam=True,
+                valuep=[pick_call(const("4'ha"), const("32'h6"))])  # fmt: skip
+    other = var("(O)", "O", 8, varType="LPARAM", isParam=True,
+                valuep=[pick_call(named("(WS)", "w"))])  # fmt: skip
+    tree = module(*NAMED, READS_AT_K, value, other, override("(GP)"), override("(WS)"))
+    assert et.valued_calls(tree, META, OURS) == {("core.v", 7, "R"), ("core.v", 2, "W")}
+    assert et.valued_calls(tree, META, ["project.v"]) == set()
+    safe = pick(set_return(bit(const("32'h2"))))  # v[2]: no call can give x
+    assert et.valued_calls(module(*NAMED, safe, value), META, OURS) == set()
+    with pytest.raises(et.TreeError):
+        et.valued_calls([], META, OURS)
+
+
+@pytest.mark.parametrize(
+    "arg",
+    [
+        named("(WS)", "w"),  # a signal: the proof sees every value
+        {"type": "ADD", "lhsp": [const("32'h1")], "rhsp": [named("(WS)", "w")]},
+        {"type": "PARSEREF", "name": "x"},  # a name not resolved (a module nothing uses)
+        ref("(dangling)", "(no var)", "y", 9),
+    ],
+)
+def test_a_call_with_an_argument_that_reads_a_variable_is_fine(arg: dict[str, Any]) -> None:
+    assert constant(READS_AT_K, pick_call(const("4'ha"), arg)) is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # low_mask(n) = (1 << n) - 1: no select, no divide
+        pick(
+            set_return(
+                {
+                    "type": "SUB",
+                    "lhsp": [{"type": "SHIFTL", "lhsp": [const("32'h1")], "rhsp": [k()]}],
+                    "rhsp": [const("32'h1")],
+                }
+            )
+        ),
+        pick(set_return(bit(const("32'h2")))),  # v[2]: a constant index
+        pick(set_return({"type": "DIV", "lhsp": [k()], "rhsp": [const("32'h4")]})),  # k / 4
+        pick({"type": "ASSIGN", "rhsp": [const("1'h1")], "lhsp": [bit(k(), access="WR")]}),
+    ],
+)
+def test_a_function_without_a_computed_read_index_or_a_divide_is_fine_anywhere(
+    body: dict[str, Any],
+) -> None:
+    assert constant(body, pick_call(const("4'ha"), const("32'h6"))) is None
+
+
+def test_the_first_constant_call_by_file_order_then_line() -> None:
+    late = pick_call(const("4'ha"), const("32'h1"), line=4)
+    first = pick_call(const("4'ha"), const("32'h2"), line=20) | {"loc": "f,20:5,20:8"}
+    std = pick_call(const("4'ha"), const("32'h3"), line=1) | {"loc": "d,1:5,1:8"}
+    got = constant(READS_AT_K, late, first, std)
+    assert got is not None and (got.file, got.line) == ("project.v", 20)
+    assert constant(READS_AT_K, std) is None  # another file's call is not judged
+    with pytest.raises(et.TreeError):
+        et.constant_call([], META, OURS)

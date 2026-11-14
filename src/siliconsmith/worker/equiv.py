@@ -24,14 +24,17 @@ EFFORT: `equiv_sv.refusal` refuses (`not_proven`, reason `guard_sim_synth_differ
 constructs that a simulator and Yosys read differently, and `_tree_checks` what is judged on
 Verilator's syntax tree (an impure function, a combinational block that can read a signal before
 it writes it on some path, a parameter with an x or z bit, a parameter value that the simulator
-Icarus works out differently, a different elaboration). NOT detected: an index computed from a
-signal that goes outside the range or a division by a signal that is 0, a constant that is x to
+Icarus works out differently, a different elaboration, a call with constant arguments of a
+function that selects at a computed index or divides, a select outside the range that Yosys
+finds, RTL that Icarus cannot compile or stops on). NOT detected: an index computed from a
+signal or a variable (a loop index passed into a function too) that goes outside the range or a
+division by a signal that is 0, a constant that is x to
 a simulator steering a case inside a block, the values inside a generate loop or module copy, a
 constant expression that Yosys evaluates differently from a simulator (a size cast or an unbased
 `'1` inside a localparam, `$rtoi` in any constant expression: a localparam or a generate
-condition, an untyped localparam whose value overflows; only a parameter value on which the
-simulator and Verilator disagree is refused), and anything else that depends on simulation event
-order;
+condition; only a parameter value on which the simulator and Verilator disagree is refused, as an
+untyped localparam that overflows is, which Icarus makes wider), and anything else that depends
+on simulation event order;
 gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour.
 
 ## Verdict
@@ -72,7 +75,7 @@ gate-level simulation (`run_tests` with `gl=true`) is the check against simulati
 Time: every Yosys call is a subprocess with its own limit (`budget_s`, 120 s; Yosys's own
 `sat -timeout` is ignored), and the whole check has a deadline (`deadline_s`, 300 s). The one
 exception is the one-shot search from reset (stage 4, tried before the step-by-step search): it
-may take `ONCE_SHARE` of the budget, and only out of the deadline beyond one full budget
+may take `ONCE_S` seconds (8 s), and only out of the deadline beyond one full budget
 (`Clock.first_try`), so the step-by-step search after it gets the time it would have had
 without it. Each call runs in the private `scratch` folder, which holds copies of the inputs, so
 parallel checks never share files.
@@ -119,13 +122,15 @@ SEQ = 5  # induction length of equiv_simple / equiv_induct (and the base case: S
 DEPTH = 32  # cycles of the referee from reset
 BUDGET_S = 120.0  # per Yosys call
 DEADLINE_S = 300.0  # the whole check
-# The one-shot search from reset (stage 4) may take this share of BUDGET_S (20 s), out of the
-# deadline beyond one full budget (`Clock.first_try`): the step-by-step search after it keeps its
-# time. Measured paired on a loaded host (round 14, 184 searches): where the one-shot proved
-# what the step-by-step search could not reach in 150 s (17, registered tables such as a
-# seven-segment decoder) it took 5 s at most (a MyHDL `for` loop needed 71-80 s); where it was
-# the slower search (69) it can take minutes, and the cap is all such a design loses.
-ONCE_SHARE = 1 / 6
+# The one-shot search from reset (stage 4) may take this many seconds, out of the deadline beyond
+# one full budget (`Clock.first_try`): the step-by-step search after it keeps its time. A design
+# the one-shot does not prove in time pays this much, with the same verdict. Measured paired
+# (rounds 14 and 15): where the one-shot proved what the step-by-step search could not reach in
+# 150 s (registered tables such as a seven-segment decoder) it took 0.5-3.7 s at a load of 6 and
+# at most 4.8 s at a load of 50 on 16 cores (a MyHDL `for` loop needed 47-80 s: over any small
+# cap; its step-by-step search finishes); where it was the slower search it can take minutes.
+# Between the two (one review design: 16-18 s one-shot, 63 s step by step) the cap loses time.
+ONCE_S = 8.0
 NETLIST_MAX_BYTES = 16 * 1024 * 1024
 NOT_A_PASS = "This is NOT a pass."
 EQUIV_DIR = "equiv"
@@ -172,11 +177,12 @@ class Clock:
         """Seconds the next Yosys call may take; 0 once the deadline has passed."""
         return max(0.0, min(self.budget, self.end - time.monotonic()))
 
-    def first_try(self, share: float) -> float:
-        """Seconds for a first try that another call backs up: at most `share` of the budget,
+    def first_try(self, cap: float) -> float:
+        """Seconds for a first try that another call backs up: at most `cap` (and the budget),
         and only out of the deadline beyond one full budget, so the call after it still gets
         what `left` would have given it without the first try (0: no time for one)."""
-        return max(0.0, min(self.budget * share, self.end - time.monotonic() - self.budget))
+        spare = self.end - time.monotonic() - self.budget
+        return max(0.0, min(cap, self.budget, spare))
 
 
 def _when(cycle: object) -> str:
@@ -498,7 +504,7 @@ def _per_side(r: _Run, tag: str, golds: str, gates: str, depth: int) -> dict[str
         r.scratch,
         equiv_script.miter_once(once_tag, wires, depth),
         once_tag,
-        r.clock.first_try(ONCE_SHARE),
+        r.clock.first_try(ONCE_S),
     )
     once = equiv_parse.once_result(code, once_log, wires, depth)
     if once == "proved":
@@ -669,8 +675,10 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     3. `_icarus_checks`: the simulator's own elaboration (Icarus): it must compile the RTL, and
        no parameter may have an x or z bit there, nor a constant select be out of range
        (Verilator folds those to a value, Icarus and Yosys read x), nor a parameter have other
-       values than in Verilator's tree (`equiv_tree.parameter_values`; a select outside the
-       range inside a constant function leaves no x and no warning).
+       values than in Verilator's tree in some instance or loop pass
+       (`equiv_tree.parameter_values`; a select outside the range inside a constant function
+       leaves no x and no warning), nor a parameter whose value holds a call that can give x
+       go uncompared (`equiv_tree.valued_calls`: a real, a string).
     4. Yosys elaborates the same cleaned RTL to RTLIL (only if Verilator gave a tree). A failure
        or a time out is the verdict of `equiv_parse.guard_failure`, never a pass.
     5. `equiv_elab.unmatched`: every block and call Yosys keeps must be in Verilator's tree
@@ -680,6 +688,14 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     7. `equiv_tree.early_read`: a combinational block may not read a signal before it writes it
        on any path through the block (the ALWCOMBORDER pass, `_comb_order`, runs after this as
        a second line).
+    8. `equiv_tree.constant_call`, on the tree before V3Param: no call of a design function
+       that can give x for constant arguments (a select at a computed index, a division) with
+       constant arguments outside a parameter value (a simulator works it out itself, and an
+       `if` in the function can turn an x into another value than Yosys uses; only parameter
+       values are compared with the simulator's: compute it in a localparam first). Then
+       `_yosys_outside`: no select outside the range in Yosys's elaboration (its warning; Yosys
+       sees one inside a function it inlines). Last, so that a more specific finding about the
+       same code is named first.
     """
     cleaned = {fname: equiv_sv.clean(text) for fname, text in sources}
     folder = r.scratch / "func_tree"
@@ -733,6 +749,8 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         before = json.loads(stages[0].read_text("latin-1"))
         unknown = equiv_tree.xz_parameter(tree, meta, list(cleaned))
         condition = equiv_tree.x_condition(before, meta, list(cleaned))
+        constant = equiv_tree.constant_call(before, meta, list(cleaned))  # judged last
+        valued = equiv_tree.valued_calls(before, meta, list(cleaned))  # judged with Icarus's
         values = equiv_tree.parameter_values(tree, meta, list(cleaned))  # judged with Icarus's
         found = equiv_tree.impure_function(tree, meta, list(cleaned))  # judged after Yosys
         early = equiv_tree.early_read(tree, meta, list(cleaned))  # judged after purity
@@ -742,7 +760,7 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     for root in (unknown, condition):
         if root is not None:
             return refuse("guard_sim_synth_differ", f"{root.sentence}.")
-    simulator = _icarus_checks(r, cleaned, name, values)
+    simulator = _icarus_checks(r, cleaned, name, values, valued)
     r.timed("tree", t0)  # the Verilator and the Icarus run
     if simulator is not None:
         return simulator
@@ -759,6 +777,7 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     failure = equiv_parse.guard_failure(code, text)
     if failure is not None:
         return r.failed(failure, "Could not read the RTL's elaboration")
+    outside = _yosys_outside(text)  # judged last
     what = "the elaboration of the RTL"
     try:
         rtlil = (elab / "elab.il").read_text("latin-1")
@@ -771,24 +790,102 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         return refuse("guard_sim_synth_differ", f"{found.sentence}.")
     if early is not None:
         return refuse("guard_sim_synth_differ", f"{early.sentence}.")
+    if constant is not None:
+        return refuse("guard_sim_synth_differ", f"{constant.sentence}.")
+    if outside is not None:
+        return refuse("guard_sim_synth_differ", outside)
     return None
 
 
+_OUT_OF_BOUNDS = re.compile(r"^(?:([^:\s]+):(\d+): )?Warning: (.*out of bounds.*)$", re.M)
+
+
+def _yosys_outside(log_text: str) -> str | None:
+    """The sentence for a select outside the range that Yosys found when it elaborated the RTL
+    (its warning "Range select out of bounds on signal ...: Setting result bit to undef"), else
+    None. Yosys sees such a select once it has inlined a function or unrolled a loop: `v[k]` of
+    a 4-bit argument `v` with a constant `k = 6` (round 15: `pick(ui_in[3:0], 6)`), or `a[i+1]`
+    in the last pass of a loop, also in an arm of `?:` that the loop index never selects (round
+    16 ffuntern: `(i == 7) ? 1'b0 : getbit(ui_in, i + 1)`; with an `if (i < 7)` around the call
+    Yosys drops that pass's select). It is x to a simulator, which an `if` or `!` can turn into
+    a 0 or 1 that the gates need not give; the RTL's x is a don't-care to the proof. Icarus
+    warns only about a select whose index is constant in the text (`equiv_icarus.x_select`)."""
+    found = _OUT_OF_BOUNDS.search(log_text)
+    if found is None:
+        return None
+    file, line, said = found.groups()
+    where = f" ({file}, line {line})" if file else ""
+    return (
+        f"the RTL{where} selects outside the range of a vector once Yosys works the index out "
+        f'(in a function it inlines or a loop it unrolls: "{clip(said, 160)}"). That bit is x '
+        "to a simulator, and an `if` or `!` can turn it into a 0 or 1 that the gates need not "
+        "give, so the check cannot vouch for the design. Keep every select inside the declared "
+        "range (Yosys also sees one in an arm of `?:` that a constant condition never selects: "
+        "choose with an `if` there instead)."
+    )
+
+
+# What to write instead when Icarus 12 stops on one of its own assertions: (a piece of the
+# assertion line, the advice). Both assertions come from a parameter or localparam with more than
+# one packed dimension (round 14: `localparam pair_t P = 8'h5a;` of a `typedef logic [1:0][3:0]
+# pair_t`, alone or through `P[1]`, `$left(P, 2)`, `$size(P, 2)`); a wire or reg with two packed
+# dimensions compiles.
+_ICARUS_ASSERTIONS = (
+    (("packed_dims.size() == 1", "dim == 1"),
+     "Icarus 12 stops like this on a parameter or localparam with more than one packed dimension "
+     "(`localparam pair_t P` of a `typedef logic [1:0][3:0] pair_t`, also through `$size(P, 2)` "
+     "or `$left(P, 2)`): declare it as a plain vector (`localparam [7:0] P`), take the pieces "
+     "with a part-select (`P[7:4]`, `P[4*i +: 4]`) and write a width as a number or a "
+     "localparam."),
+)  # fmt: skip
+
+
+def _icarus_crash(run: LintRun, lines: list[str]) -> str | None:
+    """The sentence for an Icarus run that stopped on an internal error (an assertion of its own,
+    an internal error, or killed by a signal such as the abort after an assertion), else None.
+    It quotes the assertion line, says that this is a limit of the simulator and, for a known
+    assertion, what to write instead. Still a refusal: the check cannot see what a simulator
+    makes of the RTL."""
+    said = next((x for x in lines if ": assert:" in x or "internal error" in x.lower()), None)
+    if said is None and not (run.code < 0 or run.code >= 128):
+        return None
+    shown = clip(said or (lines[-1] if lines else f"exit code {run.code}"), 200)
+    advice = next(
+        (text for keys, text in _ICARUS_ASSERTIONS if said and any(k in said for k in keys)),
+        "Write the construct on that line in a simpler form.",
+    )
+    return (
+        f"the simulator (Icarus 12, iverilog -g2012) stopped with an internal error on the RTL "
+        f"(`{shown}`). That is a limit of the simulator, not an error in your design, but the "
+        f"check cannot see what a simulator makes of the RTL, so it cannot vouch for it. {advice}"
+    )
+
+
 def _icarus_checks(
-    r: _Run, cleaned: dict[str, str], name: str, values: equiv_tree.ParamValues
+    r: _Run,
+    cleaned: dict[str, str],
+    name: str,
+    values: equiv_tree.ParamValues,
+    valued: frozenset[equiv_tree.ParamKey],
 ) -> dict[str, Any] | None:
     """A `not_proven` verdict if the simulator (Icarus) elaborates a constant of the RTL to a
     value with an x or z bit, or a parameter to other values than Verilator did (`values`, from
-    its tree), else None (`equiv_icarus`). `cleaned` is the cleaned RTL that Yosys reads. Like
-    the Verilator run it must not pass by giving up:
+    its tree, instance by instance), or if a parameter whose value holds a call that can give x
+    (`valued`, `equiv_tree.valued_calls`) is not compared, else None (`equiv_icarus`). `cleaned`
+    is the cleaned RTL that Yosys reads. Like the Verilator run it must not pass by giving up:
 
     * the run takes longer than the emit lint may: `time_limit`;
     * Icarus does not compile the RTL (a failing exit code or no output): `guard_sim_synth_differ`,
-      naming the first error: the check cannot see what a simulator makes of it;
+      naming the first error: the check cannot see what a simulator makes of it; when Icarus
+      stopped on an internal error of its own (an assertion, then an abort), the message quotes
+      the assertion line, says that it is a limit of the simulator and what to write instead
+      (`_icarus_crash`);
     * output it cannot read: `guard_sim_synth_differ`;
     * a parameter, localparam or genvar with an x or z bit (`equiv_icarus.x_parameter`), then a
       constant select outside the range (`equiv_icarus.x_select`), then a parameter or
-      localparam whose values differ from Verilator's (`equiv_icarus.disagreement`):
+      localparam whose values differ from Verilator's in some instance or loop pass
+      (`equiv_icarus.disagreement`), then one of `valued` that is not compared (a real, a
+      string, a parameter only one tool lists: `equiv_icarus.uncompared`):
       `guard_sim_synth_differ`;
     * Icarus cannot be started at all: inconclusive, logged, nothing is refused (it cannot happen
       in practice: the worker runs inside the toolchain image, which holds Icarus)."""
@@ -822,6 +919,9 @@ def _icarus_checks(
         vvp = None
     if vvp is None:
         lines = [x.strip() for x in run.output.splitlines() if x.strip()]
+        crash = _icarus_crash(run, lines)
+        if crash is not None:
+            return refuse("guard_sim_synth_differ", crash)
         first = next((x for x in lines if ": error:" in x or ": sorry:" in x), None)
         first = first or next((x for x in lines if "error" in x.lower()), None)
         why = clip(first or (lines[-1] if lines else "it failed"), 200)
@@ -832,10 +932,12 @@ def _icarus_checks(
             "compiles it.",
         )
     try:
+        simulated = equiv_icarus.parameter_values(vvp, ours)
         found = (
             equiv_icarus.x_parameter(vvp, ours)
             or equiv_icarus.x_select(run.output, ours)
-            or equiv_icarus.disagreement(equiv_icarus.parameter_values(vvp, ours), values, ours)
+            or equiv_icarus.disagreement(simulated, values, ours)
+            or equiv_icarus.uncompared(simulated, values, valued, ours)
         )
     except equiv_icarus.IcarusError as exc:
         return refuse(

@@ -22,8 +22,8 @@ Fail closed: a name or call that does not resolve, a missing position and the li
 of an unknown type that reaches state some other way is not noticed (nothing Yosys accepts did).
 
 The same tree answers two more questions (`early_read`, `xz_parameter`), and the tree Verilator
-dumps before it evaluates the parameters (`--dump-tree-json`, the `linkinc` stage) a third one
-(`x_condition`):
+dumps before it evaluates the parameters (`--dump-tree-json`, the `linkinc` stage) two others
+(`x_condition`, `constant_call`):
 
 * Can a combinational block read a variable before it writes it, on SOME path through the block?
   A simulator does not rerun the block for its own write; the gates do. Verilator's ALWCOMBORDER
@@ -37,6 +37,9 @@ dumps before it evaluates the parameters (`--dump-tree-json`, the `linkinc` stag
 * Can the condition of a generate `if`, `case` or `for` be x (a `/` or `%` by a value that is not
   a plain nonzero number, a `**`, a function call)? V3Param takes the first branch for an x `if`
   condition and drops the condition, so the evaluated tree cannot show it.
+* Is one of the design's functions called with constant arguments outside a parameter value
+  (`constant_call`)? A simulator works it out itself, and only a parameter's value is compared
+  with the simulator's (`valued_calls` names the parameters whose value holds such a call).
 """
 
 from __future__ import annotations
@@ -325,20 +328,77 @@ def xz_parameter(tree: Any, meta: Any, ours: list[str]) -> Unknown | None:
 
 # -- the value of every parameter ----------------------------------------------------------------
 
-# A parameter's declaration (`(file, line, name)`) and its values, one per module instance, as
-# `(width, value)`; None when some value is not a plain number (as `equiv_icarus.Values`).
+# A parameter's declaration (`(file, line, name)`) and its values, one per module instance and
+# loop pass, as `(path, number)` (as `equiv_icarus.Values`): the path is the instance names from
+# the top module (or package) down, the number the value with its sign. None when some value is
+# not a plain number.
 ParamKey = tuple[str, int, str]
-ParamValues = dict[ParamKey, list[tuple[int, int]] | None]
-_PLAIN_CONST = re.compile(r"^(\d+)'s?([bodh])([0-9a-fA-F_]+)$")
+Path = tuple[str, ...]
+ParamValues = dict[ParamKey, list[tuple[Path, int]] | None]
+_PLAIN_CONST = re.compile(r"^(\d+)'(s?)([bodh])([0-9a-fA-F_]+)$")
+# The nodes inside a module that a simulator makes a scope of, named as Verilator names them: a
+# generate block or loop pass (`b[0]`), a named block, a function or task
+_SCOPES = frozenset({"GENBLOCK", "BEGIN", "FUNC", "TASK"})
+_MAX_INSTANCES = 100_000  # module instances per module: more is not a design for one tile
 
 
-def _instances(tree: dict[str, Any]) -> dict[str, tuple[dict[str, Any], int]]:
-    """`{addr: (module, instances)}` for every module and package of Verilator's elaborated
-    tree. Verilator makes one copy of a module per set of parameter values and shares it between
-    the instances that use the same set, so the count goes through every level: the top module
-    (`level` 1) and a package once, every other module once per instance (CELL) inside each
-    instance of the module that holds it. A module nothing instantiates counts 0. A tree with
-    modules must have exactly one top module, or no value would count."""
+def _plain(node: dict[str, Any] | None, signed: bool | None = None) -> int | None:
+    """The number of a CONST node that is a plain number (no x or z bit), else None; negative
+    when its top bit is set and it is `signed` (None: when the constant says `'s`)."""
+    if node is None or node.get("type") != "CONST":
+        return None
+    match = _PLAIN_CONST.match(str(node.get("name", "")))
+    if match is None:
+        return None
+    width = int(match.group(1))
+    value = int(match.group(4).replace("_", ""), _BASES[match.group(3)])
+    if signed is None:
+        signed = match.group(2) == "s"
+    if signed and width > 0 and (value >> (width - 1)) & 1:
+        value -= 1 << width
+    return value
+
+
+def _inside(module: dict[str, Any]) -> Iterator[tuple[Path, dict[str, Any]]]:
+    """Every node of `module` with the names of the generate blocks, named blocks, functions and
+    tasks around it, from the outside in (a block without a name adds none)."""
+    stack: list[tuple[Path, dict[str, Any]]] = [((), child) for child in _children(module)]
+    while stack:
+        around, node = stack.pop()
+        yield around, node
+        name = str(node.get("name") or "")
+        inner = (*around, name) if node.get("type") in _SCOPES and name else around
+        stack.extend((inner, child) for child in _children(node))
+
+
+def _array(cell: dict[str, Any]) -> list[str]:
+    """The names a simulator gives the instances of a CELL: its name, or `name[i]` for every
+    element of an instance array (`sub u [3:0] (...)`, which Verilator keeps as one CELL with a
+    range). A range that is not two plain numbers raises `TreeError`."""
+    name = str(cell.get("name", "?"))
+    ranges = cell.get("rangep") or []
+    if not ranges:
+        return [name]
+    if not isinstance(ranges, list) or len(ranges) != 1 or not isinstance(ranges[0], dict):
+        raise TreeError(f"the instance array `{name}` has an unreadable range")
+    bounds = [_plain(_only(ranges[0], side)) for side in ("leftp", "rightp")]
+    if bounds[0] is None or bounds[1] is None:
+        raise TreeError(f"the instance array `{name}` has a range that is not a plain number")
+    low, high = min(bounds[0], bounds[1]), max(bounds[0], bounds[1])
+    if high - low >= _MAX_INSTANCES:
+        raise TreeError(f"the instance array `{name}` has more than {_MAX_INSTANCES} elements")
+    return [f"{name}[{i}]" for i in range(low, high + 1)]
+
+
+def _instances(tree: dict[str, Any]) -> dict[str, tuple[dict[str, Any], list[Path]]]:
+    """`{addr: (module, paths)}` for every module and package of Verilator's elaborated tree:
+    the path of every instance of the module, from the top module down, as a simulator names
+    it (`("tt_um_x", "core", "b[0]", "u")`). Verilator makes one copy of a module per set of
+    parameter values and shares it between the instances that use the same set, so the paths
+    go through every level: the top module (`level` 1) and a package once (their own name),
+    every other module once per instance (CELL, each element of an instance array) inside each
+    instance of the module that holds it, after the blocks around that CELL. A module nothing
+    instantiates has no path. A tree with modules must have exactly one top module."""
     modules = tree.get("modulesp")
     if not isinstance(modules, list) or not all(isinstance(m, dict) for m in modules):
         raise TreeError("the tree has no readable list of modules")
@@ -346,43 +406,63 @@ def _instances(tree: dict[str, Any]) -> dict[str, tuple[dict[str, Any], int]]:
     if len(tops) != 1 and any(m.get("type") == "MODULE" for m in modules):
         raise TreeError("the tree does not have exactly one top module (level 1)")
     by_addr = {str(m.get("addr")): m for m in modules}
-    parents: dict[str, list[str]] = {addr: [] for addr in by_addr}
+    parents: dict[str, list[tuple[str, Path, list[str]]]] = {addr: [] for addr in by_addr}
     for addr, module in by_addr.items():
-        for node in _subtree(module):
+        for around, node in _inside(module):
             if node.get("type") == "CELL":
                 child = str(node.get("modp"))
                 if child not in parents:
                     raise TreeError(f"the instance `{node.get('name')}` names no module")
-                parents[child].append(addr)
-    counts: dict[str, int] = {}
+                parents[child].append((addr, around, _array(node)))
+    paths: dict[str, list[Path]] = {}
 
-    def count(addr: str, seen: frozenset[str]) -> int:
-        if addr in counts:
-            return counts[addr]
+    def instances(addr: str, seen: frozenset[str]) -> list[Path]:
+        if addr in paths:
+            return paths[addr]
         if addr in seen:
             raise TreeError("the modules instantiate each other in a loop")
         module = by_addr[addr]
         if module.get("type") == "PACKAGE" or (tops and module is tops[0]):
-            got = 1
+            got: list[Path] = [(str(module.get("name", "?")),)]
         else:
-            got = sum(count(p, seen | {addr}) for p in parents[addr])
-        counts[addr] = got
+            got = [
+                path + around + (name,)
+                for parent, around, names in parents[addr]
+                for path in instances(parent, seen | {addr})
+                for name in names
+            ]
+        if len(got) > _MAX_INSTANCES:
+            raise TreeError(f"a module has more than {_MAX_INSTANCES} instances")
+        paths[addr] = got
         return got
 
-    return {addr: (module, count(addr, frozenset())) for addr, module in by_addr.items()}
+    return {addr: (module, instances(addr, frozenset())) for addr, module in by_addr.items()}
+
+
+def _signed(var: dict[str, Any], nodes: dict[str, dict[str, Any]]) -> bool:
+    """Whether the data type of a VAR is signed (through typedefs)."""
+    dtype = nodes.get(str(var.get("dtypep")))
+    for _ in range(32):
+        if dtype is None or dtype.get("signed") is True:
+            return dtype is not None
+        ref = dtype.get("refDTypep") if dtype.get("type") == "REFDTYPE" else None
+        dtype = nodes.get(str(ref)) if ref is not None else None
+    return False
 
 
 def parameter_values(tree: Any, meta: Any, ours: list[str]) -> ParamValues:
     """The value of every parameter and localparam of our files in Verilator's elaborated tree,
-    once per module instance (`_instances`); a genvar has no value there and is left out. A value
-    that is not a plain number (a real, an array, a string kept as text) makes it None. Compared
-    with the simulator's values by `equiv_icarus.disagreement`."""
+    once per module instance and loop pass, with its path (`_instances`, then the blocks around
+    it in the module); a genvar has no value there and is left out. A value that is not a plain
+    number (a real, an array, a string kept as text) makes it None. Compared with the
+    simulator's values by `equiv_icarus.disagreement`."""
     if not isinstance(tree, dict):
         raise TreeError("the tree is not an object")
     files = _file_letters(meta)
+    nodes = {str(n["addr"]): n for n in _subtree(tree) if "addr" in n}
     found: ParamValues = {}
-    for module, instances in _instances(tree).values():
-        for node in _subtree(module):
+    for module, paths in _instances(tree).values():
+        for around, node in _inside(module):
             if node.get("type") != "VAR" or not (
                 node.get("isParam") is True or node.get("varType") in ("LPARAM", "GPARAM")
             ):
@@ -394,17 +474,11 @@ def parameter_values(tree: Any, meta: Any, ours: list[str]) -> ParamValues:
             known = found.setdefault(key, [])
             values = node.get("valuep") or []
             only = values[0] if isinstance(values, list) and len(values) == 1 else None
-            plain = (
-                _PLAIN_CONST.match(str(only.get("name", "")))
-                if isinstance(only, dict) and only.get("type") == "CONST"
-                else None
-            )
-            if plain is None or known is None:
+            number = _plain(only, _signed(node, nodes)) if isinstance(only, dict) else None
+            if number is None or known is None:
                 found[key] = None
                 continue
-            width = int(plain.group(1))
-            value = int(plain.group(3).replace("_", ""), _BASES[plain.group(2)])
-            known.extend([(width, value)] * instances)
+            known.extend((path + around, number) for path in paths)
     return found
 
 
@@ -504,6 +578,169 @@ def x_condition(tree: Any, meta: Any, ours: list[str]) -> Unknown | None:
         "it, so the check cannot vouch for the design. Compute the value in a localparam "
         "first (a localparam with an x or z bit is refused)",
     )
+
+
+# -- a call with constant arguments outside a parameter value ----------------------------------
+
+# Where a call may take constant arguments: the value of a parameter or localparam (`valuep`, not
+# its type or range) and a parameter override of an instance (`#(.W(f(3)))`, a `defparam`: the
+# child's parameter). Each value there is compared with the simulator's (`parameter_values`,
+# `equiv_icarus.disagreement`), and one that is not compared is refused (`valued_calls`,
+# `equiv_icarus.uncompared`).
+_PARAMETER_VALUES = frozenset({"LPARAM", "GPARAM"})
+# What a select keeps besides its index: the vector it selects from, and its size.
+_SELECT_SOURCE = frozenset({"fromp", "attrp"})
+
+
+def _is_select(kind: str) -> bool:
+    """A bit, part or array select (`SELBIT`, `SELEXTRACT`, `SELPLUS`, `SELMINUS`, `ARRAYSEL`,
+    ...): any node type that starts or ends with SEL counts (fail closed)."""
+    return kind.startswith("SEL") or kind.endswith("SEL")
+
+
+def _constant_calls(tree: Any) -> Iterator[tuple[dict[str, Any], dict[str, Any] | None]]:
+    """Every call of one of the design's functions that can give a simulator an x for constant
+    arguments, made with constant arguments, with the parameter VAR whose value holds it (for
+    an override, the child's parameter, the PIN's `modVarp`), or None anywhere else (an
+    override whose parameter does not resolve too). See `constant_call`."""
+    if not isinstance(tree, dict):
+        raise TreeError("the tree is not an object")
+    nodes = list(_subtree(tree))
+    variables = {str(n["addr"]): n for n in nodes if n.get("type") == "VAR" and "addr" in n}
+    kinds = {addr: str(n.get("varType", "")) for addr, n in variables.items()}
+    functions = {str(n["addr"]): n for n in nodes if n.get("type") == "FUNC" and "addr" in n}
+
+    def reads_a_variable(root: dict[str, Any]) -> bool:
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            kind = node.get("type")
+            if kind == "ATTROF":
+                continue  # the size of a variable, not its value
+            if kind == "PARSEREF" or (
+                kind == "VARREF" and kinds.get(str(node.get("varp"))) not in PARAM_TYPES
+            ):
+                return True
+            stack.extend(_children(node))
+        return False
+
+    def written(select: dict[str, Any]) -> bool:
+        """True if the select is the target of a write (its vector is a VARREF written)."""
+        base: dict[str, Any] | None = select
+        while base is not None and _is_select(str(base.get("type", ""))):
+            base = _only(base, "fromp")
+        return base is not None and base.get("type") == "VARREF" and base.get("access") == "WR"
+
+    risky: dict[str, bool] = {}
+
+    def x_function(addr: str) -> bool:
+        if addr not in risky:
+            risky[addr] = False  # a recursive call adds nothing new
+            func = functions.get(addr)
+            risky[addr] = func is None or any(x_source(n) for n in _subtree(func))
+        return risky[addr]
+
+    def x_source(node: dict[str, Any]) -> bool:
+        kind = str(node.get("type", ""))
+        if kind == "FUNCREF":
+            return x_function(str(node.get("taskp")))
+        if _x_operator(node) is not None:
+            return True
+        if _is_select(kind) and not written(node):
+            return any(
+                reads_a_variable(child)
+                for key, value in node.items()
+                if key not in _SELECT_SOURCE and isinstance(value, list)
+                for child in value
+                if isinstance(child, dict)
+            )
+        return False
+
+    def parameter(addr: Any) -> dict[str, Any] | None:
+        var = variables.get(str(addr))
+        return var if var is not None and kinds[str(addr)] in _PARAMETER_VALUES else None
+
+    stack: list[tuple[dict[str, Any], dict[str, Any] | None]] = [(tree, None)]
+    while stack:
+        node, owner = stack.pop()
+        kind = node.get("type")
+        if kind == "FUNCREF":
+            arguments = [a for a in node.get("argsp") or [] if isinstance(a, dict)]
+            if not any(reads_a_variable(a) for a in arguments) and x_function(
+                str(node.get("taskp"))
+            ):
+                yield node, owner
+        for key, value in node.items():
+            items = value if isinstance(value, list) else [value]
+            for item in (i for i in items if isinstance(i, dict)):
+                under = owner
+                if kind == "VAR" and key == "valuep" and parameter(node.get("addr")) is not None:
+                    under = node
+                elif kind == "CELL" and key == "paramsp":
+                    under = parameter(item.get("modVarp")) if item.get("type") == "PIN" else None
+                stack.append((item, under))
+
+
+def constant_call(tree: Any, meta: Any, ours: list[str]) -> Unknown | None:
+    """The first call (by file order, line, column) of one of the design's functions that can
+    give a simulator an x for constant arguments, made with constant arguments anywhere but in
+    the value of a parameter or localparam or in a parameter override, else None. `tree` is
+    Verilator's tree BEFORE V3Param (the `linkinc` stage), where every call is still there as
+    written.
+
+    Constant arguments read no variable: literals, parameters, localparams and genvars only (a
+    variable read only for its size, `$bits(x)`, an `ATTROF`, counts as constant), or none. A
+    function can give x for them (`_x_function`) when its body, or a function it calls, reads a
+    select whose index reads a variable (`v[k]`, `v[k +: 2]`, `m[k]`: outside the range it is x
+    to a simulator) or has an operator that can give x (`a / b`, `a % b`, a `**`, as in
+    `x_condition`). A simulator works such a call out itself, and an `if` or `!` turns that x
+    into a defined 0 or 1 that Yosys and Verilator need not use (round 15: `pick(4'b1010, 6)`
+    with `if (!v[k])` in an always block, a case label, a part-select bound, a declaration range
+    (also a parameter's: only its value is compared), an `if` of a clocked block, another
+    function); only a parameter's value is compared with the simulator's, so that is where such
+    a call belongs. A function without such a select or operator (a mask, a shift, a sum:
+    `low_mask(3'd5)`, `rot(8'h81, 3'd2)`) is fine anywhere.
+
+    An unresolved name (`PARSEREF`, a `VARREF` to no `VAR`) counts as a variable: only a module
+    that nothing instantiates is left unlinked (in the design Verilator stops with an error)."""
+    files = _file_letters(meta)
+    found: list[tuple[int, int, int, str, str]] = []
+    for node, owner in _constant_calls(tree):
+        if owner is None:
+            file, line, col = _place(node, files)
+            if file in ours:
+                found.append((ours.index(file), line, col, str(node.get("name", "?")), file))
+    if not found:
+        return None
+    _, line, _, name, file = min(found)
+    return Unknown(
+        name,
+        file,
+        line,
+        f"the RTL ({file}, line {line}) calls the function `{name}` with constant arguments "
+        "outside the value of a parameter or localparam, and the function reads a vector at a "
+        "computed index or divides: outside the range (or by 0) that is x to a simulator, which "
+        "an `if` or `!` inside the function can turn into a 0 or 1 that Yosys does not use. The "
+        "check compares such values only for parameters, so it cannot vouch for the design. "
+        f"Compute it in a localparam first (`localparam integer V = {name}(...);`, inside the "
+        "generate loop for a genvar argument) and use that",
+    )
+
+
+def valued_calls(tree: Any, meta: Any, ours: list[str]) -> frozenset[ParamKey]:
+    """The parameters (`(file, line, name)`, as `parameter_values` keys them) whose value holds
+    a call that `constant_call` allows only because the value is compared with the simulator's:
+    `equiv_icarus.uncompared` refuses one whose value is not (a real, a string, a parameter
+    only one tool lists). For an override, the child's parameter. `tree` is the `linkinc`
+    tree."""
+    files = _file_letters(meta)
+    found: set[ParamKey] = set()
+    for _, owner in _constant_calls(tree):
+        if owner is not None:
+            file, line, _ = _place(owner, files)
+            if file in ours:
+                found.add((file, line, str(owner.get("name", "?"))))
+    return frozenset(found)
 
 
 # -- read before write in a combinational block -------------------------------------------------
