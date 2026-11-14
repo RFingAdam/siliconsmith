@@ -7,15 +7,19 @@ A simulator's `always @*` does not re-run when a signal that is read only inside
 changes, while synthesis inlines the function; Verilator's ALWCOMBORDER does not look inside
 function bodies either. A function is therefore only allowed if it is PURE: every variable it
 names is declared inside it (an argument, a local, its own return value) or is a parameter,
-localparam or genvar, and every function it calls is pure. A task is never allowed (it can write
-any signal). Scope cannot be judged from tokens (a block label, a cast, a same-named localparam
-in another module), which is why this reads the tree Verilator resolved:
-`verilator --json-only` writes `obj_dir/V<top>.tree.json` (and `.tree.meta.json`, which maps the
-file letters in every node's `loc` to file names). Nodes have an `addr`; a `VARREF` has `varp`
-(the `addr` of the `VAR` it resolves to) and a `FUNCREF` has `taskp` (the `FUNC` it calls).
+localparam or genvar, and every function it calls is pure. A `task` keyword never gets here (the
+token rules refuse it); Verilator also models a `function void` as a TASK node, which is judged
+like any function (a write to a signal that is not its own is still refused). Scope cannot be
+judged from tokens (a block label, a cast, a same-named localparam in another module), which is
+why this reads the tree Verilator resolved: `verilator --json-only` writes
+`obj_dir/V<top>.tree.json` (and `.tree.meta.json`, which maps the file letters in every node's
+`loc` to file names). Nodes have an `addr`; a `VARREF` has `varp` (the `addr` of the `VAR` it
+resolves to) and a `FUNCREF` has `taskp` (the `FUNC` it calls).
 
-Fail closed: anything the walker does not understand raises `TreeError`, which the caller turns
-into `not_proven`.
+Fail closed: a name or call that does not resolve, a missing position and the like raise
+`TreeError`, which the caller turns into `not_proven`. It judges what the nodes point at (`varp`,
+`taskp`, hierarchical names, a list of hidden-state nodes), not a whitelist of node types: a node
+of an unknown type that reaches state some other way is not noticed (nothing Yosys accepts did).
 """
 
 from __future__ import annotations
@@ -101,10 +105,6 @@ _WRITES = (
     "which is not a local of the function: a simulator's always @* does not see that write; "
     "return the value instead"
 )
-_TASK = (
-    "can write any signal, and a simulator's always @* does not see it; use a "
-    "`function automatic` that takes its inputs as arguments"
-)
 
 
 def _scan(
@@ -115,7 +115,7 @@ def _scan(
     name = str(func.get("name", "?"))
     body = sorted(_subtree(func), key=_order)
     local = {str(n["addr"]) for n in body if n.get("type") == "VAR" and "addr" in n}
-    why: str | None = _TASK if func.get("type") == "TASK" else None
+    why: str | None = None
     edges: list[tuple[str, Place]] = []
 
     def look_up(node: dict[str, Any], key: str) -> dict[str, Any]:
@@ -202,5 +202,46 @@ def impure_function(tree: Any, meta: Any, ours: list[str]) -> Impure | None:
     first = min(bad, key=lambda a: (ours.index(judged[a][1][0]), *judged[a][1][1:]))
     name, (file, line, _) = judged[first]
     name = re.sub(r"__V\w*$", "", name)  # Verilator's wrapper of a function with default values
-    kind = "function" if nodes[first].get("type") == "FUNC" else "task"
-    return Impure(name, file, line, f"the {kind} `{name}` ({file}, line {line}) {why[first]}")
+    return Impure(name, file, line, f"the function `{name}` ({file}, line {line}) {why[first]}")
+
+
+def missing_blocks(tree: Any, meta: Any, declared: dict[str, tuple[int, int]]) -> str | None:
+    """A sentence if Verilator's tree holds fewer functions, tasks or `always @*` blocks than
+    the text of a file declares, else None. `declared` maps a file name to `(functions and tasks,
+    always @* blocks)`.
+
+    Verilator folds an elaboration-time constant that is x to a simulator and Yosys (`1/0`,
+    `0 ** -1`) to 0, so it can take the other generate branch (or skip a module) than the one
+    Yosys keeps. Its tree then lacks the blocks of the branch Yosys uses, and the purity and
+    order checks would judge a different design. A for-generate that copies a block leaves one
+    node position; a generate branch that is really not taken is a refusal too (conservative)."""
+    if not isinstance(tree, dict):
+        raise TreeError("the tree is not an object")
+    files = _file_letters(meta)
+    funcs: dict[str, set[str]] = {}
+    stars: dict[str, set[str]] = {}
+    for node in _subtree(tree):
+        kind = node.get("type")
+        if kind in ("FUNC", "TASK"):
+            into = funcs
+        elif kind == "ALWAYS" and node.get("keyword") == "always" and not node.get("sentreep"):
+            into = stars
+        else:
+            continue
+        match = _LOC.match(str(node.get("loc", "")))
+        if match is None or match.group(1) not in files:
+            continue  # not placed: counted nowhere, so a shortfall shows below
+        into.setdefault(files[match.group(1)], set()).add(str(node["loc"]))
+    for file, (want_funcs, want_stars) in declared.items():
+        for what, want, have in (
+            ("function or task", want_funcs, len(funcs.get(file, ()))),
+            ("`always @*` block", want_stars, len(stars.get(file, ()))),
+        ):
+            if have < want:
+                return (
+                    f"{file} declares {want} {what}(s) and Verilator's elaboration of the RTL "
+                    f"holds only {have}: a generate branch or module that Yosys keeps is "
+                    "missing from it (a constant such as `1/0` is x to Yosys and a simulator, "
+                    "0 to Verilator)"
+                )
+    return None

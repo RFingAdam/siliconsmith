@@ -23,7 +23,7 @@ module fpure (
     begin
       t = a;
       for (i = 0; i < 2; i = i + 1) t = rot(t);
-      mix = t ^ b ^ $bits(cnt);
+      mix = t ^ b ^ 8'($bits(cnt));
     end
   endfunction
   always @(*) y = mix(cnt, ui_in);

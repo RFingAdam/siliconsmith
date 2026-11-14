@@ -1267,3 +1267,27 @@ def test_the_normal_accumulator_and_loops_over_signals_written_first_are_accepte
     body: str,
 ) -> None:
     assert _lvl(body, "a, b, t, y, z, j, k") is None, body
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("module m; endmodule", (0, 0)),
+        ("function automatic f(input a); f = a; endfunction task automatic t; endtask", (2, 0)),
+        ('initial $display("function task");  // function\n', (0, 0)),
+        ("always @* begin y = t; t = a; end", (0, 1)),
+        ("always @(*) case (s) 1'b0: y = a; default: y = b; endcase", (0, 1)),
+        ("always @* for (i = 0; i < 2; i = i + 1) y[i] = a;", (0, 1)),
+        ("always @* if (c) begin y = t; t = a; end", (0, 1)),
+        ("always @* if (c) y = a; else begin y = b; end", (0, 1)),
+        # one plain assignment, or an if/else chain of them: Verilator makes it an assign
+        ("always @* y = a;", (0, 0)),
+        ("always @(*) if (c) y = a; else if (d) y = b; else y = e;", (0, 0)),
+        ("always @(posedge clk) begin y <= a; end", (0, 0)),
+        ("always @* y = a; always @* begin z = y; end", (0, 1)),
+    ],
+)
+def test_elaborated_blocks_counts_what_verilators_tree_must_hold(
+    text: str, want: tuple[int, int]
+) -> None:
+    assert sv.elaborated_blocks(text) == want

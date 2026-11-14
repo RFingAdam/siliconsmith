@@ -76,7 +76,7 @@ The check cannot see, in hand-written Verilog, a read and a write that happen in
 In MyHDL the core must be the plain single module MyHDL writes, and a level-sensitive block must have the plain shape `@always_comb` writes and list every signal it reads; otherwise it is refused, so use `@always_comb`.
 Use a parameter, not a macro.
 
-It cannot see an out-of-range index or a division by zero (x in a simulator, some value in the gates) or anything that depends on the order a simulator runs events. Gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour: run both.
+It cannot see an out-of-range index or a division by zero (x in a simulator, some value in the gates), a localparam that Yosys reads differently from a simulator, or anything that depends on the order a simulator runs events. Gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour: run both.
 
 ## Too big for the tile
 

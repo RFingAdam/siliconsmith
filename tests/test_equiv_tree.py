@@ -168,16 +168,20 @@ def test_recursion_alone_is_not_impure_but_recursion_into_an_impure_one_is() -> 
     assert found is not None and found.name == "a" and found.line == 2  # first by position
 
 
-def test_a_task_is_always_refused() -> None:
-    task = func("(T)", "t", 4, kind="TASK")
-    found = judge(task)
-    assert found is not None and found.sentence.startswith("the task `t` (core.v, line 4)")
+def test_a_void_function_is_judged_like_a_function() -> None:
+    """Verilator models `function void` as a TASK node; the `task` keyword is refused by tokens."""
+    pure = func("(T)", "split", 4, var("(h)", "hi", 4, direction="OUTPUT"), kind="TASK")
+    assert judge(SIG, pure) is None
+    bad = func("(T)", "split", 4, ref("(w)", "(S)", "cnt", 5, access="WR"), kind="TASK")
+    found = judge(SIG, bad)
+    assert found is not None and found.sentence.startswith("the function `split` (core.v, line 4)")
+    assert "writes `cnt` (line 5)" in found.sentence
 
 
-def test_a_call_to_a_task_is_impure() -> None:
-    task = func("(T)", "t", 4, kind="TASK")
-    found = judge(task, rd_func(call("(c1)", "(T)", "t", 8)), ours=["project.v", "core.v"])
-    assert found is not None and found.name == "t"  # the task itself comes first by line
+def test_a_call_to_an_impure_void_function_is_impure() -> None:
+    bad = func("(T)", "w", 4, ref("(w)", "(S)", "cnt", 5, access="WR"), kind="TASK")
+    found = judge(SIG, bad, rd_func(call("(c1)", "(T)", "w", 8)))
+    assert found is not None and found.name == "w"  # the void function itself comes first by line
 
 
 def test_the_first_impure_function_by_file_then_line() -> None:
@@ -236,3 +240,53 @@ def test_a_default_value_wrapper_is_shown_under_the_name_the_user_wrote() -> Non
     wrapped = func("(F)", "rd__Vtcwrap_2", 5, ref("(r)", "(S)", "cnt", 6))
     found = judge(SIG, wrapped)
     assert found is not None and found.name == "rd" and "`rd` (core.v" in found.sentence
+
+
+# -- Verilator drops what Yosys keeps (a constant that is x: 1/0) --------------------------------
+
+
+def blocks(*nodes: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "NETLIST", "modulesp": list(nodes)}
+
+
+def always(line: int, *, keyword: str = "always", sens: bool = False) -> dict[str, Any]:
+    return {
+        "type": "ALWAYS",
+        "keyword": keyword,
+        "loc": f"e,{line}:3,{line}:9",
+        "sentreep": [{"type": "SENTREE"}] if sens else [],
+    }
+
+
+def test_a_tree_with_every_declared_block_is_complete() -> None:
+    tree = blocks(func("(F)", "rd", 3), func("(G)", "rd", 3), always(5), always(5))
+    # two copies (a for-generate) at one position count once
+    assert et.missing_blocks(tree, META, {"core.v": (1, 1)}) is None
+    assert et.missing_blocks(tree, META, {"core.v": (0, 0), "project.v": (0, 0)}) is None
+
+
+def test_a_dropped_function_or_always_star_is_found() -> None:
+    tree = blocks(func("(F)", "rd", 3), always(5))
+    got = et.missing_blocks(tree, META, {"core.v": (2, 1)})
+    assert got is not None and "core.v declares 2 function or task(s)" in got
+    assert "holds only 1" in got
+    got = et.missing_blocks(tree, META, {"core.v": (1, 2)})
+    assert got is not None and "2 `always @*` block(s)" in got
+
+
+def test_only_a_task_or_function_of_that_file_counts() -> None:
+    tree = blocks(func("(F)", "rd", 3, file="f"), func("(T)", "tk", 4, kind="TASK"))
+    assert et.missing_blocks(tree, META, {"core.v": (1, 0)}) is None
+    assert et.missing_blocks(tree, META, {"core.v": (2, 0)}) is not None
+
+
+def test_a_clocked_always_or_a_continuous_assign_is_not_an_always_star() -> None:
+    tree = blocks(always(5, sens=True), always(6, keyword="cont_assign"))
+    assert et.missing_blocks(tree, META, {"core.v": (0, 1)}) is not None
+
+
+def test_missing_blocks_fails_closed() -> None:
+    with pytest.raises(et.TreeError):
+        et.missing_blocks([], META, {"core.v": (0, 0)})
+    with pytest.raises(et.TreeError):
+        et.missing_blocks(blocks(), {}, {"core.v": (0, 0)})

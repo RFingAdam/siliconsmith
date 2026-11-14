@@ -793,6 +793,22 @@ ALWCOMBORDER = (
 )
 
 
+STAR_TREE = {
+    "type": "NETLIST",
+    "modulesp": [{"type": "ALWAYS", "addr": "(A)", "keyword": "always", "loc": "e,2:3,2:9"}],
+}
+
+
+def answer_tree(argv: list[str], cwd: Path) -> equiv.LintRun | None:
+    """The `--json-only` run of the purity check, for a fake Verilator: the tree of star_core."""
+    if "--json-only" not in argv:
+        return None
+    (cwd / "obj_dir").mkdir()
+    (cwd / "obj_dir" / "Vtt_um_chip.tree.json").write_text(json.dumps(STAR_TREE))
+    (cwd / "obj_dir" / "Vtt_um_chip.tree.meta.json").write_text(TREE_META)
+    return equiv.LintRun(0, "")
+
+
 def star_core(tmp_path: Path) -> tuple[Path, Path]:
     rtl, netlist = inputs(tmp_path)
     (rtl / "chip.v").write_text(
@@ -804,7 +820,7 @@ def star_core(tmp_path: Path) -> tuple[Path, Path]:
 def check_star(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run: equiv.LintRun | None
 ) -> dict[str, Any]:
-    monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: run)
+    monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: answer_tree(argv, cwd) or run)
     rtl, netlist = star_core(tmp_path)
     return equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=FakeYosys(""))
 
@@ -815,6 +831,9 @@ def test_a_block_that_reads_before_it_writes_is_not_proven(
     seen: list[tuple[list[str], str]] = []
 
     def verilator(argv: list[str], cwd: Path) -> equiv.LintRun:
+        answered = answer_tree(argv, cwd)
+        if answered is not None:
+            return answered
         seen.append((argv, (cwd / "chip.v").read_text()))
         return equiv.LintRun(0, ALWCOMBORDER)
 
@@ -990,7 +1009,7 @@ def purity(
     return equiv._function_purity(tmp_path / "s", sources, "chip"), argvs
 
 
-def test_no_function_or_task_means_no_purity_run(
+def test_no_function_task_or_star_block_means_no_purity_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     text = "module tt_um_chip();\n  // a function in a comment\n  wire a;\nendmodule\n"
@@ -1014,8 +1033,36 @@ def test_an_impure_function_is_not_proven_with_one_clean_sentence(
 
 
 def test_a_pure_tree_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tree = {
+        "type": "NETLIST",
+        "modulesp": [{"type": "FUNC", "addr": "(F)", "name": "rd", "loc": "e,3:28,3:30"}],
+    }
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(tree))
+    assert got is None
+
+
+def test_a_function_missing_from_verilators_tree_is_not_proven(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A generate branch Verilator drops (a constant `1/0` is x to Yosys, 0 to Verilator)."""
     tree = {"type": "NETLIST", "modulesp": []}
     got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(tree))
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert "chip.v declares 1 function or task(s)" in got[1] and "holds only 0" in got[1]
+
+
+def test_an_always_star_block_missing_from_verilators_tree_is_not_proven(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = "module tt_um_chip();\n  always @* begin\n    y = t;\n  end\nendmodule\n"
+    tree = {"type": "NETLIST", "modulesp": []}
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(tree), text=text)
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert "chip.v declares 1 `always @*` block(s)" in got[1]
+    tree["modulesp"] = [{"type": "ALWAYS", "keyword": "always", "loc": "e,2:3,2:9"}]
+    got, _ = purity(
+        tmp_path / "x", monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(tree), text=text
+    )
     assert got is None
 
 

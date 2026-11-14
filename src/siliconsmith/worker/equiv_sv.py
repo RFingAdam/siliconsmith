@@ -1117,10 +1117,56 @@ def _myhdl_level_blocks(scan: str) -> tuple[int, str, str] | None:
     return _judge_levels(module)
 
 
-def declares_function(text: str) -> bool:
-    """True if the cleaned RTL has a `function` or `task` keyword (then the function-purity check
-    reads Verilator's tree; without one nothing runs)."""
-    return any(m.group(0) in ("function", "task") for m in _WORD.finditer(text))
+_BLOCKISH = re.compile(
+    r"(?<![\w$'])(?:begin|case[xz]?|for|while|repeat|forever)(?![\w$])", re.ASCII
+)
+_STMT_TOKEN = re.compile(
+    r"(?<![\w$'])(?:begin|end|case[xz]?|endcase|for|while|repeat|forever|else)(?![\w$])|[;()]",
+    re.ASCII,
+)
+
+
+def _statement_has_block(scan: str, start: int) -> bool:
+    """True if the statement at `start` holds a `begin`, `case` or loop, False for a plain
+    assignment or an if/else chain of plain assignments (Verilator turns such an `always @*`
+    into a continuous assignment, so it leaves no `always` in its syntax tree)."""
+    parens = 0
+    for m in _STMT_TOKEN.finditer(scan, start):
+        word = m.group(0)
+        if word == "(":
+            parens += 1
+        elif word == ")":
+            parens -= 1
+        elif parens > 0:
+            continue
+        elif word == ";":
+            if re.match(r"\s*else(?![\w$])", scan[m.end() :]) is None:
+                return False
+        elif word in ("begin", "for", "while", "repeat", "forever") or word.startswith("case"):
+            return True
+    return False
+
+
+def elaborated_blocks(text: str) -> tuple[int, int]:
+    """`(functions and tasks, always @* blocks)` the RTL declares, counted on the tokenized text.
+    The second count leaves out an `always @*` that is one plain assignment or an if/else chain
+    of them. The proof's gold reads the RTL with Yosys's elaboration; Verilator, which the
+    purity and order checks read, can differ about a constant that is x to a simulator and Yosys
+    (`1/0`) and then drops a generate branch or a module that Yosys keeps. The caller refuses if
+    the syntax tree holds fewer of these than the text declares."""
+    _, scan, _ = lex(text)
+    funcs = sum(1 for m in _WORD.finditer(scan) if m.group(0) in ("function", "task"))
+    stars = 0
+    for m in _ALWAYS_STAR.finditer(scan):
+        after = re.compile(r"\s*").match(scan, m.end())
+        start = after.end() if after else m.end()
+        head = re.compile(r"[A-Za-z_]\w*", re.ASCII).match(scan, start)
+        word = head.group(0) if head else ""
+        if word == "if":
+            stars += _statement_has_block(scan, start)
+        elif _BLOCKISH.match(scan, start):
+            stars += 1
+    return funcs, stars
 
 
 def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusal | None:

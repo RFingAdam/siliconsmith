@@ -531,8 +531,8 @@ def _function_purity(
     changes; synthesis inlines the function. Scope cannot be judged from tokens, so Verilator
     resolves the names (`--json-only` writes its syntax tree, `equiv_tree` reads it) on the
     cleaned RTL that Yosys reads, with the top module and flags of the always_comb pass. It runs
-    only if the RTL has a `function` or `task` keyword. Like that pass it must not pass by
-    giving up:
+    only if the RTL has a `function`, a `task` or a multi-statement `always @*`. Like that pass
+    it must not pass by giving up:
 
     * the run takes longer than the emit lint may: `time_limit`;
     * a failing exit code, no readable tree, or a node the walker does not understand:
@@ -541,7 +541,8 @@ def _function_purity(
       happen in practice: the worker runs inside the toolchain image, which holds Verilator, and
       the emit lint (which needs it, and which ran before this check) would have failed first.
     """
-    if not any(equiv_sv.declares_function(equiv_sv.clean(text)) for _, text in sources):
+    declared = {fname: equiv_sv.elaborated_blocks(text) for fname, text in sources}
+    if not any(funcs or stars for funcs, stars in declared.values()):
         return None
     folder = scratch / "func_tree"
     folder.mkdir(parents=True, exist_ok=True)
@@ -577,11 +578,14 @@ def _function_purity(
         tree = json.loads((folder / "obj_dir" / f"V{top}.tree.json").read_text("latin-1"))
         meta = json.loads((folder / "obj_dir" / f"V{top}.tree.meta.json").read_text("latin-1"))
         found = equiv_tree.impure_function(tree, meta, [fname for fname, _ in sources])
+        shortfall = equiv_tree.missing_blocks(tree, meta, declared)
     except (OSError, ValueError, equiv_tree.TreeError, RecursionError) as exc:
         return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
-    if found is None:
-        return None
-    return "guard_sim_synth_differ", f"{found.sentence}."
+    if found is not None:
+        return "guard_sim_synth_differ", f"{found.sentence}."
+    if shortfall is not None:
+        return "guard_sim_synth_differ", f"{shortfall}."
+    return None
 
 
 def check(
