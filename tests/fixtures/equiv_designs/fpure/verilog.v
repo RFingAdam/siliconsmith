@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // fpure: pure functions only. Each function uses just its arguments, its own locals and
 // constants, so a simulator's `always @*` sees everything that changes the result.

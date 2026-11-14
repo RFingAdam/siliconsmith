@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 """Turn a Python exception from the agent's design file into `{file, line, col, msg, source}`.
 

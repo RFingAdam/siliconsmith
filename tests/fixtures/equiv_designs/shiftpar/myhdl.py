@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 """16-bit shift register in MyHDL; only the parity of its 16 bits leaves the chip on uo_out[0]."""
 

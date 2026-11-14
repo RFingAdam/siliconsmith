@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // divmod: a module instance in each branch of an if-generate whose condition is 1/0; one module holds a function that reads a port.
 // The tree tool reads the constant as 0 and drops the other branch, so the order and purity

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // A register WITHOUT reset that relies on its initial value (`initial flag = 1`), where the value
 // only reaches an output 42 cycles after reset: later than a bounded search from reset looks.

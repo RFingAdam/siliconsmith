@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Copy the WebAssembly caches that were compiled when the image was built into the cache folder
 # for this run ($XDG_CACHE_HOME, which the container runner points at the project's build/.cache),

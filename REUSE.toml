@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 version = 1
 
@@ -13,14 +13,14 @@ path = [
   "scripts/third_party_crates.json",
   "**/py.typed",
   "NOTICE",
-  "src/siliconsmith/templates/stubs/**",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Adam Engelbrecht"
-SPDX-License-Identifier = "Apache-2.0"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # Content that may carry its own SPDX header (captured logs, adapted workflows): the header
-# in the file wins; this is the default when there is none.
+# in the file wins; this is the default when there is none. The demo transcripts embed headers
+# of generated files (Apache-2.0), so they stay Apache-2.0 through the closest rule.
 [[annotations]]
 path = [
   ".github/**",
@@ -29,6 +29,20 @@ path = [
   "docs/demos/**",
 ]
 precedence = "closest"
+SPDX-FileCopyrightText = "2026 Adam Engelbrecht"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# Stays Apache-2.0 so that users' chip designs are never encumbered: the skills (the agent copies
+# their code examples into user designs), the glossary, and future example designs. In this file
+# the last matching table wins, so these tables come after the AGPL defaults above.
+[[annotations]]
+path = [
+  "src/siliconsmith/skills/**",
+  "docs/glossary.md",
+  "examples/**",
+  "src/siliconsmith/templates/stubs/**",
+]
+precedence = "override"
 SPDX-FileCopyrightText = "2026 Adam Engelbrecht"
 SPDX-License-Identifier = "Apache-2.0"
 

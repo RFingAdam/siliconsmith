@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 """The `test` verb: emit (re-run in full), then simulate with cocotb on Icarus or Verilator.
 With `gl` it synthesizes the design to sky130 gates first and simulates the netlist on Icarus.

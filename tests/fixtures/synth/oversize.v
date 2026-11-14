@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Far too big for a 1x1 tile on purpose: two 64-bit shift registers loaded serially from
 // ui_in, a registered 64x64 product, and the product XOR-reduced to one byte so that synthesis

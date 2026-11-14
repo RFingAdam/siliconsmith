@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Write the source and license information that ships inside the toolchain image.
 
 Run once at image build time, with the image's own Python (after /opt/pdk is in place):

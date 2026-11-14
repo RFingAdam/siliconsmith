@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """REVIEWER: genuine MyHDL always_comb whose loop reads t in iteration 0 and writes it in 1."""
 
 from myhdl import Signal, always_comb, always_seq, block, intbv, modbv

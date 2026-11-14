@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // A reusable toggle flag with an asynchronous clear and a power-up value; the
 // top ties the clear off. reset (rst_n) never sets the flag; it reaches uo_out[0] at cycle 42.

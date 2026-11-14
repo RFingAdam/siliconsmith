@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // In Verilog tools only space, tab, CR and LF end an escaped identifier, so after the
 // no-break space the `/* ... */` below is code for them. A lexer that ends the identifier

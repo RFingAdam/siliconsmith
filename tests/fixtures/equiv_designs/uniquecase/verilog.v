@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // SystemVerilog `unique case` is read by synthesis as full and parallel: the gates may differ
 // from what a simulator runs.

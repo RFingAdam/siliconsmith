@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // divgen: a function in each branch of an if-generate whose condition is 1/0 (x to Yosys, 0 to Verilator).
 // The tree tool reads the constant as 0 and drops the other branch, so the order and purity

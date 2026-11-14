@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Sequence detector (a small state machine): uo_out[0] is 1 for one cycle after the serial input
 // ui_in[0] has shown 1, 0, 1, 1. Overlapping matches count. Five states in a case statement.

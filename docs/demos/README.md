@@ -20,14 +20,16 @@ Siliconsmith's whole first milestone is built around. The prompt is exactly:
   wraps from 255 to 0. We wrote it before the demo, and it is not changed to fit a result.
 - **Two different simulators agree.** Both the agent's tests and the reference test are run on
   Icarus and on Verilator, so four runs have to pass, and a fifth: the frozen reference test on
-  the real sky130 gates (gate-level simulation on Icarus).
+  the real sky130 gates (gate-level simulation on Icarus). The verifier has run that fifth check
+  since milestone M1-2; the rows below were recorded before it, so their column says n/a.
 - **How many tries it took.** Each `run_tests` call is one turn of the write-test-fix loop; the
   table counts them.
 
 ## What a demo does not prove
 
-- **Simulation is not silicon.** Nothing here has been synthesized, laid out or sent to a fab.
-  Those steps arrive in milestones M1 to M3.
+- **Simulation is not silicon.** These recordings were made before milestone M1, so nothing in
+  them was synthesized, laid out or sent to a fab. Synthesis and gate-level simulation have since
+  arrived (M1); layout and the Tiny Tapeout export arrive in milestones M2 and M3.
 - It is one counter, one prompt and one model on one day. It says the loop works; it does not say
   the tools are good at every design.
 - The agent's spec is still unapproved. Only the owner approves a spec, on the command line, and

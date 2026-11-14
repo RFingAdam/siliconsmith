@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // simulator) but the text has no `int` token. The register has no reset; it reaches a pin at cycle 42.
 `default_nettype none

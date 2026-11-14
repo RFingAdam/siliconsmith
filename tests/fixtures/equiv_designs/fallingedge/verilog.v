@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // A counter on the FALLING clock edge. The equivalence check does not support that, so it must
 // answer "not proven" (never "equivalent").

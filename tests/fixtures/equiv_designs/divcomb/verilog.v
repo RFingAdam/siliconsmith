@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // divcomb: an always @* in each branch of an if-generate on 1/0; the branch Yosys keeps reads a signal before it writes it.
 // The tree tool reads the constant as 0 and drops the other branch, so the order and purity

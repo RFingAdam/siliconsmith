@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """REVIEWER: a MyHDL project whose top returns an object with its own convert()."""
 
 VERILOG = "\n".join(

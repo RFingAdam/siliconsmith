@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // A free-running counter that relies on an INITIAL value (`reg cnt = 0`) and has no reset. A
 // simulator starts it at 0; real silicon does not. The lint step already refuses this form.

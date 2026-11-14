@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // powgen: like divgen, with the constant 0 ** -1.
 // The tree tool reads the constant as 0 and drops the other branch, so the order and purity

@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Siliconsmith toolchain image: simulation stage (M0) plus the ten sky130 files that synthesis and
 # gate-level simulation need (M1). linux/amd64 only.

@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """REVIEWER: genuine MyHDL always_comb that reads t before it writes t (an if forces a block)."""
 
 from myhdl import Signal, always_comb, always_seq, block, intbv, modbv

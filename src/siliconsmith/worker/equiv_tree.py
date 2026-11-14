@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Which functions of the RTL are pure, read from Verilator's resolved syntax tree (no Verilator
 here: the tree is a dict, so the rules can be tested by hand).
 

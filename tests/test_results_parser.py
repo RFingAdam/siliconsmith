@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 """results.xml and failure-message parsing. The XML fixtures were written by cocotb 2.1.0 in the
 toolchain image (`seeded_bug.xml`: the counter with a seeded wrap bug; `messages.xml`: tests with

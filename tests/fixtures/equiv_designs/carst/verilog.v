@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 // A register with an initial value and an asynchronous clear that is tied off
 // (inactive). reset (rst_n) does not set it; it reaches uo_out[0] only 42 cycles after reset.

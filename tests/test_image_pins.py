@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 """The image name, the README and the files under docker/ must agree with each other."""
 
@@ -36,6 +36,13 @@ def test_readme_image_tag_current() -> None:
     assert section, "README.md needs a '## Toolchain image' section"
     assert f"siliconsmith-toolchain:{current_tag()}" in section.group(1)
     assert re.search(r"\b\d+ MB\b", section.group(1)), "the section must state the image size"
+
+
+def test_every_readme_image_tag_is_current() -> None:
+    # The quick start repeats the tag outside the Toolchain image section; keep every copy current.
+    readme = (REPO_ROOT / "README.md").read_text()
+    tags = set(re.findall(r"siliconsmith-toolchain:(ctx-\w+)", readme))
+    assert tags == {current_tag()}, f"README.md names {sorted(tags)}, want {current_tag()}"
 
 
 def test_docker_copy_of_third_party_licenses_is_identical() -> None:

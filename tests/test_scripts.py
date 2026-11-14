@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 Adam Engelbrecht
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 from __future__ import annotations
 
@@ -149,6 +149,22 @@ def test_wheel_requires_every_skill_and_the_glossary(
     assert len(mod.missing_from_wheel(expected, wheel)) == 6
 
 
+def test_wheel_license_problems(tmp_path: Path, load_script: Any) -> None:
+    mod = load_script("check_wheel")
+    wheel = tmp_path / "w.whl"
+    with zipfile.ZipFile(wheel, "w") as zf:
+        zf.writestr("x-1.dist-info/METADATA", "License-Expression: Apache-2.0\n")
+    problems = mod.license_problems(wheel)
+    assert "METADATA does not say License-Expression: AGPL-3.0-or-later" in problems
+    assert len(problems) == 1 + len(mod.LICENSE_FILES)
+    good = tmp_path / "g.whl"
+    with zipfile.ZipFile(good, "w") as zf:
+        zf.writestr("x-1.dist-info/METADATA", "Name: x\nLicense-Expression: AGPL-3.0-or-later\n")
+        for name in mod.LICENSE_FILES:
+            zf.writestr(f"x-1.dist-info/licenses/{name}", "")
+    assert mod.license_problems(good) == []
+
+
 def test_wheel_builds_and_is_complete(load_script: Any) -> None:
     assert load_script("check_wheel").main() == 0
 
@@ -241,3 +257,79 @@ def test_trailers_reads_git_log_and_pr_body(
     _add(git_repo, "a.txt", "3")
     _commit(git_repo, "bad change\n\nCo-authored-by: Bot <bot@example.com>")
     assert mod.main(["check_trailers.py", base]) == 1
+
+
+# check_cla
+
+_CLA_BOX = (
+    "- [x] I have read and agree to the [CLA](https://example.com/CLA.md) for this contribution."
+)
+_FORK = {"HEAD_REPO": "someone/siliconsmith", "BASE_REPO": "RFingAdam/siliconsmith"}
+_SAME = {"HEAD_REPO": "RFingAdam/siliconsmith", "BASE_REPO": "RFingAdam/siliconsmith"}
+_TEMPLATE = (
+    Path(__file__).resolve().parent.parent / ".github" / "PULL_REQUEST_TEMPLATE.md"
+).read_text()
+
+
+def _run_cla(
+    load_script: Any, monkeypatch: pytest.MonkeyPatch, env: dict[str, str], body: str
+) -> int:
+    mod = load_script("check_cla")
+    for key in ("HEAD_REPO", "BASE_REPO", "PR_BODY"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in {**env, "PR_BODY": body}.items():
+        monkeypatch.setenv(key, value)
+    return int(mod.main())
+
+
+def test_cla_fork_without_box_fails(load_script: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _run_cla(load_script, monkeypatch, _FORK, _TEMPLATE) == 1
+    assert _run_cla(load_script, monkeypatch, _FORK, "") == 1
+
+
+def test_cla_fork_with_box_passes(load_script: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _run_cla(load_script, monkeypatch, _FORK, f"## Checklist\n\n{_CLA_BOX}\n- [ ] x") == 0
+    ticked = _TEMPLATE.replace("- [ ] I have read", "- [X] I have read", 1)
+    assert _run_cla(load_script, monkeypatch, _FORK, ticked) == 0
+
+
+def test_cla_other_ticked_box_does_not_count(
+    load_script: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = "- [x] Tests pass locally.\n- [ ] I have read and agree to the CLA."
+    assert _run_cla(load_script, monkeypatch, _FORK, body) == 1
+
+
+def test_cla_same_repo_is_exempt(load_script: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _run_cla(load_script, monkeypatch, _SAME, "") == 0
+
+
+def test_cla_dependabot_is_exempt(load_script: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Dependabot opens branches in this repository, so it takes the same-repo path.
+    assert _run_cla(load_script, monkeypatch, _SAME, "Bumps x from 1 to 2.\nSigned-off-by: d") == 0
+
+
+def test_cla_deleted_fork_still_needs_box(
+    load_script: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = {"BASE_REPO": "RFingAdam/siliconsmith"}
+    assert _run_cla(load_script, monkeypatch, env, "") == 1
+    assert _run_cla(load_script, monkeypatch, env, _CLA_BOX) == 0
+
+
+def test_cla_without_base_repo_is_an_error(
+    load_script: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _run_cla(load_script, monkeypatch, {}, "") == 2
+
+
+def test_pr_template_has_cla_box_first() -> None:
+    boxes = [line for line in _TEMPLATE.splitlines() if line.startswith("- [ ]")]
+    assert "CLA" in boxes[0]
+
+
+def test_cla_box_inside_a_comment_does_not_count(
+    load_script: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = f"<!--\n- [x] I have read and agree to the CLA\n-->\n{_TEMPLATE}"
+    assert _run_cla(load_script, monkeypatch, _FORK, body) == 1
