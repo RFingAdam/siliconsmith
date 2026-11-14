@@ -242,51 +242,28 @@ def test_a_default_value_wrapper_is_shown_under_the_name_the_user_wrote() -> Non
     assert found is not None and found.name == "rd" and "`rd` (core.v" in found.sentence
 
 
-# -- Verilator drops what Yosys keeps (a constant that is x: 1/0) --------------------------------
+# -- placed_nodes: where Verilator's blocks and calls are -----------------------------------------
 
 
-def blocks(*nodes: dict[str, Any]) -> dict[str, Any]:
-    return {"type": "NETLIST", "modulesp": list(nodes)}
-
-
-def always(line: int, *, keyword: str = "always", sens: bool = False) -> dict[str, Any]:
-    return {
-        "type": "ALWAYS",
-        "keyword": keyword,
-        "loc": f"e,{line}:3,{line}:9",
-        "sentreep": [{"type": "SENTREE"}] if sens else [],
+def test_placed_nodes_lists_the_nodes_of_known_files_only() -> None:
+    tree = {
+        "type": "NETLIST",
+        "modulesp": [
+            {"type": "ALWAYS", "keyword": "always_comb", "loc": "e,5:3,5:9"},
+            {"type": "FUNCREF", "name": "rd", "dotted": "g", "loc": "e,6:7,6:9"},
+            {"type": "FUNCREF", "name": "std", "loc": "z,1:1,1:2"},  # a file meta does not know
+            {"type": "VAR", "name": "x"},  # no position
+        ],
     }
+    got = sorted(et.placed_nodes(tree, META), key=lambda n: n.line)
+    assert [(n.type, n.keyword, n.name, n.dotted, n.file, n.line, n.col) for n in got] == [
+        ("ALWAYS", "always_comb", "", "", "core.v", 5, 3),
+        ("FUNCREF", "", "rd", "g", "core.v", 6, 7),
+    ]
 
 
-def test_a_tree_with_every_declared_block_is_complete() -> None:
-    tree = blocks(func("(F)", "rd", 3), func("(G)", "rd", 3), always(5), always(5))
-    # two copies (a for-generate) at one position count once
-    assert et.missing_blocks(tree, META, {"core.v": (1, 1)}) is None
-    assert et.missing_blocks(tree, META, {"core.v": (0, 0), "project.v": (0, 0)}) is None
-
-
-def test_a_dropped_function_or_always_star_is_found() -> None:
-    tree = blocks(func("(F)", "rd", 3), always(5))
-    got = et.missing_blocks(tree, META, {"core.v": (2, 1)})
-    assert got is not None and "core.v declares 2 function or task(s)" in got
-    assert "holds only 1" in got
-    got = et.missing_blocks(tree, META, {"core.v": (1, 2)})
-    assert got is not None and "2 `always @*` block(s)" in got
-
-
-def test_only_a_task_or_function_of_that_file_counts() -> None:
-    tree = blocks(func("(F)", "rd", 3, file="f"), func("(T)", "tk", 4, kind="TASK"))
-    assert et.missing_blocks(tree, META, {"core.v": (1, 0)}) is None
-    assert et.missing_blocks(tree, META, {"core.v": (2, 0)}) is not None
-
-
-def test_a_clocked_always_or_a_continuous_assign_is_not_an_always_star() -> None:
-    tree = blocks(always(5, sens=True), always(6, keyword="cont_assign"))
-    assert et.missing_blocks(tree, META, {"core.v": (0, 1)}) is not None
-
-
-def test_missing_blocks_fails_closed() -> None:
+def test_placed_nodes_fails_closed() -> None:
     with pytest.raises(et.TreeError):
-        et.missing_blocks([], META, {"core.v": (0, 0)})
+        list(et.placed_nodes([], META))
     with pytest.raises(et.TreeError):
-        et.missing_blocks(blocks(), {}, {"core.v": (0, 0)})
+        list(et.placed_nodes({}, {}))

@@ -1,0 +1,2 @@
+# a lone CR in this fixture is the test: never let git normalize its line ends
+tests/fixtures/equiv_designs/crhide/verilog.v -text

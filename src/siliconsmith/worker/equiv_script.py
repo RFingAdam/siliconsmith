@@ -125,6 +125,12 @@ def _read_rtl(name: str) -> list[str]:
     ]
 
 
+def elaboration(name: str) -> str:
+    """The RTL as the proof reads it, elaborated and written out as RTLIL (`elab.il`): the host
+    reads the source position of every process in it (`equiv_elab`)."""
+    return "\n".join([*_read_rtl(name), "write_rtlil elab.il"]) + "\n"
+
+
 def gold(name: str, mode: str, expose: bool = False) -> str:
     """The RTL side.
 
@@ -286,6 +292,25 @@ def base_script(points: list[Point], steps: int) -> str:
             f"-show {show},rst_n,ui_in,uio_in -dump_vcd base_{tag.lower()}.vcd equiv\n"
         )
     return script
+
+
+def confirm_script(points: list[Point], which: list[int], inputs: dict[str, int]) -> str:
+    """Is a power-up difference that the X run found at cycle 1 a real one? The X run spreads x
+    gate by gate, which is pessimistic for logic that splits a signal and joins it again: an
+    output can be x in the netlist although its value does not depend on the power-up state. This
+    run takes the inputs of the X run's counterexample (`inputs`: name to value), gives every
+    register of both sides ANY defined power-up value (`-set-init-def`, no ties) and proves that
+    the points `which` (the ones the RTL defines in the X run) are equal at cycle 1. A difference
+    here is a power-up state that really changes the netlist's value."""
+    prove = " ".join(f"-prove eqa_{i} eqb_{i}" for i in which)
+    show = ",".join(f"eqa_{i},eqb_{i}" for i in which)
+    fixed = " ".join(f"-set-at 1 {name} {value}" for name, value in inputs.items())
+    return (
+        "read_rtlil base.il\nhierarchy -top equiv\n"
+        f"log {BASE_PREFIX}CONFIRM\n"
+        f"sat -seq 1 -set-init-def -enable_undef -set-def-inputs {fixed} {prove} "
+        f"-show {show},rst_n,ui_in,uio_in equiv\n"
+    )
 
 
 # induct: base (bounded search only), xstep (k-induction, x states allowed in the step: matches

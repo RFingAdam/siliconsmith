@@ -321,12 +321,32 @@ RTL_SEEDS = [
     ("fdup", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("fport", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("fparam3", "verilog", "not_proven", "guard_sim_synth_differ"),
-    # a constant that is x to Yosys and a simulator (`1/0`, `0 ** -1`) is 0 to Verilator,
-    # which then drops the generate branch (or module) that Yosys keeps
+    # a constant that is x to Yosys and a simulator (`1/0`, `0 ** -1`) is folded by Verilator,
+    # which then takes another generate branch (or module) than Yosys: the function and order
+    # checks would judge a different design, so the check refuses
     ("divgen", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("divmod", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("powgen", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("divcomb", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("gencall", "verilog", "not_proven", "guard_sim_synth_differ"),  # an impure call in a branch
+    ("gendot", "verilog", "not_proven", "guard_sim_synth_differ"),  # a hierarchical call g.rd()
+    (
+        "gendotx",
+        "verilog",
+        "not_proven",
+        "guard_sim_synth_differ",
+    ),  # the same, branch chosen by 1/0
+    # Round 11: the elaboration cross-check must see every always block, whatever its keyword or
+    # shape, and a function must not read a hierarchical name that one tool folds to a constant
+    ("svcombgen", "verilog", "not_proven", "guard_sim_synth_differ"),  # always_comb, 1/0 branch
+    ("svcombsub", "verilog", "not_proven", "guard_sim_synth_differ"),  # same, in a sub-module
+    ("concatgen", "verilog", "not_proven", "guard_sim_synth_differ"),  # `{y, t} = {t, ui_in}`
+    ("svescw", "verilog", "not_proven", "guard_sim_synth_differ"),  # `always_comb\y` and `\;`
+    ("hierk", "verilog", "not_proven", "guard_sim_synth_differ"),  # function reads `g.k`
+    # swpick: an output picked by a 4-way switch on ui_in that does not depend on the power-up
+    # state, but whose gates spread x in the X run. Once reported as "NOT equivalent" (false):
+    # now the power-up difference must be confirmed, and an unconfirmed one is only not proven
+    ("swpick", "verilog", "not_proven", "base_case"),
     # Icarus ends a `//` comment at a lone CR, Yosys and Verilator do not
     ("crhide", "verilog", "not_proven", "guard_sim_synth_differ"),
     # Verilator ends an attribute at a `*)` inside its string, Yosys does not
@@ -367,6 +387,22 @@ async def test_equiv_initial_value_declaration_stops_at_lint(
         assert "PROCASSINIT" in result["summary"]
         assert result["details"].get("verdict") is None
         states = step_states(await call(client, "status", project="initz"))
+        assert states["equivalence"] != "pass"
+
+
+async def test_an_always_comb_that_reads_before_it_writes_stops_at_lint(
+    server: Client, tmp_path: Path
+) -> None:
+    """combsv: no `always @*` in the file, only an `always_comb` that reads `t` before it writes
+    it. The emit lint (Verilator ALWCOMBORDER) already refuses it before any proof, so the
+    always_comb order pass of the check does not need to look at `always_comb` blocks."""
+    async with server as client:
+        await design_project(client, tmp_path, "combsv", "verilog")
+        result = await call(client, "check_equivalence", project="combsv")
+        assert result["ok"] is False
+        assert "ALWCOMBORDER" in result["summary"]
+        assert result["details"].get("verdict") is None
+        states = step_states(await call(client, "status", project="combsv"))
         assert states["equivalence"] != "pass"
 
 
@@ -535,17 +571,27 @@ IMPURE_FIXTURES = {
 }
 
 
+TREE_RUN = (
+    "import time\n"
+    "from siliconsmith.worker import equiv\n"
+    "def tree_checks(folder, sources, name):\n"
+    "    run = equiv._Run(folder, equiv.run_yosys, equiv.Clock(300, 600), time.monotonic())\n"
+    "    got = equiv._tree_checks(run, sources, name)\n"
+    "    return None if got is None else (got['reason'], got['message'])\n"
+)
+
+
 def purity_in_container(image: str, project: Path, name: str) -> str:
-    """What `equiv._function_purity` says about the project's emitted RTL (`src/`), run in the
+    """What `equiv._tree_checks` says about the project's emitted RTL (`src/`), run in the
     container where Verilator is: "None" when every function is pure."""
     script = (
         "from pathlib import Path\n"
-        "from siliconsmith.worker import equiv\n"
+        f"{TREE_RUN}"
         f"name = {name!r}\n"
         "src = Path('/work/src')\n"
         "files = ('project.v', name + '.v')\n"
         "sources = [(f, (src / f).read_bytes().decode('latin-1')) for f in files]\n"
-        "print('RESULT', equiv._function_purity(Path('/work/build/pu'), sources, name))\n"
+        "print('RESULT', tree_checks(Path('/work/build/pu'), sources, name))\n"
     )
     proc = run_hardened(image, project, "python", "-c", script, timeout=300)
     assert proc.returncode == 0, proc.stderr
@@ -569,14 +615,14 @@ async def test_the_purity_check_names_the_signal_a_function_reads(
 
 
 def texts_in_container(image: str, project: Path, cases: dict[str, str]) -> dict[str, str]:
-    """`equiv._function_purity` on each text (a whole `tt_um_chip` module, in `chip.v`)."""
+    """`equiv._tree_checks` on each text (a whole `tt_um_chip` module, in `chip.v`)."""
     script = (
         "import json\nfrom pathlib import Path\n"
-        "from siliconsmith.worker import equiv\n"
+        f"{TREE_RUN}"
         f"cases = json.loads({json.dumps(cases)!r})\n"
         "for i, (key, text) in enumerate(cases.items()):\n"
         "    sources = [('project.v', '// wrapper\\n'), ('chip.v', text)]\n"
-        "    got = equiv._function_purity(Path(f'/work/build/pu{i}'), sources, 'chip')\n"
+        "    got = tree_checks(Path(f'/work/build/pu{i}'), sources, 'chip')\n"
         "    print('RESULT', json.dumps([key, got]))\n"
     )
     proc = run_hardened(image, project, "python", "-c", script, timeout=600)
@@ -641,7 +687,7 @@ PURE_CASES = {
     "recursion on its own argument": MOD.format(
         "  function automatic [7:0] f(input [7:0] a);\n"
         "    f = (a == 8'd0) ? 8'd0 : a + f(a - 8'd1);\n  endfunction\n"
-        "  always @(*) y = f(8'd3);"
+        "  always @(*) y = f(8'd3) ^ ui_in;"
     ),
     "a parameterized core whose function reads only its arguments": (
         "module tt_um_chip #(parameter W = 8) (input wire [W-1:0] ui_in, "
@@ -735,6 +781,34 @@ async def test_the_purity_check_adds_no_refusal_in_the_counter(
         emitted = await call(client, "emit_verilog", project="counter")
         assert emitted["ok"] is True, emitted["summary"]
         assert purity_in_container(image, project, "counter") == "None", fe
+
+
+async def test_an_untaken_generate_branch_with_impure_blocks_is_not_judged(
+    server: Client, tmp_path: Path
+) -> None:
+    """genpick: an if-generate on an ordinary constant. The branch that is not taken holds an
+    impure function and an `always @*` that reads before it writes, but both tools take the other
+    branch, so the check passes (an earlier count rule refused this)."""
+    async with server as client:
+        await design_project(client, tmp_path, "genpick", "verilog")
+        result = await call(client, "check_equivalence", project="genpick")
+        assert result["ok"] is True, result["summary"]
+        assert result["details"]["verdict"] == "equivalent", result["details"]
+
+
+@pytest.mark.parametrize("design", ["combok", "combone", "memread", "pkgcall", "starglue"])
+async def test_clean_blocks_the_elaboration_cross_check_must_not_refuse(
+    server: Client, tmp_path: Path, design: str
+) -> None:
+    """combok/combone: one-assignment `always_comb` blocks (Verilator without -fno-dfg folds them
+    away); memread: a register array read outside an always block (Yosys makes it registers);
+    pkgcall: `pkg::f(a)` in an assign; starglue: `always@(*)begin`. Both tools elaborate the same
+    design, so the check passes."""
+    async with server as client:
+        await design_project(client, tmp_path, design, "verilog")
+        result = await call(client, "check_equivalence", project=design)
+        assert result["ok"] is True, result["summary"]
+        assert result["details"]["verdict"] == "equivalent", result["details"]
 
 
 async def test_a_design_with_pure_functions_is_proven_equivalent(

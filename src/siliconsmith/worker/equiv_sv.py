@@ -14,7 +14,8 @@ named) instead of a verdict. What it does NOT spot is left to gate-level simulat
 (`run_tests` with `gl=true`):
 
 * an out-of-range index or a division by zero (x in a simulator, some value in the gates, because
-  an x in the RTL is a don't-care);
+  an x in the RTL is a don't-care), a constant that is x to a simulator steering a case inside a
+  block, and the values inside a generate loop or module copy;
 * anything that depends on the order in which a simulator runs events.
 
 ## What this module does
@@ -296,7 +297,8 @@ def always_comb_copy(text: str) -> str | None:
     last = 0
     for m in _ALWAYS_STAR.finditer(scan):
         out.append(cleaned[last : m.start()])
-        out.append("always_comb" + "\n" * m.group(0).count("\n"))
+        glued = cleaned[m.end() : m.end() + 1] not in ("", " ", "\t", "\n", "\r")  # `@(*)begin`
+        out.append("always_comb" + " " * glued + "\n" * m.group(0).count("\n"))
         last = m.end()
     if not out:
         return None
@@ -304,6 +306,8 @@ def always_comb_copy(text: str) -> str | None:
     return "".join(out)
 
 
+_FUNCTION_BODY = re.compile(r"\bfunction\b.*?\bendfunction\b", re.S | re.ASCII)
+_DOTTED = re.compile(r"(?<![\w$'])[A-Za-z_][\w$]*\s*\.\s*[A-Za-z_]", re.ASCII)
 _DIRECTIVE = re.compile(r"``|`([A-Za-z_]\w*)?", re.ASCII)
 _WORD = re.compile(r"(?<![\w$'])[A-Za-z_][\w$]*", re.ASCII)
 _BASED = re.compile(
@@ -1117,56 +1121,16 @@ def _myhdl_level_blocks(scan: str) -> tuple[int, str, str] | None:
     return _judge_levels(module)
 
 
-_BLOCKISH = re.compile(
-    r"(?<![\w$'])(?:begin|case[xz]?|for|while|repeat|forever)(?![\w$])", re.ASCII
-)
-_STMT_TOKEN = re.compile(
-    r"(?<![\w$'])(?:begin|end|case[xz]?|endcase|for|while|repeat|forever|else)(?![\w$])|[;()]",
-    re.ASCII,
-)
+_TREE_WORDS = frozenset({"function", "task", "always", "always_comb", "always_latch", "always_ff"})
 
 
-def _statement_has_block(scan: str, start: int) -> bool:
-    """True if the statement at `start` holds a `begin`, `case` or loop, False for a plain
-    assignment or an if/else chain of plain assignments (Verilator turns such an `always @*`
-    into a continuous assignment, so it leaves no `always` in its syntax tree)."""
-    parens = 0
-    for m in _STMT_TOKEN.finditer(scan, start):
-        word = m.group(0)
-        if word == "(":
-            parens += 1
-        elif word == ")":
-            parens -= 1
-        elif parens > 0:
-            continue
-        elif word == ";":
-            if re.match(r"\s*else(?![\w$])", scan[m.end() :]) is None:
-                return False
-        elif word in ("begin", "for", "while", "repeat", "forever") or word.startswith("case"):
-            return True
-    return False
-
-
-def elaborated_blocks(text: str) -> tuple[int, int]:
-    """`(functions and tasks, always @* blocks)` the RTL declares, counted on the tokenized text.
-    The second count leaves out an `always @*` that is one plain assignment or an if/else chain
-    of them. The proof's gold reads the RTL with Yosys's elaboration; Verilator, which the
-    purity and order checks read, can differ about a constant that is x to a simulator and Yosys
-    (`1/0`) and then drops a generate branch or a module that Yosys keeps. The caller refuses if
-    the syntax tree holds fewer of these than the text declares."""
+def needs_tree(text: str) -> bool:
+    """True if the RTL has a `function`, a `task` or any always block (`always`, `always_comb`,
+    `always_latch`, `always_ff`; found in the tokenized text, so a comment or a string never
+    counts): the blocks that the purity and order checks judge on Verilator's syntax tree, and
+    that the elaboration cross-check (`equiv_elab`) must see in both tools."""
     _, scan, _ = lex(text)
-    funcs = sum(1 for m in _WORD.finditer(scan) if m.group(0) in ("function", "task"))
-    stars = 0
-    for m in _ALWAYS_STAR.finditer(scan):
-        after = re.compile(r"\s*").match(scan, m.end())
-        start = after.end() if after else m.end()
-        head = re.compile(r"[A-Za-z_]\w*", re.ASCII).match(scan, start)
-        word = head.group(0) if head else ""
-        if word == "if":
-            stars += _statement_has_block(scan, start)
-        elif _BLOCKISH.match(scan, start):
-            stars += 1
-    return funcs, stars
+    return any(m.group(0) in _TREE_WORDS for m in _WORD.finditer(scan))
 
 
 def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusal | None:
@@ -1197,6 +1161,10 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
             return refuse("a `task` (it can write any signal, and `@*` does not see it)", m.start())
         if word == "function" and not re.match(r"\s*automatic\b", scan[m.end() :], re.ASCII):
             return refuse("a `function` that is not `automatic`", m.start())
+    for body in _FUNCTION_BODY.finditer(scan):
+        dotted = _DOTTED.search(body.group(0))
+        if dotted is not None:
+            return refuse("a hierarchical name inside a function", body.start() + dotted.start())
     for task in SYSTEM_TASKS:
         at = scan.find(task)
         if at >= 0:
@@ -1277,6 +1245,9 @@ _ADVICE = (
      "missing from the list, and the gates do not care about the list."),
     ("a `task`", "Use a `function automatic` that takes its inputs as arguments and returns the "
      "value."),
+    ("hierarchical name", "Pass the value in as an argument: Verilator and Yosys can resolve a "
+     "hierarchical name to different things in a generate branch, and a simulator does not rerun "
+     "an `always @*` when it changes."),
     ("automatic", "Write `function automatic`: a simulator keeps the local variables of a plain "
      "function between calls."),
     ("$", "Remove it: it reads a file or an option the check does not have."),

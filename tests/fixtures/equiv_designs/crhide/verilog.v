@@ -10,8 +10,7 @@ module crhide (
   assign uio_out = 8'd0; assign uio_oe = 8'd0;
   always @* begin
     uo_out = ui_in;
-    // invert for the bench
-    uo_out = ~ui_in;
+    // invert for the bench    uo_out = ~ui_in;
   end
   wire _unused = &{uio_in, ena, clk, rst_n, 1'b0};
 endmodule

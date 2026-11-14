@@ -344,7 +344,10 @@ _GUARD_HINTS = {
         "Reset every register that feeds an output with rst_n, then call check_equivalence again."
     ),
     "base_case": (
-        "Reset every register that feeds an output with rst_n, then call check_equivalence again."
+        "Reset every register that feeds an output with rst_n, then call check_equivalence again. "
+        "If they are all reset and the message says the power-up (x) run could not show a match, "
+        "the proof was too cautious about logic that picks between register bits at power-up: "
+        "rely on gate-level simulation (run_tests with gl=True)."
     ),
     "initial_values": (
         "Reset those registers with rst_n instead of giving them an initial value (`reg x = 0`, "
@@ -631,18 +634,20 @@ them: macros and `include, bit/int types, unique/priority, casex, ===, x or z li
 always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational block that \
 reads a signal before it writes it (in @* blocks found by Verilator's always_comb check; in \
 MyHDL blocks checked directly, loops included), a function that reads anything other than \
-its arguments and any task, a function or @* block that Verilator's elaboration lacks (a \
-generate branch on a constant such as 1/0, which is x to Yosys and a simulator, 0 to \
-Verilator), a MyHDL core that is not the plain single module MyHDL writes \
-(generate, instances, a second module, odd arrays), a MyHDL level-sensitive block \
-that is not the plain shape @always_comb writes and does not list every signal it reads (use \
-@always_comb), a carriage return that no line feed follows, and a function without \
-automatic. It does \
-NOT detect an out-of-range index or a division by zero (x in a simulator, some value in the \
-gates), a constant expression that Yosys evaluates differently from a simulator (a size cast, \
-an unbased '1 or $rtoi inside a localparam), in hand-written Verilog a read and a write that \
-happen in that order only across loop iterations (Verilator cannot see it), or other \
-effects of simulation event order: run gate-level simulation (run_tests with gl=True) as well.\n\
+its arguments and any task, an always block (any keyword) or function call that Yosys \
+elaborates and Verilator does not (a generate branch or instance chosen by a constant that is \
+x to Yosys and a simulator, such as 1/0), a hierarchical function call (g.f(a)) or a \
+hierarchical name inside a function, a MyHDL core that is not the plain single module MyHDL \
+writes (generate, instances, a second module, odd arrays), \
+a MyHDL level-sensitive block that is not the plain shape @always_comb writes and does not \
+list every signal it reads (use @always_comb), a carriage return that no line feed follows, \
+and a function without automatic. It does NOT detect an out-of-range index or a division by \
+zero (x in a simulator, some value in the gates), a constant that is x to a simulator \
+steering a case inside a block, or the values inside a generate loop or module copy, a \
+constant expression that Yosys evaluates differently from a simulator (a size cast, an \
+unbased '1 or $rtoi inside a localparam), in hand-written Verilog a read and a write that \
+happen in that order only across loop iterations (Verilator cannot see it), or other effects \
+of simulation event order: run gate-level simulation (run_tests with gl=True) as well.\n\
 What it checks: every output value the RTL defines must match for every power-up state of \
 the chip's flip-flops (an x or default-don't-care in the RTL means any value is accepted); \
 registers that nothing resets are only compared for a consistent power-up (the RTL simulation \

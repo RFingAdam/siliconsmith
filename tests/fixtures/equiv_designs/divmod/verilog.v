@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // divmod: a module instance in each branch of an if-generate whose condition is 1/0; one module holds a function that reads a port.
-// The tree tool reads the constant as 0 and drops the other branch, so the order and purity
-// checks must refuse when its tree holds fewer blocks than the text declares.
+// The other branch is taken by Verilator, so its elaboration lacks a block that Yosys keeps: the
+// check must refuse (not_proven, guard_sim_synth_differ) before the function and order checks.
 `default_nettype none
 module divmod_pure (input wire [7:0] a, input wire [7:0] c, output reg [7:0] o);
   function automatic [7:0] rd(input [7:0] d);

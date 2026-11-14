@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,7 @@ class FakeYosys:
         self.answers = answers
         self.calls: list[tuple[str, float]] = []
         self.gate_read = "module \\tt_um_chip\n  wire width 1 \\a\n  connect \\a 1'0\nend\n"
+        self.elab_il = "module \\tt_um_chip\nend\n"  # what the "elab" call writes (no process)
 
     def __call__(self, cwd: Path, script: str, tag: str, timeout: float) -> tuple[int | None, str]:
         self.calls.append((tag, timeout))
@@ -43,6 +45,9 @@ class FakeYosys:
         if timeout <= 0:  # like the real runner: no time left, nothing runs
             return None, ""
         answer = self.answers.get(tag)
+        if tag == "elab":  # the elaboration for the Verilator cross-check
+            (cwd / "elab.il").write_text(self.elab_il)
+            answer = answer or (0, "inline", "")
         if answer is None:
             raise AssertionError(f"unexpected Yosys call {tag!r}; calls so far: {self.calls}")
         code, scenario, name = answer
@@ -164,10 +169,11 @@ def test_a_base_case_x_difference_on_an_output_is_not_equivalent(tmp_path: Path)
         "counter_m0442",
         equiv=(0, "counter_m0442", "equiv.log"),
         base=(0, "counter_m0442", "base.log"),
+        baseconfirm=(0, "inline", "SAT proof finished - model found: FAIL!\n"),
     )
     got = go(tmp_path, fake)
     assert got["verdict"] == "not_equivalent" and got["ok"] is False
-    assert fake.tags == ["equiv", "base"]  # no referee needed
+    assert fake.tags == ["equiv", "base", "baseconfirm"]  # confirmed: no referee needed
     mismatch = got["first_mismatch"]
     assert mismatch["cycle"] == 1
     assert {"signal": "uio_oe[0]", "rtl": "0", "netlist": "x"} in mismatch["differs"]
@@ -178,6 +184,41 @@ def test_a_base_case_x_difference_on_an_output_is_not_equivalent(tmp_path: Path)
     assert row["cycle"] == 1 and row["inputs"]["rst_n"] == "0"
     assert row["rtl"]["uio_oe[0]"] == "0" and row["netlist"]["uio_oe[0]"] == "x"
     assert all(k.startswith(("uo_out", "uio_out", "uio_oe")) for k in row["rtl"])  # pins only
+
+
+def test_an_x_difference_that_no_defined_power_up_state_shows_is_not_proven_not_a_difference(
+    tmp_path: Path,
+) -> None:
+    """c1/p67: the X run spreads x gate by gate and calls an output x that does not depend on the
+    power-up state. The confirming run (any defined power-up value) finds no difference, so the
+    verdict is never `not_equivalent` on the X run alone."""
+    fake = FakeYosys(
+        "counter_m0442",
+        equiv=(0, "counter_m0442", "equiv.log"),
+        base=(0, "counter_m0442", "base.log"),
+        baseconfirm=(0, "inline", "SAT proof finished - no model found: SUCCESS!\n"),
+        bmc=(0, "counter_good", "bmc.log"),
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "base_case" and not got["ok"]
+    assert fake.tags == ["equiv", "base", "baseconfirm", "bmc"]
+    assert "no defined power-up state was found" in got["message"]
+    script = (tmp_path / "scratch/baseconfirm.ys").read_text()
+    assert "-set-init-def" in script and "-set-at 1 rst_n 0" in script and "-prove eqa_" in script
+    assert "-set-at 1 ui_in" in script  # the inputs of the X run's counterexample stay fixed
+
+
+def test_an_unreadable_confirming_run_is_an_error_never_a_difference_or_a_pass(
+    tmp_path: Path,
+) -> None:
+    fake = FakeYosys(
+        "counter_m0442",
+        equiv=(0, "counter_m0442", "equiv.log"),
+        base=(0, "counter_m0442", "base.log"),
+        baseconfirm=(0, "inline", "nothing useful\n"),
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "error" and not got["ok"]
 
 
 def test_a_difference_found_from_reset_names_the_bit_the_cycle_and_the_trace(
@@ -799,6 +840,17 @@ STAR_TREE = {
 }
 
 
+def il(*places: str) -> str:
+    """RTLIL with one process per source position (`file:L.C-L.C`)."""
+    body = "".join(
+        f'  attribute \\src "{p}"\n  process $proc$n{i}\n  end\n' for i, p in enumerate(places)
+    )
+    return f"module \\tt_um_chip\n{body}end\n"
+
+
+STAR_IL = il("chip.v:2.3-5.6")  # Yosys keeps the `always @*` of star_core
+
+
 def answer_tree(argv: list[str], cwd: Path) -> equiv.LintRun | None:
     """The `--json-only` run of the purity check, for a fake Verilator: the tree of star_core."""
     if "--json-only" not in argv:
@@ -822,7 +874,9 @@ def check_star(
 ) -> dict[str, Any]:
     monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: answer_tree(argv, cwd) or run)
     rtl, netlist = star_core(tmp_path)
-    return equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=FakeYosys(""))
+    fake = FakeYosys("")
+    fake.elab_il = STAR_IL
+    return equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=fake)
 
 
 def test_a_block_that_reads_before_it_writes_is_not_proven(
@@ -840,10 +894,11 @@ def test_a_block_that_reads_before_it_writes_is_not_proven(
     monkeypatch.setattr(equiv, "_run_verilator", verilator)
     rtl, netlist = star_core(tmp_path)
     fake = FakeYosys("")
+    fake.elab_il = STAR_IL
     got = equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=fake)
     assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
     assert "chip.v, line 4" in got["message"] and "`t`" in got["message"]
-    assert "reads a signal before it writes it" in got["message"] and fake.calls == []
+    assert "reads a signal before it writes it" in got["message"] and fake.tags == ["elab"]
     argv, copy = seen[0]
     assert argv[:2] == ["verilator", "--lint-only"] and "-Wno-fatal" in argv and "-Wall" in argv
     assert argv[-2:] == ["project.v", "chip.v"] and "tt_um_chip" in argv
@@ -991,8 +1046,10 @@ def purity(
     *,
     tree: str | None = None,
     text: str = FUNC_RTL,
+    fake: FakeYosys | None = None,
 ) -> tuple[tuple[str, str] | None, list[list[str]]]:
-    """`equiv._function_purity` with a fake Verilator that answers `run` and writes `tree`."""
+    """`equiv._tree_checks` with a fake Verilator that answers `run` and writes `tree`, and a fake
+    Yosys (`fake`, answering the "elab" call). Gives `(reason, sentence)` or None."""
     argvs: list[list[str]] = []
 
     def verilator(argv: list[str], cwd: Path) -> equiv.LintRun | None:
@@ -1006,7 +1063,12 @@ def purity(
 
     monkeypatch.setattr(equiv, "_run_verilator", verilator)
     sources = [("project.v", "// wrapper\n"), ("chip.v", text)]
-    return equiv._function_purity(tmp_path / "s", sources, "chip"), argvs
+    r = equiv._Run(tmp_path / "s", fake or FakeYosys(""), equiv.Clock(60, 120), time.monotonic())
+    got = equiv._tree_checks(r, sources, "chip")
+    if got is None:
+        return None, argvs
+    sentence = got["message"].removeprefix("Could not prove equivalence: ")
+    return (got["reason"], sentence.removesuffix(f" {NOT_A_PASS}")), argvs
 
 
 def test_no_function_task_or_star_block_means_no_purity_run(
@@ -1029,6 +1091,7 @@ def test_an_impure_function_is_not_proven_with_one_clean_sentence(
     )
     argv = argvs[0]
     assert argv[:2] == ["verilator", "--json-only"] and "-Wno-fatal" in argv
+    assert "-fno-dfg" in argv  # else a one-assignment block has no node at its keyword
     assert argv[-2:] == ["project.v", "chip.v"] and "tt_um_chip" in argv
 
 
@@ -1041,29 +1104,125 @@ def test_a_pure_tree_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert got is None
 
 
-def test_a_function_missing_from_verilators_tree_is_not_proven(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A generate branch Verilator drops (a constant `1/0` is x to Yosys, 0 to Verilator)."""
-    tree = {"type": "NETLIST", "modulesp": []}
-    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(tree))
-    assert got is not None and got[0] == "guard_sim_synth_differ"
-    assert "chip.v declares 1 function or task(s)" in got[1] and "holds only 0" in got[1]
+STAR_TEXT = "module tt_um_chip();\n  always @* begin\n    y = t;\n  end\nendmodule\n"
+EMPTY_TREE = json.dumps({"type": "NETLIST", "modulesp": []})
+STAR_NODE = {"type": "ALWAYS", "keyword": "always", "loc": "e,2:3,2:9"}
 
 
-def test_an_always_star_block_missing_from_verilators_tree_is_not_proven(
+def fake_elab(il_text: str, **answers: tuple[int | None, str, str]) -> FakeYosys:
+    fake = FakeYosys("", **answers)
+    fake.elab_il = il_text
+    return fake
+
+
+def test_a_block_that_yosys_keeps_and_verilator_dropped_is_not_proven(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    text = "module tt_um_chip();\n  always @* begin\n    y = t;\n  end\nendmodule\n"
-    tree = {"type": "NETLIST", "modulesp": []}
-    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(tree), text=text)
-    assert got is not None and got[0] == "guard_sim_synth_differ"
-    assert "chip.v declares 1 `always @*` block(s)" in got[1]
-    tree["modulesp"] = [{"type": "ALWAYS", "keyword": "always", "loc": "e,2:3,2:9"}]
+    """A generate branch Verilator drops (a constant `1/0` is x to Yosys, folded by Verilator)."""
+    fake = fake_elab(il("chip.v:2.3-5.6"))
     got, _ = purity(
-        tmp_path / "x", monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(tree), text=text
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, text=STAR_TEXT, fake=fake
     )
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert "Yosys keeps the always block at chip.v, line 2" in got[1]
+    script = (tmp_path / "s/elab/elab.ys").read_text()
+    assert fake.tags == ["elab"] and "write_rtlil elab.il" in script
+
+
+def test_a_difference_in_the_elaboration_is_reported_before_an_impure_function(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = (
+        "module tt_um_chip();\n  always @* y = t;\n  function automatic rd(input a);\nendmodule\n"
+    )
+    got, _ = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=json.dumps(IMPURE_TREE), text=text,
+        fake=fake_elab(il("chip.v:2.3-2.18")),
+    )  # fmt: skip
+    assert got is not None and "Yosys keeps the always block at chip.v, line 2" in got[1]
+
+
+def test_a_block_that_both_tools_keep_passes_and_one_neither_has_is_no_problem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = json.dumps({"type": "NETLIST", "modulesp": [STAR_NODE]})
+    got, _ = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=tree, text=STAR_TEXT,
+        fake=fake_elab(il("chip.v:2.3-5.6")),
+    )  # fmt: skip
     assert got is None
+    # a block that is in the text but in neither elaboration (a generate branch not taken)
+    got, _ = purity(
+        tmp_path / "x", monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, text=STAR_TEXT,
+        fake=fake_elab(il()),
+    )  # fmt: skip
+    assert got is None
+
+
+def test_an_elaboration_that_times_out_is_a_time_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = fake_elab("", elab=(None, "inline", ""))
+    got, _ = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, text=STAR_TEXT, fake=fake
+    )
+    assert got is not None and got[0] == "time_limit"
+    assert "elaboration" in got[1]
+
+
+def test_a_failing_elaboration_or_an_unreadable_result_is_never_a_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failing = fake_elab("", elab=(1, "inline", "ERROR: syntax error in line 3\n"))
+    got, _ = purity(
+        tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, text=STAR_TEXT, fake=failing
+    )
+    assert got is not None and "elaboration" in got[1]
+    # exit 0 but a process Yosys gives no position
+    odd = fake_elab("module \\m\n  process $p\n  end\nend\n")
+    got, _ = purity(
+        tmp_path / "x", monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, text=STAR_TEXT,
+        fake=odd,
+    )  # fmt: skip
+    assert got is not None and got[0] == "guard_sim_synth_differ"
+    assert "could not read the elaboration of the RTL" in got[1]
+
+
+def test_yosys_does_not_run_when_verilator_gave_no_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = fake_elab("")
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(1, "%Error: x\n"), fake=fake)
+    assert got is not None and fake.calls == []
+
+
+def test_a_divergent_elaboration_stops_check_before_stage_1_and_a_matched_one_goes_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def verilator(tree: str) -> Any:
+        def run(argv: list[str], cwd: Path) -> equiv.LintRun | None:
+            if "--json-only" not in argv:
+                return None
+            (cwd / "obj_dir").mkdir()
+            (cwd / "obj_dir" / "Vtt_um_chip.tree.json").write_text(tree)
+            (cwd / "obj_dir" / "Vtt_um_chip.tree.meta.json").write_text(TREE_META)
+            return equiv.LintRun(0, "")
+
+        return run
+
+    rtl, netlist = star_core(tmp_path)
+    monkeypatch.setattr(equiv, "_run_verilator", verilator(EMPTY_TREE))
+    fake = fake_elab(STAR_IL)
+    got = equiv.check(rtl, "chip", netlist, tmp_path / "s1", yosys=fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
+    assert "elaborate the RTL differently" in got["message"] and fake.tags == ["elab"]
+    assert got["seconds"]["elab"] >= 0
+
+    monkeypatch.setattr(equiv, "_run_verilator", verilator(json.dumps(STAR_TREE)))
+    fake = fake_elab(STAR_IL, equiv=(1, "inline", "ERROR: stop here\n"))
+    got = equiv.check(rtl, "chip", netlist, tmp_path / "s2", yosys=fake)
+    assert fake.tags == ["elab", "equiv"]  # matched: the check goes on to stage 1
+    assert got["reason"] != "guard_sim_synth_differ"
 
 
 def test_a_purity_run_that_times_out_is_a_time_limit(
@@ -1101,7 +1260,7 @@ def test_a_purity_run_that_cannot_be_read_is_not_proven(
 ) -> None:
     got, _ = purity(tmp_path, monkeypatch, run, tree=tree)
     assert got is not None and got[0] == "guard_sim_synth_differ"
-    assert got[1].startswith("the check could not read the functions in the RTL with Verilator: ")
+    assert got[1].startswith("the check could not read the RTL with Verilator: ")
     assert shown in got[1]
 
 
@@ -1110,7 +1269,7 @@ def test_a_purity_run_that_cannot_start_is_inconclusive_and_logged(
 ) -> None:
     with caplog.at_level("WARNING"):
         got, _ = purity(tmp_path, monkeypatch, None)
-    assert got is None and "function-purity check was skipped" in caplog.text
+    assert got is None and "Verilator-based checks" in caplog.text
 
 
 def test_check_refuses_an_impure_function_before_any_proof(
@@ -1129,4 +1288,4 @@ def test_check_refuses_an_impure_function_before_any_proof(
     got = equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=fake)
     assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
     assert "the function `rd` (chip.v, line 3) reads `cnt` (line 4)" in got["message"]
-    assert fake.calls == []
+    assert fake.tags == ["elab"]

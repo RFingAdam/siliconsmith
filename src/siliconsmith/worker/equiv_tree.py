@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 PARAM_TYPES = frozenset({"LPARAM", "GPARAM", "GENVAR"})
 # A name that was not resolved is never a local: refuse to guess.
@@ -55,6 +55,19 @@ class Impure:
     file: str
     line: int
     sentence: str
+
+
+class PlacedNode(NamedTuple):
+    """A node with a position in one of the files, as `placed_nodes` yields it. `keyword` is the
+    `always` keyword of an ALWAYS node, `name` and `dotted` those of a FUNCREF or TASKREF."""
+
+    type: str
+    keyword: str
+    name: str
+    dotted: str
+    file: str
+    line: int
+    col: int
 
 
 def _children(node: dict[str, Any]) -> Iterator[dict[str, Any]]:
@@ -205,43 +218,23 @@ def impure_function(tree: Any, meta: Any, ours: list[str]) -> Impure | None:
     return Impure(name, file, line, f"the function `{name}` ({file}, line {line}) {why[first]}")
 
 
-def missing_blocks(tree: Any, meta: Any, declared: dict[str, tuple[int, int]]) -> str | None:
-    """A sentence if Verilator's tree holds fewer functions, tasks or `always @*` blocks than
-    the text of a file declares, else None. `declared` maps a file name to `(functions and tasks,
-    always @* blocks)`.
-
-    Verilator folds an elaboration-time constant that is x to a simulator and Yosys (`1/0`,
-    `0 ** -1`) to 0, so it can take the other generate branch (or skip a module) than the one
-    Yosys keeps. Its tree then lacks the blocks of the branch Yosys uses, and the purity and
-    order checks would judge a different design. A for-generate that copies a block leaves one
-    node position; a generate branch that is really not taken is a refusal too (conservative)."""
+def placed_nodes(tree: Any, meta: Any) -> Iterator[PlacedNode]:
+    """Every node whose `loc` is in a file that `meta` names (nodes of Verilator's own std package
+    and nodes without a position are left out). Raises `TreeError` if the tree or the file table
+    cannot be read."""
     if not isinstance(tree, dict):
         raise TreeError("the tree is not an object")
     files = _file_letters(meta)
-    funcs: dict[str, set[str]] = {}
-    stars: dict[str, set[str]] = {}
     for node in _subtree(tree):
-        kind = node.get("type")
-        if kind in ("FUNC", "TASK"):
-            into = funcs
-        elif kind == "ALWAYS" and node.get("keyword") == "always" and not node.get("sentreep"):
-            into = stars
-        else:
-            continue
         match = _LOC.match(str(node.get("loc", "")))
         if match is None or match.group(1) not in files:
-            continue  # not placed: counted nowhere, so a shortfall shows below
-        into.setdefault(files[match.group(1)], set()).add(str(node["loc"]))
-    for file, (want_funcs, want_stars) in declared.items():
-        for what, want, have in (
-            ("function or task", want_funcs, len(funcs.get(file, ()))),
-            ("`always @*` block", want_stars, len(stars.get(file, ()))),
-        ):
-            if have < want:
-                return (
-                    f"{file} declares {want} {what}(s) and Verilator's elaboration of the RTL "
-                    f"holds only {have}: a generate branch or module that Yosys keeps is "
-                    "missing from it (a constant such as `1/0` is x to Yosys and a simulator, "
-                    "0 to Verilator)"
-                )
-    return None
+            continue
+        yield PlacedNode(
+            str(node.get("type")),
+            str(node.get("keyword", "")),
+            str(node.get("name", "")),
+            str(node.get("dotted", "")),
+            files[match.group(1)],
+            int(match.group(2)),
+            int(match.group(3)),
+        )

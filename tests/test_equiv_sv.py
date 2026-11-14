@@ -1218,6 +1218,21 @@ def test_every_star_block_is_written_as_always_comb_and_nothing_else_moves(
         assert got.count("\n") == text.count("\n")
 
 
+def test_a_hierarchical_name_inside_a_function_is_refused() -> None:
+    # hierk: Verilator folds `g.k` to a constant in one generate branch, Yosys reads a wire
+    refused("function automatic [7:0] rd(input [7:0] d); rd = d ^ g.k; endfunction", "hierarchical")
+    refused(
+        "function automatic [7:0] rd(input [7:0] d);\n rd = d ^ top . k;\nendfunction",
+        "hierarchical",
+    )
+    ok = "function automatic [7:0] rd(input [7:0] d); rd = d ^ 8'd1; endfunction\nassign w = g.k;"
+    assert sv.refusal([("d.v", f"module m;\n{ok}\nendmodule\n")], None) is None  # outside: fine
+
+
+def test_a_glued_begin_after_a_star_block_gets_a_blank() -> None:
+    assert sv.always_comb_copy("always@(*)begin y = a; end") == "always_comb begin y = a; end"
+
+
 def test_what_cannot_be_seen_across_loop_iterations_is_not_detected() -> None:
     """vloopit: hand-written `always @*` that reads `t` in iteration 0 and writes it in 1. A
     simulator keeps the old t; Verilator's ALWCOMBORDER cannot see an order that only exists across
@@ -1272,22 +1287,18 @@ def test_the_normal_accumulator_and_loops_over_signals_written_first_are_accepte
 @pytest.mark.parametrize(
     ("text", "want"),
     [
-        ("module m; endmodule", (0, 0)),
-        ("function automatic f(input a); f = a; endfunction task automatic t; endtask", (2, 0)),
-        ('initial $display("function task");  // function\n', (0, 0)),
-        ("always @* begin y = t; t = a; end", (0, 1)),
-        ("always @(*) case (s) 1'b0: y = a; default: y = b; endcase", (0, 1)),
-        ("always @* for (i = 0; i < 2; i = i + 1) y[i] = a;", (0, 1)),
-        ("always @* if (c) begin y = t; t = a; end", (0, 1)),
-        ("always @* if (c) y = a; else begin y = b; end", (0, 1)),
-        # one plain assignment, or an if/else chain of them: Verilator makes it an assign
-        ("always @* y = a;", (0, 0)),
-        ("always @(*) if (c) y = a; else if (d) y = b; else y = e;", (0, 0)),
-        ("always @(posedge clk) begin y <= a; end", (0, 0)),
-        ("always @* y = a; always @* begin z = y; end", (0, 1)),
+        ("module m; endmodule", False),
+        ("function automatic f(input a); f = a; endfunction", True),
+        ("task automatic t; endtask", True),
+        ('initial $display("function task");  // function\n', False),
+        ("always @* y = a;", True),
+        ("always @ ( * ) y = a;", True),
+        ("always @(posedge clk) y <= a;", True),
+        ("always_comb y = a;", True),
+        ("always_latch if (e) y = a;", True),
+        ("always_ff @(posedge clk) y <= a;", True),
+        ("// always_comb\n", False),
     ],
 )
-def test_elaborated_blocks_counts_what_verilators_tree_must_hold(
-    text: str, want: tuple[int, int]
-) -> None:
-    assert sv.elaborated_blocks(text) == want
+def test_needs_tree_finds_the_blocks_that_the_tree_checks_judge(text: str, want: bool) -> None:
+    assert sv.needs_tree(text) is want

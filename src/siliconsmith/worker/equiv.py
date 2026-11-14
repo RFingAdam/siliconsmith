@@ -22,8 +22,9 @@ PROVEN: the netlist implements the RTL as Yosys reads it, once comments, attribu
 out of the way (synthesis did not change the logic; an `x` in the RTL is a don't-care). BEST
 EFFORT: `equiv_sv.refusal` refuses (`not_proven`, reason `guard_sim_synth_differ`) the common
 constructs that a simulator and Yosys read differently. NOT detected: an out-of-range index or a
-division by zero, and anything that depends on simulation event order; gate-level simulation
-(`run_tests` with `gl=true`) is the check against simulation behaviour.
+division by zero, a constant that is x to a simulator steering a case inside a block, the values
+inside a generate loop or module copy, and anything that depends on simulation event order;
+gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour.
 
 ## Verdict
 
@@ -75,6 +76,7 @@ from typing import Any
 
 from siliconsmith.worker import (
     emit,
+    equiv_elab,
     equiv_parse,
     equiv_script,
     equiv_sv,
@@ -330,6 +332,40 @@ def _stage1(r: _Run, name: str, seq: int) -> dict[str, Any]:
 # -- stage 3 ----------------------------------------------------------------------------------
 
 
+def _power_up_difference_is_real(
+    r: _Run, points: list[equiv_script.Point], base: dict[str, Any]
+) -> bool | dict[str, Any]:
+    """The X run found outputs that the RTL defines and the netlist does not match. True if some
+    defined power-up state of the netlist really changes them; False if the X run was only too
+    pessimistic (see `equiv_script.confirm_script`); else a verdict (the run cannot be read)."""
+    inputs = {k: v for k, v in base["inputs"].items() if v is not None}
+    if (
+        base["cycle"] != 1
+        or not inputs
+        or any(re.fullmatch(r"[01]+", v) is None for v in inputs.values())
+    ):
+        return True  # only the power-up cycle is re-checked; anything else stands as found
+    labels = {p.label: i for i, p in enumerate(points)}
+    pins = [str(d["signal"]) for d in base["differs"]]
+    which = sorted(labels[x] for x in pins if x in labels and x.startswith(equiv_script.OUTPUTS))
+    script = equiv_script.confirm_script(points, which, {k: int(v, 2) for k, v in inputs.items()})
+    code, log = r.yosys(r.scratch, script, "baseconfirm", r.clock.left())
+    if code == 0 and equiv_parse.SAT_FAILED in log:
+        return True
+    if code == 0 and log.count(equiv_parse.SAT_PROVED) == 1:
+        return False
+    return r.failed(
+        equiv_parse.guard_failure(code, log)
+        or {
+            "verdict": "error",
+            "reason": "yosys_failed",
+            "message": "the power-up confirmation printed no clear result",
+            "detail": [],
+        },
+        "Could not confirm the power-up difference",
+    )
+
+
 def _base(r: _Run, points: list[equiv_script.Point], steps: int) -> dict[str, Any]:
     """Base case of the stage-1 induction (X run and DEF run). `status`: ok | cex | fail."""
     il = (r.scratch / "equiv.il").read_text(encoding="utf-8", errors="replace")
@@ -479,6 +515,8 @@ def _comb_order(scratch: Path, sources: list[tuple[str, str]], name: str) -> tup
     for fname, text in sources:
         copy = copies[fname] if copies[fname] is not None else equiv_sv.clean(text)
         (folder / fname).write_bytes(str(copy).encode("latin-1"))
+    # -fno-dfg: Verilator's dataflow pass would fold a one-assignment `always` into the code that
+    # reads it, and the block would have no node at its keyword for the position cross-check
     command = [
         "verilator", "--lint-only", "-Wall", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
         "-Wno-DECLFILENAME", "--top-module", f"tt_um_{name}", "project.v", f"{name}.v",
@@ -522,54 +560,63 @@ def _comb_order(scratch: Path, sources: list[tuple[str, str]], name: str) -> tup
     return None
 
 
-def _function_purity(
-    scratch: Path, sources: list[tuple[str, str]], name: str
-) -> tuple[str, str] | None:
-    """`(reason, sentence)` if a function of the RTL reads anything but its arguments.
+def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str, Any] | None:
+    """A `not_proven` (or `error`) verdict if Verilator's reading of the RTL cannot be trusted or
+    shows an impure function, else None.
 
     A simulator's `always @*` does not re-run when a signal read only inside a called function
     changes; synthesis inlines the function. Scope cannot be judged from tokens, so Verilator
     resolves the names (`--json-only` writes its syntax tree, `equiv_tree` reads it) on the
     cleaned RTL that Yosys reads, with the top module and flags of the always_comb pass. It runs
-    only if the RTL has a `function`, a `task` or a multi-statement `always @*`. Like that pass
-    it must not pass by giving up:
+    only if the RTL has a `function`, a `task` or an always block. In this order, and like the
+    always_comb pass it must not pass by giving up:
 
-    * the run takes longer than the emit lint may: `time_limit`;
-    * a failing exit code, no readable tree, or a node the walker does not understand:
-      `guard_sim_synth_differ`, naming the first error;
-    * Verilator cannot be started at all: inconclusive, logged, nothing is refused. That cannot
-      happen in practice: the worker runs inside the toolchain image, which holds Verilator, and
-      the emit lint (which needs it, and which ran before this check) would have failed first.
+    1. Verilator: the run takes longer than the emit lint may: `time_limit`; a failing exit code,
+       no readable tree, or a node the walker does not understand: `guard_sim_synth_differ`,
+       naming the first error. Verilator cannot be started at all: inconclusive, logged, nothing
+       is refused (it cannot happen in practice: the worker runs inside the toolchain image,
+       which holds Verilator, and the emit lint that ran before this check would have failed).
+    2. Yosys elaborates the same cleaned RTL to RTLIL (only if Verilator gave a tree). A failure
+       or a time out is the verdict of `equiv_parse.guard_failure`, never a pass.
+    3. `equiv_elab.unmatched`: every block and call Yosys keeps must be in Verilator's tree
+       (they can elaborate a constant that is x, such as `1/0`, differently), and no function
+       is called by a hierarchical name.
+    4. `equiv_tree.impure_function`: a function may read only its arguments.
     """
-    declared = {fname: equiv_sv.elaborated_blocks(text) for fname, text in sources}
-    if not any(funcs or stars for funcs, stars in declared.values()):
+    if not any(equiv_sv.needs_tree(text) for _, text in sources):
         return None
-    folder = scratch / "func_tree"
+    cleaned = {fname: equiv_sv.clean(text) for fname, text in sources}
+    folder = r.scratch / "func_tree"
     folder.mkdir(parents=True, exist_ok=True)
-    for fname, text in sources:
-        (folder / fname).write_bytes(equiv_sv.clean(text).encode("latin-1"))
+    for fname, text in cleaned.items():
+        (folder / fname).write_bytes(text.encode("latin-1"))
     top = f"tt_um_{name}"
     command = [
-        "verilator", "--json-only", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
+        "verilator", "--json-only", "-fno-dfg", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
         "-Wno-DECLFILENAME", "--top-module", top, "project.v", f"{name}.v",
     ]  # fmt: skip
     run = _run_verilator(command, folder)
     if run is None:
-        log.warning("verilator could not be started: the function-purity check was skipped")
+        log.warning(
+            "verilator could not be started: the Verilator-based checks "
+            "(function purity, elaboration cross-check) were skipped"
+        )
         return None
+
+    def refuse(reason: str, sentence: str) -> dict[str, Any]:
+        return r.verdict("not_proven", reason, f"Could not prove equivalence: {sentence}")
+
+    def unreadable(why: str, what: str = "the RTL with Verilator") -> dict[str, Any]:
+        return refuse(
+            "guard_sim_synth_differ", f"the check could not read {what}: {clip(why, 200)}"
+        )
+
     if run.timed_out:
-        return (
+        return refuse(
             "time_limit",
             "the check of the functions in the RTL (Verilator) did not finish within "
             f"{COMB_LINT_TIMEOUT_S:.0f} s.",
         )
-
-    def unreadable(why: str) -> tuple[str, str]:
-        return (
-            "guard_sim_synth_differ",
-            f"the check could not read the functions in the RTL with Verilator: {clip(why, 200)}",
-        )
-
     if run.code != 0:
         lines = [x for x in run.output.splitlines() if x.strip()]
         first = next((x for x in lines if x.startswith("%Error")), lines[-1] if lines else "failed")
@@ -577,14 +624,32 @@ def _function_purity(
     try:
         tree = json.loads((folder / "obj_dir" / f"V{top}.tree.json").read_text("latin-1"))
         meta = json.loads((folder / "obj_dir" / f"V{top}.tree.meta.json").read_text("latin-1"))
-        found = equiv_tree.impure_function(tree, meta, [fname for fname, _ in sources])
-        shortfall = equiv_tree.missing_blocks(tree, meta, declared)
+        found = equiv_tree.impure_function(tree, meta, list(cleaned))  # judged after Yosys
     except (OSError, ValueError, equiv_tree.TreeError, RecursionError) as exc:
         return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
+
+    # Yosys's elaboration of the same text, to see which blocks it keeps
+    elab = r.scratch / "elab"
+    elab.mkdir(parents=True, exist_ok=True)
+    (elab / "elab.il").unlink(missing_ok=True)
+    for fname, text in cleaned.items():
+        (elab / fname).write_bytes(text.encode("latin-1"))
+    t0 = time.monotonic()
+    code, text = r.yosys(elab, equiv_script.elaboration(name), "elab", r.clock.left())
+    r.timed("elab", t0)
+    failure = equiv_parse.guard_failure(code, text)
+    if failure is not None:
+        return r.failed(failure, "Could not read the RTL's elaboration")
+    what = "the elaboration of the RTL"
+    try:
+        rtlil = (elab / "elab.il").read_text("latin-1")
+        differ = equiv_elab.unmatched(tree, meta, rtlil, cleaned)
+    except (OSError, ValueError, equiv_elab.ElabError, equiv_tree.TreeError, RecursionError) as exc:
+        return unreadable(f"{type(exc).__name__}: {exc}", what)
+    if differ is not None:
+        return refuse("guard_sim_synth_differ", differ)
     if found is not None:
-        return "guard_sim_synth_differ", f"{found.sentence}."
-    if shortfall is not None:
-        return "guard_sim_synth_differ", f"{shortfall}."
+        return refuse("guard_sim_synth_differ", f"{found.sentence}.")
     return None
 
 
@@ -706,9 +771,9 @@ def _check(
                 f"Could not prove equivalence: "
                 f"{equiv_sv.plain_message(found, _hdl_function(found.label))}",
             )
-        purity = _function_purity(scratch, sources, name)
-        if purity is not None:
-            return r.verdict("not_proven", purity[0], f"Could not prove equivalence: {purity[1]}")
+        refused = _tree_checks(r, sources, name)
+        if refused is not None:
+            return refused
         comb = _comb_order(scratch, sources, name)
         if comb is not None:
             return r.verdict("not_proven", comb[0], f"Could not prove equivalence: {comb[1]}")
@@ -850,7 +915,14 @@ def _proven_path(
     r.out["base"] = {k: v for k, v in base.items() if k != "failure"}
     if base["status"] == "fail":
         return r.failed(base["failure"], "Could not check the base case")
-    if base["status"] == "cex" and base["run"] == "X" and base["outputs_differ"]:
+    x_outputs = base["status"] == "cex" and base["run"] == "X" and base["outputs_differ"]
+    pessimistic = False
+    if x_outputs:
+        real = _power_up_difference_is_real(r, points, base)
+        if isinstance(real, dict):
+            return real
+        pessimistic = not real
+    if x_outputs and not pessimistic:
         r.out["first_mismatch"] = {"cycle": base["cycle"], "differs": base["differs"]}
         pins = [d for d in base["differs"] if str(d["signal"]).startswith(equiv_script.OUTPUTS)]
         r.out["trace"] = [
@@ -888,7 +960,11 @@ def _proven_path(
     r.out["cycles_covered"] = ref["covered"]
     if base["status"] == "cex":
         what = (
-            f"internal signal(s) {_points(base['differs'])} differ from the RTL at "
+            f"the power-up (x) run could not show that the netlist matches the RTL at "
+            f"{_when(base['cycle'])}: {_points(base['differs'])} (it spreads x gate by gate), "
+            "and no defined power-up state was found that makes an output differ"
+            if pessimistic
+            else f"internal signal(s) {_points(base['differs'])} differ from the RTL at "
             f"{_when(base['cycle'])} for some power-up state"
             if base["run"] == "X"
             else f"{_points(base['differs'])} differ from the RTL at {_when(base['cycle'])} when "
