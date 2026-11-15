@@ -42,11 +42,12 @@ mixed into a signal expression, `ui_in == 2.5`; a select outside the range insid
 function, also in a parameter's value, which Yosys 0.62 evaluates to an undefined value, so the
 gates can differ even where Icarus and Verilator agree and the verdict can change with unrelated
 edits; only a parameter value on which the simulator and Verilator disagree is refused, as an
-untyped localparam that overflows is, which Icarus makes wider), an untyped localparam computed
-with an unsized number, which Icarus makes wider than 32 bits where Verilator and the gates keep
-32 (`W - 1` has 33 bits there: a concatenation, `$bits`, `^` or an expression that overflows 32
-bits sees it; `equiv_icarus.shape_disagreement` lets it pass), and anything else that depends on
-simulation event order;
+untyped localparam that overflows is, which Icarus makes wider; `$bits` is unsigned in Icarus and
+signed in Verilator and Yosys, so `$bits(x) > -1` differs), an untyped localparam that Verilator
+and the gates make exactly 32 bits wide and Icarus wider, computed with an unsized number or with
+sized 32-bit numbers (`W - 1` and `32'hffff_ffff + 32'h0` have 33 bits there: a concatenation,
+`$bits`, `^` or an expression that overflows 32 bits sees it; `equiv_icarus.shape_disagreement`
+lets it pass), and anything else that depends on simulation event order;
 gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour.
 
 ## Verdict
@@ -895,7 +896,7 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        (`equiv_tree.parameter_values`; a select outside the range inside a constant function
        leaves no x and no warning), nor the same values with another width or sign
        (`equiv_tree.parameter_shapes`; round 23: Icarus makes an untyped `8'hff + 8'h00` 9 bits
-       wide, Verilator and the gates 8, and `{M, M}` differs; a width of 32 bits or more in
+       wide, Verilator and the gates 8, and `{M, M}` differs; a width of exactly 32 bits in
        Verilator that Icarus makes wider passes), nor a parameter whose value holds a call that
        can give x go uncompared (`equiv_tree.valued_calls`: a real, a string).
     4. Yosys elaborates the same cleaned RTL to RTLIL (only if Verilator gave a tree). A failure

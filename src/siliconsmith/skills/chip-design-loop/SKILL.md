@@ -110,7 +110,9 @@ Give a number of 2**31 or more a size (`32'd3000000000`). Choose with a generate
 
 An untyped `localparam` takes the width of its value, and the simulator (Icarus) works that value out without losing bits. `localparam M = 8'hff + 8'h00;` is 255 everywhere, but 9 bits wide in Icarus and 8 in Verilator and the gates, so `{M, M}`, `$bits(M)` or `&M` give the simulation other bits than the chip.
 The check compares each parameter's width and sign as well as its value, and refuses such a difference: give the localparam a size or a type (`localparam [7:0] M = 8'hff + 8'h00;`).
-It accepts a width of 32 bits or more in Verilator that Icarus makes wider (`W - 1` has 33 bits there, `W * 2` 64): used as a number (a counter limit, a range) it reads the same. It does not detect a concatenation, `$bits`, `^` or an expression that overflows 32 bits on such a localparam, so give it a type (`localparam integer M = W - 1;`) when you use it that way.
+It accepts a width of exactly 32 bits in Verilator that Icarus makes wider (`W - 1` has 33 bits there, `W * 2` 64, and so has `32'hffff_ffff + 32'h0`): used as a number (a counter limit, a range) it reads the same. It does not detect a concatenation, `$bits`, `^` or an expression that overflows 32 bits on such a localparam, so give it a type (`localparam integer M = W - 1;`) when you use it that way.
+Give a signed binary, octal or hex number a size (`32'sh8`, not `'sh8`: Icarus reads `'sh8` as -8, the gates as +8), and keep a number without a size to 32 bits of digits (`'h0_0000_000F` is 36 bits in the gates, 32 in the simulator): both are refused.
+`$countones` and `$countbits` are refused too: Yosys 0.62 makes their result unsigned, a simulator a signed int. Count with a `for` loop in a `function automatic integer` instead.
 
 ## Constant calls
 

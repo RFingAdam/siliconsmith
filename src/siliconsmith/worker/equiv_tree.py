@@ -1525,7 +1525,9 @@ _LOCAL_TYPES = frozenset({"LOGIC_IMPLICIT", "logic", "reg", "integer"})
 def _literal(node: dict[str, Any]) -> bool:
     """A CONST node that is a number as written: sized (`8'hff`, `33'h100000000`), or unsized
     and no wider than 32 bits (`?32?sh5`), with no x or z bit. An unsized number of more digits
-    is not one: Verilator gives `'h1_0000_0000` another value than Icarus and Yosys do."""
+    is not one: Verilator gives `'h1_0000_0000` another value than Icarus and Yosys do. Verilator
+    shows `'sh8` and `'h0_0000_0008` as the plain `8` too, though Icarus reads the first as -8
+    and Yosys the second as 36 bits wide: `equiv_sv` refuses both in the text first."""
     match = _EARLY_CONST.match(str(node.get("name", ""))) if node.get("type") == "CONST" else None
     return match is not None and match.group(1) in (None, "32")
 
@@ -1565,8 +1567,14 @@ def uncompared_local(
     equivalent (also through another function, and when the function is also called in a
     compared localparam). A plain number (`localparam MIN_DEPTH = 2;`) is the same in every tool;
     anything else must be compared: refused (fail closed) unless both tools list it with plain
-    numbers. A string, a real or an x that the simulator lists is not plain there (None), so it
-    is refused as well."""
+    numbers, Verilator in every module copy (path) where the simulator lists it (round 24: a
+    copy that calls the function at run time is listed, one that only works it out as a
+    constant is not, and the values of the listed copies can agree). A string, a real or an x
+    that the simulator lists is not plain there (None), so it is refused as well. Two numbers
+    that Verilator's tree shows as plain but that another tool reads otherwise never get here:
+    `equiv_sv` refuses an unsized signed binary, octal or hex number (`'sh8`: -8 in Icarus, +8
+    in Verilator and Yosys) and an unsized number whose digits need more than 32 bits
+    (`'h0_0000_000F`: 36 bits in Yosys, 32 in Verilator and Icarus)."""
     files = _file_letters(meta)
     keys = _keys(tree, files, ours)
     found: list[tuple[int, int, int, str, str, str]] = []
@@ -1577,7 +1585,12 @@ def uncompared_local(
             key = keys.get(str(var.get("addr"))) if var.get("type") == "VAR" else None
             if key is None or key[0] not in ours:
                 continue
-            compared = bool(verilator.get(key)) and bool(simulator.get(key))
+            # compared only when Verilator lists it in every module copy the simulator lists:
+            # Verilator can keep the function in one copy (a call at run time) and leave it out of
+            # another (only a constant call), whose value then goes unchecked (round 24 b19,
+            # fpart3: the copies it lists agree, the one it leaves out does not)
+            mine, theirs = simulator.get(key), verilator.get(key)
+            compared = bool(mine and theirs and {p for p, _ in mine} <= {p for p, _ in theirs})
             listed_plain = simulator.get(key) is not None or key not in simulator
             if compared or (listed_plain and _written_as_number(var)):
                 continue

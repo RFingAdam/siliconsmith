@@ -2257,6 +2257,31 @@ def test_a_function_local_is_judged_unless_both_tools_list_it_with_plain_numbers
     assert lone_local(shifted, verilator=other, simulator=other) is not None
 
 
+def test_a_function_local_counts_as_compared_only_when_verilator_lists_every_copy() -> None:
+    """Round 24 (fpart3, b19): Verilator keeps the function in the module copy that calls it at
+    run time (u1) and leaves it out of the copy that only works it out as a constant (u2), where
+    the local overflows. The simulator lists both copies with the value Verilator gives u1, so
+    the values agree as sets, and `disagreement` cannot pair the paths: the local must be judged
+    as one Verilator does not list (a number as written or refused)."""
+    u1, u2 = ("tt_um_x", "core", "u1", "f"), ("tt_um_x", "core", "u2", "f")
+    both = {M_KEY: [(u1, 2147483648), (u2, 2147483648)]}
+    one = {M_KEY: [(u1, 2147483648)]}
+    shifted = h_with(m_local(ar("SHIFTL", num(1), num(32))))
+    got = lone_local(shifted, verilator=one, simulator=both)
+    assert got is not None and (got.name, got.line) == ("M", 6)
+    assert "declares the localparam `M` inside the function `h`" in got.sentence
+    # every copy listed by Verilator, also in another order or with one more: compared
+    assert lone_local(shifted, verilator=both, simulator=both) is None
+    assert lone_local(shifted, verilator={M_KEY: both[M_KEY][::-1]}, simulator=both) is None
+    assert lone_local(shifted, verilator=both, simulator=one) is None
+    # the copy Verilator lists is another path than the simulator's: not compared
+    other = {M_KEY: [(("tt_um_x", "core", "u3", "f"), 2147483648)]}
+    assert lone_local(shifted, verilator=other, simulator=one) is not None
+    # a number as written needs no comparison, wherever it is listed
+    plain = h_with(m_local(num(0xFF, "8'h")))
+    assert lone_local(plain, verilator=one, simulator=both) is None
+
+
 def test_only_a_local_of_a_function_or_task_of_our_files_is_judged() -> None:
     shifted = ar("SHIFTL", num(1), num(32))
     # a module-level localparam is compared by `equiv_icarus.disagreement` (or is a genvar)

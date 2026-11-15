@@ -921,6 +921,23 @@ REFUSAL_ADVICE = {
     "simulator (Icarus) and 8 unsigned bits in Verilator's elaboration and the gates",
     "wsum": "(wsum.v, line 12) gives the parameter `S` the same value but 5 unsigned bits in a "
     "simulator (Icarus) and 4 unsigned bits",
+    # Round 24 (all equivalent at d820087, with Icarus RTL and gates differing): an unsized signed
+    # hex number, -8 in Icarus and +8 in Yosys, in a function's localparam that Verilator's tree
+    # shows as the plain 8 and in a signal sum; an unsized hex number whose digits need 36 bits
+    # (32 in Icarus and Verilator, 36 in Yosys: $bits differs); $countbits, a signed int in
+    # Icarus and Verilator but unsigned in Yosys 0.62 (a generate if takes another branch); a
+    # function local in two module copies, of which Verilator lists only the one that calls the
+    # function at run time (both copies' values agreed there); and an untyped sum of two sized
+    # 40-bit numbers, 41 bits in Icarus and 40 in Verilator (only exactly 32 bits passes now)
+    "sbloc": "(sbloc.v, line 15) uses the unsized signed number `'sh8`",
+    "sbsig": "(sbsig.v, line 13) uses the unsized signed number `'sh8`",
+    "longhex": "(longhex.v, line 13) uses the unsized number `'h0_0000_000F`, whose digits need "
+    "more than 32 bits",
+    "cntbits": "(cntbits.v, line 14) uses `$countbits`, whose result Yosys 0.62 reads as unsigned",
+    "fpart3": "(fpart3.v, line 14) declares the localparam `M` inside the function `f`",
+    "fcopies": "(fcopies.v, line 15) declares the localparam `M` inside the function `f`",
+    "w40sum": "(w40sum.v, line 14) gives the parameter `M` the same value but 41 unsigned bits in "
+    "a simulator (Icarus) and 40 unsigned bits",
 }
 
 

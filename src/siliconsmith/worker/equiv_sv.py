@@ -62,6 +62,13 @@ In every file:
   size, `'hFFFFFFFF`): Verilator reads `2147483648` as a negative 32-bit value, Yosys and Icarus
   as a wider positive one, so the checks judged on Verilator's tree (`equiv_tree`) could follow
   another branch than the proof (`if (2147483648 > 0)`); a size (`32'd2147483648`) is fine;
+* an unsized signed binary, octal or hex number (`'sh8`, `'sb1`, `'so7`; round 24): Icarus 12
+  extends it from its written digits (-8, -1, -1), Verilator and Yosys pad it with zeros (+8, +1,
+  +7), and Verilator's tree shows it as the plain `8`, so a localparam of it inside a function
+  passed as "one number as written" and `a + 'sh8` differed in a signal too; `32'sh8` is fine;
+* an unsized binary, octal or hex number whose digits, leading zeros included, need more than 32
+  bits (`'h0_0000_000F`, 36 bits; round 24): Icarus and Verilator make it 32 bits wide, Yosys as
+  wide as its digits, so `$bits` or a concatenation of it differs; a size or fewer zeros is fine;
 * every character outside printable ASCII, tab, CR and LF that is not in a comment (the tools
   disagree about where an escaped identifier ends and what counts as a blank);
 * a back-tick or a double quote inside an escaped identifier (`\\v`__ICARUS__`, `\\M"`): Icarus
@@ -70,6 +77,9 @@ In every file:
 * delay controls (`#`), except a parameter list in exactly two shapes:
   `module NAME #(` and `NAME #( ... ) INSTANCE [range] (`; neither name may be a reserved word;
 * `$readmemh`, `$readmemb`, `$test$plusargs`, `$value$plusargs`;
+* `$countones` and `$countbits` (round 24): a signed int in Icarus and Verilator, unsigned in
+  Yosys 0.62, so `$countones(x) > -1` or a localparam built from it chooses another value or
+  generate branch in the gates;
 * a `// verilator lint_off` comment with no code, or with a code that hides what the lint step
   catches (BLKSEQ, COMBDLY, CASEX, CASEWITHX, CASEINCOMPLETE, LATCH, MULTIDRIVEN, ...), also as
   any item of a comma list (`lint_off WIDTH,BLKSEQ`: Verilator turns off every code of it): the
@@ -130,6 +140,9 @@ ALLOWED_DIRECTIVES = frozenset(
 KEYWORDS = ("unique", "unique0", "priority", "primitive", "casex", "inside")
 TWO_STATE = ("bit", "byte", "shortint", "int", "longint")
 SYSTEM_TASKS = ("$readmemh", "$readmemb", "$test$plusargs", "$value$plusargs")
+# $countones and $countbits give a signed int in a simulator (and Verilator), an unsigned number in
+# Yosys 0.62: `$countones(x) > -1` is true in a simulator and false in the gates (round 24)
+_COUNT_CALL = re.compile(r"(?<![\w$])\$count(?:ones|bits)(?![\w$])", re.ASCII)
 # verilator lint codes whose warnings (fatal in our lint step) catch what a text scan cannot
 LINT_CODES_NOT_TO_HIDE = frozenset(
     {
@@ -1414,6 +1427,11 @@ def _value(digits: str, base: str) -> int:
         return -1
 
 
+def _digit_bits(digits: str, base: str) -> int:
+    """The bits that the digits of a binary, octal or hex number spell, leading zeros included."""
+    return len(digits.replace("_", "")) * {"b": 1, "o": 3, "h": 4}[base.lower()]
+
+
 def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusal | None:
     _, scan, problem = lex(text)
 
@@ -1464,6 +1482,13 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
         at = scan.find(task)
         if at >= 0:
             return refuse(f"`{task}`", at)
+    count = _COUNT_CALL.search(scan)
+    if count is not None:
+        return refuse(
+            f"`{count.group(0)}`, whose result Yosys 0.62 reads as unsigned and a simulator as a "
+            "signed int",
+            count.start(),
+        )
     for op in ("===", "!==", "==?", "!=?"):
         at = scan.find(op)
         if at >= 0:
@@ -1480,6 +1505,13 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
             return refuse(f"a literal with a z or ? digit (`{shown}`)", m.start())
         if not shown[0].isdigit() and _value(digits, m.group(1)) > UNSIZED_MAX:
             return refuse(f"the unsized number `{shown}` (2**31 or more)", m.start())
+        unsized_bits = not shown[0].isdigit() and m.group(1) not in "dD"
+        if unsized_bits and re.match(r"'\s*[sS]", shown):
+            return refuse(f"the unsized signed number `{shown}`", m.start())
+        if unsized_bits and _digit_bits(digits, m.group(1)) > 32:
+            return refuse(
+                f"the unsized number `{shown}`, whose digits need more than 32 bits", m.start()
+            )
     based = [(m.start(), m.end()) for m in _BASED.finditer(scan)]
     for m in _DECIMAL.finditer(scan):
         inside = any(start <= m.start() < end for start, end in based)
@@ -1573,6 +1605,18 @@ _ADVICE = (
     ("function with an", "Return the value instead (several values as one concatenation): "
      "Icarus cannot compile a function argument that is not an input, and the check does not "
      "follow a value that a call writes back through one."),
+    ("unsized signed number", "Give it a size (`32'sh8`; `32'shF` is 15 and `4'shF` is -1 in "
+     "every tool): Icarus 12 extends an unsized signed binary, octal or hex number from its "
+     "written digits (`'sh8` is -8 there, `'shF` -1), while Verilator, Yosys and the gates pad it "
+     "with zeros (+8, +15)."),
+    ("digits need more than 32 bits", "Give it a size (`36'h0_0000_000F`) or drop the leading "
+     "zeros: Icarus and Verilator make an unsized number 32 bits wide, Yosys and the gates as "
+     "wide as its digits, so `$bits` or a concatenation of it differs."),
+    ("whose result Yosys 0.62 reads as unsigned", "Count with a `for` loop in a `function "
+     "automatic integer` instead: Yosys 0.62 treats the result of `$countones` and `$countbits` "
+     "as unsigned where a simulator treats it as a signed int, so a compare with a negative "
+     "number, a generate `if` or a localparam built from it can differ between a simulator and "
+     "the gates."),
     ("unsized number", "Give it a size (`32'd3000000000`): Verilator reads an unsized number of "
      "2**31 or more as a negative 32-bit value, Yosys and Icarus as a wider positive one, so "
      "the checks judged on Verilator's reading can take another branch than the proof."),

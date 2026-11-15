@@ -375,11 +375,13 @@ def disagreement(simulator: Values, verilator: Values, ours: list[str]) -> Findi
 
 def _fits(mine: Shape, theirs: Shape) -> bool:
     """Whether the check accepts a value that the simulator holds with the shape `mine` and
-    Verilator with `theirs`: the same width and sign, or the same sign and a width of 32 bits
-    or more in Verilator that Icarus makes wider (its lossless unsized arithmetic: `W - 1` is
-    33 bits there, `W * 2` 64; too common in taught code to refuse, and read the same wherever
-    the value is used as a number, while a concatenation or `$bits` of it is not detected)."""
-    return mine == theirs or (mine[1] == theirs[1] and mine[0] > theirs[0] >= 32)
+    Verilator with `theirs`: the same width and sign, or the same sign and a width of exactly 32
+    bits in Verilator that Icarus makes wider (its lossless arithmetic on 32-bit numbers: `W - 1`
+    is 33 bits there, `W * 2` 64, and so is `32'hffff_ffff + 32'h0`; too common in taught code
+    to refuse, and read the same wherever the value is used as a number, while a concatenation
+    or `$bits` of it is not detected). Round 24: a wider sized sum (`40'hff_ffff_ffff + 40'h0`,
+    41 bits in Icarus, 40 in Verilator and the gates) is refused like `8'hff + 8'h00`."""
+    return mine == theirs or (mine[1] == theirs[1] and mine[0] > theirs[0] == 32)
 
 
 def _misfit(
@@ -414,11 +416,12 @@ def shape_disagreement(simulator: Shapes, verilator: Shapes, ours: list[str]) ->
     simulator other bits than the gates. A typed localparam whose range calls a function that
     selects outside a vector's range differs the same way (round 16 rangecall: Icarus reads x
     there, and an `if` turns it into another number). A pair passes when it has the same width
-    and sign, or the same sign and a width in Verilator of 32 bits or more that Icarus makes
-    wider (`W - 1`, `W * 2`, `1 << 4`: common in taught code, read the same wherever the value
-    is used as a number; a concatenation or `$bits` of it is not detected). Anything else is
-    refused: a width under 32 bits in Verilator that Icarus makes wider, another sign, or a
-    narrower width in Icarus."""
+    and sign, or the same sign and a width in Verilator of exactly 32 bits that Icarus makes
+    wider (`W - 1`, `W * 2`, `1 << 4`, `32'hffff_ffff + 32'h0`: common in taught code, read the
+    same wherever the value is used as a number; a concatenation or `$bits` of it is not
+    detected). Anything else is refused: a width other than 32 bits in Verilator that Icarus
+    makes wider (`8'hff + 8'h00`, `40'hff_ffff_ffff + 40'h0`), another sign, or a narrower width
+    in Icarus."""
     found: list[tuple[int, int, str, str, Shape, Shape, Path | None]] = []
     for key in simulator.keys() & verilator.keys():
         mine, theirs = simulator[key], verilator[key]
@@ -432,17 +435,30 @@ def shape_disagreement(simulator: Shapes, verilator: Shapes, ours: list[str]) ->
         return None
     _, line, name, file, a, b, path = min(found, key=lambda f: f[:3])
     where = f"in `{'.'.join(path)}`" if path is not None else "in one of its instances"
+    # round 24 (g01longgen, d41genshift, s03): name the cause that fits the difference
+    if a[0] < b[0]:
+        cause = (
+            "Icarus can make it narrower (a value computed from a genvar gets only the bits it "
+            "needs there: for `localparam LO = i << 2;` in a generate loop write `i * 4` or "
+            "`localparam integer LO = i << 2;`)"
+        )
+    elif a[0] == b[0]:
+        cause = "the two tools give it another sign (Icarus makes `$bits` unsigned)"
+    else:
+        cause = (
+            "Icarus works out an untyped parameter's value without losing bits, so it is wider "
+            "there (`8'hff + 8'h00` has 9 bits, 8 in the gates)"
+        )
     return Finding(
         file,
         line,
         f"the RTL ({file}, line {line}) gives the parameter `{name}` the same value but "
         f"{_bits(a)} in a simulator (Icarus) and {_bits(b)} in Verilator's elaboration and the "
         f"gates ({where}): a concatenation, `$bits`, a reduction or `~` sees that, so the check "
-        "cannot vouch for the design. Icarus works out an untyped parameter's value without "
-        "losing bits, so it is wider there (`8'hff + 8'h00` has 9 bits, 8 in the gates), and a "
-        "select outside the range in a function that a range calls can change a width too. "
-        "Give it a type or a size (`localparam [7:0] M = 8'hff + 8'h00;`) and keep every "
-        "select inside the declared range",
+        f"cannot vouch for the design. {cause[0].upper()}{cause[1:]}, and a select outside the "
+        "range in a function that a range calls can change a width too. Give it a type or a "
+        "size (`localparam [7:0] M = 8'hff + 8'h00;`) and keep every select inside the "
+        "declared range",
     )
 
 

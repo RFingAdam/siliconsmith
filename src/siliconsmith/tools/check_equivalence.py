@@ -649,13 +649,16 @@ returns x), a parameter or localparam that the simulator and Verilator work out 
 values in any module instance, array element or loop pass, compared as whole numbers (a select \
 outside the range inside a constant function, where an if or ! turns the x into 0 or 1; an \
 untyped localparam that overflows, which Icarus makes wider), or to the same value with another \
-width or sign (an untyped localparam of sized numbers: 8'hff + 8'h00 is 255 everywhere, but 9 \
-bits wide in Icarus and 8 in Verilator and the gates, so {M, M} or $bits(M) differs; give it a \
-type or a size, localparam [7:0] M = 8'hff + 8'h00), a localparam inside a function \
-whose value the check cannot compare (Verilator leaves out a function it only works out as a \
-constant, as in wire [h(3):0] w) unless it is one number as written (8, 8'hff, \
-33'h1_0000_0000; not 1 << 32, 8'hff + 8'h01 or $bits(a): move it out of the function, where it \
-is compared, or write the number), any other constant in your files \
+width or sign, unless Verilator's width is exactly 32 bits and Icarus's wider with the same sign \
+(an untyped localparam of sized numbers: 8'hff + 8'h00 is 255 everywhere, but 9 bits wide in \
+Icarus and 8 in Verilator and the gates, so {M, M} or $bits(M) differs, and 40'hff_ffff_ffff + \
+40'h0 has 41 bits against 40; give it a type or a size, localparam [7:0] M = 8'hff + 8'h00), a \
+localparam inside a function whose value the check cannot compare (Verilator leaves out a \
+function it only works out as a constant, as in wire [h(3):0] w, also in only some copies of \
+a module: a copy that calls it at run time is compared, one that uses it only in a range is \
+not) unless it is one number as written (8, 8'hff, 33'h1_0000_0000; not 1 << 32, 8'hff + 8'h01 \
+or $bits(a): move it out of the function, where it is compared, or write the number), any \
+other constant in your files \
 that Verilator works out with an x bit (8'd5 / 8'd0 in an assign; with or without an always \
 block), a constant select or array index outside the declared \
 range, even on a signal (ui_in[9]) or in a branch that a constant never selects (A[6] of a 4-bit \
@@ -705,7 +708,13 @@ bit 6 of a 4-bit argument), also one in an arm of ?: that a constant condition n
 cannot compile or stops on with an internal error (a parameter of a typedef with two packed \
 dimensions: use a plain vector), an \
 unsized number of 2**31 or more (2147483648: Verilator reads it as negative, Yosys and Icarus as \
-positive; write 32'd2147483648), a function argument that is not an input (output, inout, ref: \
+positive; write 32'd2147483648), an unsized signed binary, octal or hex number ('sh8, 'sb1: \
+Icarus 12 extends its written digits, so 'sh8 is -8 there and +8 in Verilator, Yosys and the \
+gates; write 32'sh8), an unsized binary, octal or hex number whose digits, leading zeros \
+included, need more than 32 bits ('h0_0000_000F: 32 bits wide in Icarus and Verilator, 36 in \
+Yosys; write 36'h0_0000_000F or 'hF), $countones and $countbits (a signed int in a simulator, \
+unsigned in Yosys 0.62, so $countones(x) > -1 differs; count with a loop), a function \
+argument that is not an input (output, inout, ref: \
 Icarus cannot compile one either; return the value), a function that reads anything other than its \
 arguments and any task, an always block (any keyword) or function call that Yosys elaborates and \
 Verilator does not (a generate branch or instance chosen by a constant that is x to Yosys and a \
@@ -728,15 +737,18 @@ simulator), a constant expression that Yosys evaluates differently from a simula
 or an unbased '1 inside a localparam, $rtoi in any constant expression: a localparam or a \
 generate condition; a real parameter override, which Yosys passes to the instance with six \
 decimals, so 1.0e-9 becomes 0.0; a finite real mixed into a signal expression, ui_in == 2.5, \
-which Yosys rounds to an integer first; a select outside the range inside a constant function, \
+which Yosys rounds to an integer first; $bits, which is unsigned in Icarus and signed in \
+Verilator and Yosys, so $bits(x) > -1 or a generate if that mixes it with a negative number \
+differs; a select outside the range inside a constant function, \
 also in a parameter's value, which Yosys 0.62 evaluates to an undefined value: the gates \
 can differ even \
 where Icarus and Verilator agree, and the verdict can change with unrelated edits; only a \
 parameter value on which the simulator and Verilator disagree is refused), an untyped \
-localparam computed with an unsized number, which Icarus makes wider than 32 bits (W - 1 has 33 \
-bits there, W * 2 64; Verilator and the gates keep 32): a concatenation, $bits, ^ or an \
-expression that overflows 32 bits sees it, so give such a localparam a type (localparam integer \
-M = W - 1;) when you use it so, or other effects of \
+localparam that Verilator and the gates make exactly 32 bits wide and Icarus wider, computed \
+with an unsized number (W - 1 has 33 bits there, W * 2 64) or with sized 32-bit numbers \
+(32'hffff_ffff + 32'h0 has 33): a concatenation, $bits, ^ or an expression that overflows 32 \
+bits sees it, so give such a localparam a type (localparam integer M = W - 1;) when you use it \
+so, or other effects of \
 simulation event order: run gate-level simulation (run_tests with gl=True) as well. A state \
 machine that synthesis re-encodes can end as not proven (unproven points).\n\
 What it checks: every output value the RTL defines must match for every power-up state of \

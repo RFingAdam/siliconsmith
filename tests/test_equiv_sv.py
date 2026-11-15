@@ -335,6 +335,94 @@ def test_an_unsized_number_of_2_to_the_31_or_more_is_refused(lit: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "lit", ["'sb1", "'shF", "'so7", "'sh8", "'Sh8", "'SB1", "'sH8000", "' sh 8", "'sh0_8", "'so4"]
+)
+def test_an_unsized_signed_binary_octal_or_hex_number_is_refused(lit: str) -> None:
+    """Round 24 (b01, b04, sbloc, sbsig): Icarus 12 extends an unsized signed b/o/h number from its
+    written digits ('sh8 is -8, 'sb1 -1), Verilator and Yosys pad it with zeros (+8, +1), and
+    Verilator's tree shows it as the plain `8`, so a function's localparam of it passed as one
+    number as written; in a signal (`ui_in + 'sh8`) the gates differ from the simulation too."""
+    for text in (
+        f"function automatic integer h(input integer a);\n  localparam M = {lit};\n"
+        "  h = a + M;\nendfunction",
+        f"assign o = {{24'd0, a}} + {lit};",
+        f"generate if ({lit} < 0) begin : g1 end endgenerate",
+    ):
+        found = refused(text, f"the unsized signed number `{lit}`")
+        message = sv.plain_message(found)
+        assert (
+            "Give it a size (`32'sh8`; `32'shF` is 15 and `4'shF` is -1 in every tool)" in message
+        )
+        assert "Icarus 12 extends an unsized signed binary, octal or hex number" in message
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "assign o = 'sd8 + 'Sd255 + 'sd2147483647 + ' sd 7;",  # a decimal: every tool agrees
+        "assign o = 32'sh8 + 4'shF + 8 'sb1 + 6'so4 + 12'SH7ff;",  # sized
+        "assign o = 'h8 + 'b1 + 'o7 + 'hF;",  # unsized but unsigned
+    ],
+)
+def test_a_signed_decimal_and_a_sized_signed_number_are_fine(text: str) -> None:
+    ok(f"module m;\n{text}\nendmodule\n")
+
+
+@pytest.mark.parametrize(
+    "lit",
+    ["'h0_0000_000F", "'h000000000", "'H0_7FFF_FFFF", "'o00000000001", "'b0" + "0" * 32,
+     "'b_0" + "0_" * 32 + "1"],
+)  # fmt: skip
+def test_an_unsized_number_whose_digits_need_more_than_32_bits_is_refused(lit: str) -> None:
+    """Round 24 (b06, b07, longhex): Icarus and Verilator make `'h0_0000_000F` 32 bits wide,
+    Yosys 36 (as many bits as its digits, leading zeros included), so `$bits(M)` of it is 32 in a
+    simulator and 36 in the gates; Verilator's tree shows it as the plain 15."""
+    found = refused(
+        f"localparam M = {lit};\nassign o = $bits(M);",
+        f"the unsized number `{lit}`, whose digits need more than 32 bits",
+    )
+    assert "Give it a size (`36'h0_0000_000F`) or drop the leading zeros" in sv.plain_message(found)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "assign o = 'h0000_000F + 'hFFFF + 'o7777777777 + 'o0000000001;",  # 32 and 30 bits
+        "assign o = 'b" + "0" * 31 + "1" + " + 'b_" + "1_" * 31 + ";",  # 32 binary digits
+        "assign o = 'd000000000000005 + 'D0000000000000000007;",  # a decimal: every tool agrees
+        "assign o = 36'h0_0000_000F + 33'b0" + "0" * 31 + "1 + 40'o00000000001;",  # sized
+    ],
+)
+def test_an_unsized_number_of_32_bits_of_digits_or_a_sized_or_decimal_one_is_fine(
+    text: str,
+) -> None:
+    ok(f"module m;\n{text}\nendmodule\n")
+
+
+@pytest.mark.parametrize(
+    ("text", "call"),
+    [
+        ("localparam C = $countones(UW);", "$countones"),
+        ("assign o = ($countones(a) > -1) ? a : ~a;", "$countones"),
+        ("localparam C = $countbits(UW, 1'b1);", "$countbits"),
+        ("generate if ($countbits (UW, 1'b0) > -1) begin : g1 end endgenerate", "$countbits"),
+    ],
+)
+def test_countones_and_countbits_are_refused(text: str, call: str) -> None:
+    """Round 24 (s02, s06, s08, cntbits): a signed int in Icarus and Verilator, unsigned in Yosys
+    0.62, so `$countones(x) > -1` is true in a simulator and false in the gates."""
+    found = refused(text, f"`{call}`, whose result Yosys 0.62 reads as unsigned")
+    message = sv.plain_message(found)
+    assert "Count with a `for` loop in a `function automatic integer` instead" in message
+    assert "Remove it: it reads a file" not in message
+
+
+def test_a_name_that_holds_countones_is_fine() -> None:
+    ok("module m;\nwire my$countones;\nassign o = a$countbits + b;\nendmodule\n")
+    ok('module m;\ninitial $display("$countones");\nwire \\$countones ;\nendmodule\n')
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "assign o = 2147483647 + 32'd2147483648 + 32'sd4294967295 + 33'h1FFFFFFFF;",

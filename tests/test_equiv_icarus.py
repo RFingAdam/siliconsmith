@@ -447,10 +447,12 @@ def shaped(mine: tuple[int, bool], theirs: tuple[int, bool]) -> str | None:
         ((32, True), (31, True), True),  # the bound: Verilator under 32 bits
         ((32, False), (31, False), True),
         ((33, True), (32, True), False),  # `W - 1`, `W + 1`: Verilator 32 bits
-        ((33, False), (32, False), False),  # `8'hff + 1`
+        ((33, False), (32, False), False),  # `8'hff + 1`, `32'hffff_ffff + 32'h0` (w32cat)
         ((64, True), (32, True), False),  # `W * 2`
         ((96, True), (32, True), False),  # `Q * Q * Q`
-        ((40, False), (33, False), False),  # wider than 32 in both
+        ((40, False), (33, False), True),  # wider than 32 in both: only exactly 32 passes
+        ((41, False), (40, False), True),  # w01, w40sum: `40'hff_ffff_ffff + 40'h0`
+        ((65, True), (64, True), True),  # a sized 64-bit sum
         ((8, True), (8, False), True),  # another sign, the same width
         ((32, False), (32, True), True),
         ((33, False), (32, True), True),  # wider in Icarus, but another sign
@@ -458,7 +460,7 @@ def shaped(mine: tuple[int, bool], theirs: tuple[int, bool]) -> str | None:
         ((32, True), (33, True), True),  # narrower in Icarus, also from 32 bits up
     ],
 )
-def test_a_value_with_another_width_or_sign_is_refused_unless_verilator_has_32_bits_or_more(
+def test_a_value_with_another_width_or_sign_is_refused_unless_verilator_has_exactly_32_bits(
     mine: tuple[int, bool], theirs: tuple[int, bool], refused: bool
 ) -> None:
     assert (shaped(mine, theirs) is not None) is refused
@@ -486,6 +488,20 @@ def test_the_refusal_names_both_widths_why_and_the_fix() -> None:
     )
     signed = shaped((8, True), (8, False))
     assert signed is not None and "8 signed bits in a simulator (Icarus) and 8 unsigned" in signed
+    # round 24: each kind of difference names its own cause, never "wider" for a narrower one
+    assert "The two tools give it another sign (Icarus makes `$bits` unsigned)" in signed
+    assert "without losing bits" not in signed and "genvar" not in signed
+    narrower = shaped((4, True), (32, True))  # d41genshift: `localparam LO = i << 2;`
+    assert (
+        narrower is not None and "4 signed bits in a simulator (Icarus) and 32 signed" in narrower
+    )
+    assert (
+        "Icarus can make it narrower (a value computed from a genvar gets only the bits it "
+        "needs there: for `localparam LO = i << 2;` in a generate loop write `i * 4` or "
+        "`localparam integer LO = i << 2;`), and a select outside the range" in narrower
+    )
+    assert "without losing bits" not in narrower and "another sign" not in narrower
+    assert "genvar" not in str(one) and "another sign" not in str(one)
 
 
 def test_shapes_are_paired_by_path_like_values() -> None:
