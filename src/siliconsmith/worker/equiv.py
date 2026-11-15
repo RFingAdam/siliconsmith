@@ -21,8 +21,10 @@ and turns what they find into one verdict.
 PROVEN: the netlist implements the RTL as Yosys reads it, once comments, attributes and macros are
 out of the way (synthesis did not change the logic; an `x` in the RTL is a don't-care). BEST
 EFFORT: `equiv_sv.refusal` refuses (`not_proven`, reason `guard_sim_synth_differ`) the common
-constructs that a simulator and Yosys read differently, and `_tree_checks` what is judged on
-Verilator's syntax tree (an impure function, a combinational block that can read a signal before
+constructs that a simulator and Yosys read differently, `_hidden_lint` a race or x warning
+that a comment hid from the emit lint (the RTL linted again without its comments), and
+`_tree_checks` what is judged on Verilator's syntax tree (an impure function, a combinational
+block that can read a signal before
 it writes it on some path, a parameter with an x or z bit, a parameter value that the simulator
 Icarus works out differently, a different elaboration, a call with constant arguments of a
 function that selects at a computed index not proven inside the range or divides by a value not
@@ -789,6 +791,77 @@ def _comb_order(scratch: Path, sources: list[tuple[str, str]], name: str) -> tup
     return None
 
 
+# The race and x warnings of the emit lint that only a comment can switch off there. Not
+# CASEINCOMPLETE: a flag switches it off for Amaranth cores, and an incomplete case only makes a
+# latch (which the proof refuses) or a register that keeps its value.
+HIDDEN_LINT_CODES = equiv_sv.LINT_CODES_NOT_TO_HIDE - {"CASEINCOMPLETE"}
+
+
+def _hidden_lint(
+    scratch: Path, sources: list[tuple[str, str]], name: str
+) -> tuple[str, str] | None:
+    """`(reason, sentence)` if the RTL, linted once more with every comment and attribute
+    removed (`equiv_sv.clean`, the text the proof reads), shows a race or x warning
+    (`HIDDEN_LINT_CODES`: BLKSEQ, COMBDLY, MULTIDRIVEN, LATCH, CASEX, ...) in one of our files.
+
+    The emit lint makes every warning fatal, so such a warning was switched off by a comment:
+    a `lint_off` in any spelling Verilator reads (round 21: `/* verilator lint_off
+    WIDTH//,BLKSEQ */`, whose `//` Verilator deletes, and `// verilator lint_off WIDTH /*`,
+    which opens a block comment that hides the code after it), or a `synopsys` pragma. This
+    makes the check independent of how Verilator parses its comments; `equiv_sv` still names
+    the common spellings first, at their line. Same flags as the always_comb pass, with
+    `-Wno-fatal`, on a copy in `scratch`. A time-out is `time_limit`; a copy that does not lint
+    (an error, a failing exit code) while the RTL does is refused; Verilator that cannot be
+    started at all is inconclusive (logged), as for the other Verilator passes."""
+    folder = scratch / "hidden_lint"
+    folder.mkdir(parents=True, exist_ok=True)
+    for fname, text in sources:
+        (folder / fname).write_bytes(equiv_sv.clean(text).encode("latin-1"))
+    command = [
+        "verilator", "--lint-only", "-Wall", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
+        "-Wno-DECLFILENAME", "--top-module", f"tt_um_{name}", "project.v", f"{name}.v",
+    ]  # fmt: skip
+    run = _run_verilator(command, folder)
+    if run is None:
+        log.warning("verilator could not be started: the lint without comments was skipped")
+        return None
+    ours = {fname for fname, _ in sources}
+    found = lint.parse(run.output)
+    for item in found:
+        if item["code"] in HIDDEN_LINT_CODES and item["file"] in ours:
+            where = f"{item['file']}, line {item['line']}" if item["line"] else item["file"]
+            return (
+                "guard_sim_synth_differ",
+                f"the RTL ({where}) has a Verilator {item['code']} warning that a comment "
+                f"switched off in the emit lint ({clip(str(item['msg']), 160)}). Such a warning "
+                "marks a race or an x that a simulator and the gates can treat differently, so "
+                "the check cannot vouch for the design. Remove the comment that hides it (a "
+                "`lint_off`, also inside a list or another comment, or a `synopsys` pragma) and "
+                "fix what the warning says.",
+            )
+    if run.timed_out:
+        return (
+            "time_limit",
+            f"the lint of the RTL without its comments did not finish within "
+            f"{COMB_LINT_TIMEOUT_S:.0f} s.",
+        )
+    errors = [item for item in found if item["severity"] == "error"]
+    if errors or run.code != 0:
+        if errors:
+            first = errors[0]
+            where = f"{first['file']}, line {first['line']}: " if first["line"] else ""
+            why = where + str(first["msg"])
+        else:
+            why = clip(run.output.strip().splitlines()[-1] if run.output.strip() else "failed", 200)
+        return (
+            "guard_sim_synth_differ",
+            f"the RTL does not lint once its comments are removed (the check that looks for a "
+            f"warning a comment switched off): {why}. The check cannot tell whether a comment "
+            "hides a race: write the RTL so it lints without its comments.",
+        )
+    return None
+
+
 def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str, Any] | None:
     """A `not_proven` (or `error`) verdict if Verilator's reading of the RTL cannot be trusted,
     shows an impure function or a combinational block that can read a signal before it writes
@@ -844,12 +917,14 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        in every tool). A real or a hierarchical name in an argument refuses every call of a
        design function, wherever it is (round 20: also in a parameter value or an override,
        and in an argument that reads a variable: Yosys converts the real silently wherever it
-       works a call out). Then `_yosys_real_x`: no real that is infinite or NaN converted to an
-       integer anywhere Yosys converts one (its warning: an assignment, also inside a function,
-       a wire, a port). Then `_yosys_outside`: no select outside the range in Yosys's
-       elaboration (its warning; Yosys sees one inside a function it inlines, also in an arm of
-       `?:` that a constant condition never selects). Last, so that a more specific finding
-       about the same code is named first.
+       works a call out); a function's own localparam that only Icarus lists, with a plain
+       number, holds no real (round 21, `equiv_tree.simulator_only_values`). Then
+       `_yosys_real_x`: no real that is infinite or NaN converted to an integer anywhere Yosys
+       converts one (its warning: an assignment, also inside a function, a wire, a port). Then
+       `_yosys_outside`: no select outside the range in Yosys's elaboration (its warning; Yosys
+       sees one inside a function it inlines, also in an arm of `?:` that a constant condition
+       never selects). Last, so that a more specific finding about the same code is named
+       first.
     """
     cleaned = {fname: equiv_sv.clean(text) for fname, text in sources}
     folder = r.scratch / "func_tree"
@@ -921,7 +996,8 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         agreed = equiv_tree.agreed_values(values, simulated)
         plain = equiv_tree.plain_values(values, simulated)
         built = equiv_tree.built_values(values, simulated)
-        constant = equiv_tree.constant_call(before, meta, list(cleaned), agreed, plain, built)
+        lone = equiv_tree.simulator_only_values(values, simulated)
+        constant = equiv_tree.constant_call(before, meta, list(cleaned), agreed, plain, built, lone)
     except (ValueError, equiv_tree.TreeError, RecursionError) as exc:
         return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
 
@@ -1283,6 +1359,9 @@ def _check(
         comb = _comb_order(scratch, sources, name)
         if comb is not None:
             return r.verdict("not_proven", comb[0], f"Could not prove equivalence: {comb[1]}")
+        hidden = _hidden_lint(scratch, sources, name)
+        if hidden is not None:
+            return r.verdict("not_proven", hidden[0], f"Could not prove equivalence: {hidden[1]}")
         for fname, text in sources:  # the proof reads these cleaned copies
             (scratch / fname).write_bytes(equiv_sv.clean(text).encode("latin-1"))
     except OSError as exc:

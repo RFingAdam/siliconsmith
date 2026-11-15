@@ -1623,7 +1623,12 @@ def star_core(tmp_path: Path) -> tuple[Path, Path]:
 def check_star(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run: equiv.LintRun | None
 ) -> dict[str, Any]:
-    monkeypatch.setattr(equiv, "_run_verilator", lambda argv, cwd: answer_tree(argv, cwd) or run)
+    def verilator(argv: list[str], cwd: Path) -> equiv.LintRun | None:
+        if cwd.name == "hidden_lint":  # the lint without comments: clean (judged by its tests)
+            return equiv.LintRun(0, "")
+        return answer_tree(argv, cwd) or run
+
+    monkeypatch.setattr(equiv, "_run_verilator", verilator)
     rtl, netlist = star_core(tmp_path)
     fake = FakeYosys("")
     fake.elab_il = STAR_IL
@@ -1654,6 +1659,101 @@ def test_a_block_that_reads_before_it_writes_is_not_proven(
     assert argv[:2] == ["verilator", "--lint-only"] and "-Wno-fatal" in argv and "-Wall" in argv
     assert argv[-2:] == ["project.v", "chip.v"] and "tt_um_chip" in argv
     assert "always_comb" in copy and "@*" not in copy and copy.count("\n") == 6  # lines stay
+
+
+BLKSEQ_HIDDEN = (
+    "%Warning-BLKSEQ: chip.v:3:7: Blocking assignment '=' in sequential logic process\n"
+    "                            : ... Suggest using delayed assignment '<='\n"
+)
+
+
+def check_hidden(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run: equiv.LintRun | None
+) -> tuple[dict[str, Any], list[tuple[list[str], str]], FakeYosys]:
+    """The check of a core with a comment, with a fake Verilator that answers `run` for the lint
+    without comments (its folder is `hidden_lint`) and a clean lint for the always_comb pass."""
+    seen: list[tuple[list[str], str]] = []
+
+    def verilator(argv: list[str], cwd: Path) -> equiv.LintRun | None:
+        answered = answer_tree(argv, cwd)
+        if answered is not None:
+            return answered
+        if cwd.name != "hidden_lint":
+            return equiv.LintRun(0, "")
+        seen.append((argv, (cwd / "chip.v").read_text()))
+        return run
+
+    monkeypatch.setattr(equiv, "_run_verilator", verilator)
+    rtl, netlist = inputs(tmp_path)
+    (rtl / "chip.v").write_text(  # star_core with a comment, on the same lines
+        "module tt_um_chip(); // a note\n"
+        "  always @* begin\n    y = t;\n    t = cnt;\n  end\nendmodule\n"
+    )
+    fake = FakeYosys("")
+    fake.elab_il = STAR_IL
+    return equiv.check(rtl, "chip", netlist, tmp_path / "s", yosys=fake), seen, fake
+
+
+def test_a_race_warning_that_a_comment_hid_is_found_without_the_comments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 21: Verilator reads lint_off comments in spellings the text rule cannot follow
+    (`/* verilator lint_off WIDTH//,BLKSEQ */`), so the RTL is linted once more with every
+    comment removed; a race or x warning there was hidden by a comment."""
+    got, seen, fake = check_hidden(tmp_path, monkeypatch, equiv.LintRun(0, BLKSEQ_HIDDEN))
+    assert got["verdict"] == "not_proven" and got["reason"] == "guard_sim_synth_differ"
+    assert "chip.v, line 3" in got["message"] and "BLKSEQ" in got["message"]
+    assert "a comment switched off" in got["message"] and fake.tags == ["elab"]
+    argv, copy = seen[0]
+    assert argv[:2] == ["verilator", "--lint-only"] and "-Wno-fatal" in argv and "-Wall" in argv
+    assert "--json-only" not in argv and argv[-2:] == ["project.v", "chip.v"]
+    assert "a note" not in copy and "always @*" in copy and copy.count("\n") == 6
+
+
+@pytest.mark.parametrize("code", sorted(equiv.HIDDEN_LINT_CODES))
+def test_every_race_code_counts_in_the_lint_without_comments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str
+) -> None:
+    run = equiv.LintRun(0, BLKSEQ_HIDDEN.replace("BLKSEQ", code))
+    got, _, _ = check_hidden(tmp_path, monkeypatch, run)
+    assert got["reason"] == "guard_sim_synth_differ" and code in got["message"]
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "%Warning-WIDTHTRUNC: chip.v:4:7: Operator ASSIGN expects 4 bits\n",  # a comment may
+        "%Warning-CASEINCOMPLETE: chip.v:4:7: Case values incompletely covered\n",  # Amaranth
+        BLKSEQ_HIDDEN.replace("chip.v", "other.v"),  # not one of our files
+        "",
+    ],
+)
+def test_the_lint_without_comments_judges_only_race_codes_in_our_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str
+) -> None:
+    got, seen, fake = check_hidden(tmp_path, monkeypatch, equiv.LintRun(0, output))
+    assert len(seen) == 1 and "comment" not in got["message"] and fake.tags[:1] == ["elab"]
+    assert len(fake.tags) > 1  # the proof went on
+
+
+def test_the_lint_without_comments_does_not_pass_by_giving_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for sub in ("e", "x", "n"):
+        (tmp_path / sub).mkdir()
+    got, _, _ = check_hidden(tmp_path, monkeypatch, equiv.LintRun(-1, "", True))
+    assert got["reason"] == "time_limit" and "without its comments" in got["message"]
+    error = equiv.LintRun(1, "%Error: chip.v:4:5: syntax error, unexpected end\n")
+    got, _, _ = check_hidden(tmp_path / "e", monkeypatch, error)
+    assert (
+        got["reason"] == "guard_sim_synth_differ"
+        and "once its comments are removed" in (got["message"])
+    )
+    assert "chip.v, line 4: syntax error" in got["message"]
+    got, _, _ = check_hidden(tmp_path / "x", monkeypatch, equiv.LintRun(3, "killed\n"))
+    assert got["reason"] == "guard_sim_synth_differ" and "killed" in got["message"]
+    got, _, fake = check_hidden(tmp_path / "n", monkeypatch, None)  # cannot start: inconclusive
+    assert "comment" not in got["message"] and len(fake.tags) > 1
 
 
 def test_the_comb_pass_has_the_emit_lints_time() -> None:

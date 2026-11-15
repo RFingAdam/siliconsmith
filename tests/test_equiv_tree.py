@@ -2012,6 +2012,11 @@ def test_a_parameter_with_more_than_one_type_node_is_not_counted_as_holding_bits
     assert not et._holds_bits({"childDTypep": [basic(7), real]})
     assert not et._holds_bits({"childDTypep": ["(1)"]})  # a reference, not a node
     assert not et._holds_bits({})
+    # round 21 HB2: the keyword alone is not enough, the node must be a BASICDTYPE
+    assert not et._holds_bits({"childDTypep": [{"type": "REFDTYPE", "keyword": "logic"}]})
+    # round 21 HB9: the declared type (childDTypep) decides, not the resolved one (dtypep,
+    # an `addr`), which every VAR of Verilator's tree has too
+    assert et._holds_bits({"dtypep": "(d1)", "childDTypep": [basic(7)]})
 
 
 def test_the_constant_call_sentence_comes_first_at_a_call_that_is_both() -> None:
@@ -2043,6 +2048,91 @@ def test_a_parameter_that_no_tool_builds_counts_as_plain(fn: dict[str, Any]) -> 
     real = (num(0x81, "8'h"), named("(RL)", "R")) if fn is PROVEN_K else (named("(RL)", "R"),)
     assert judged(fn, REAL_R, args=real, built=frozenset()) is None
     assert judged(fn, REAL_R, args=real, built=frozenset({("core.v", 4, "R")})) is not None
+
+
+def test_a_local_parameter_inside_a_begin_of_a_function_is_a_local_too() -> None:
+    """Round 21 FL4: a localparam in a `begin ... end` of a function is still one of its locals
+    (counted as built: `f(R)` there is no dead code, whatever `built` says)."""
+    nested = var("(NR)", "R", 6, varType="LPARAM", isParam=True, valuep=[const("inf.0")])
+    inner = call("(cn)", "(F8)", "f", 7) | {"argsp": [{"type": "ARG", "exprp": [
+        named("(NR)", "R")]}]}  # fmt: skip
+    g = func("(G4)", "g", 5, local("(RG4)", "g", basic(7), isFuncReturn=True),
+             {"type": "BEGIN", "stmtsp": [nested, set_return(inner, "(RG4)", "g")]})  # fmt: skip
+    tree = module(*NAMED, SAFE_F, g)
+    assert "(NR)" in et._function_locals(tree)
+    got = et.constant_call(tree, META, OURS, plain=PLAIN, built=frozenset())
+    assert got is not None and (got.name, got.line) == ("f", 7)
+
+
+# Round 21 (fl01, fl04, r04, r15, r17): `localparam MIN_DEPTH = 2;` inside a constant helper,
+# passed to another function with the helper's argument. Verilator's elaborated tree leaves out
+# a function that it only works out for a parameter value (or never calls), so only the
+# simulator lists the local, and the untyped local counted as a parameter that can hold a real.
+UNTYPED = {"type": "BASICDTYPE", "keyword": "LOGIC_IMPLICIT"}
+MIN_DEPTH = var("(MD)", "MIN_DEPTH", 6, varType="LPARAM", isParam=True, childDTypep=[UNTYPED],
+                valuep=[const("?32?sh2")])  # fmt: skip
+MD_KEY = ("core.v", 6, "MIN_DEPTH")
+
+
+def helper(*args: dict[str, Any], kid: dict[str, Any] = MIN_DEPTH) -> dict[str, Any]:
+    """`function [7:0] g(input [7:0] v); localparam MIN_DEPTH = 2; g = f(args...);`."""
+    inner = call("(ch)", "(F8)", "f", 7) | {"argsp": [{"type": "ARG", "exprp": [a]} for a in args]}
+    return func("(G5)", "g", 5, local("(RG5)", "g", basic(7), isFuncReturn=True),
+                arg("(VG5)", "v", basic(7)), kid,
+                {"type": "BEGIN", "stmtsp": [set_return(inner, "(RG5)", "g")]})  # fmt: skip
+
+
+def test_a_function_local_that_only_the_simulator_lists_with_a_plain_number_holds_no_real() -> None:
+    reads = ar("ADD", rd("(VG5)", "v"), named("(MD)", "MIN_DEPTH"))  # f(v + MIN_DEPTH)
+    tree = module(*NAMED, SAFE_F, helper(reads))
+    built = frozenset({MD_KEY})
+    got = et.constant_call(tree, META, OURS, plain=PLAIN, built=built)
+    assert got is not None and "with an argument that can hold a real" in got.sentence  # bf5eb0a
+    lone = frozenset({MD_KEY})
+    assert et.constant_call(tree, META, OURS, plain=PLAIN, built=built, simulator_only=lone) is None
+    # another key, or the same name outside a function, still counts (fail closed)
+    other = frozenset({("core.v", 7, "MIN_DEPTH")})
+    assert et.constant_call(tree, META, OURS, plain=PLAIN, built=built, simulator_only=other)
+    outside = module(*NAMED, SAFE_F, MIN_DEPTH, f8_call(named("(MD)", "MIN_DEPTH")))
+    assert et.constant_call(outside, META, OURS, plain=PLAIN, built=built, simulator_only=lone)
+    # and it is still not plain for a proven function's constant call: an argument that can be
+    # x is judged as before (`_x_argument`)
+    proven = module(*NAMED, PROVEN_K, helper(num(0x81, "8'h"), named("(MD)", "MIN_DEPTH")))
+    got = et.constant_call(proven, META, OURS, plain=PLAIN, built=built, simulator_only=lone)
+    assert got is not None and "with constant arguments" in got.sentence
+
+
+def test_the_simulator_only_values_are_plain_numbers_verilator_does_not_list() -> None:
+    a, b, c, d, e = (("core.v", n, x) for n, x in enumerate("ABCDE", 2))
+    verilator = {a: [(("t",), 8)], b: None}
+    simulator = {a: [(("t",), 8)], b: [(("t",), 1)], c: [(("t", "f"), 2)], d: None, e: []}
+    assert et.simulator_only_values(verilator, simulator) == {c}  # d: a real or a string
+    assert et.simulator_only_values(verilator, {}) == set()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "__VhshA1dlyVwN2C4BND9YaIpsePOeaBBJGrBmlEar82xW",  # a plain name of 128 characters
+        "M______Vhsh3kQ9zXbN",  # `\M.............................`: an escaped name
+    ],
+)
+def test_a_parameter_name_that_verilator_hashed_fails_closed(name: str) -> None:
+    """Round 21 k04, k05: Verilator 5.046 replaces a name of 128 characters or more by a hash,
+    so the simulator's key of that parameter never matches and its values (an untyped
+    localparam that overflows) were never compared. Both trees raise, also for a local of a
+    function that only the linked tree holds; a parameter of another file does not."""
+    tree = {"type": "NETLIST", "modulesp": [mod("(T)", "tt_um_core", 1,
+                                                elab_param("(H)", name, 8, "32'sh0"))]}  # fmt: skip
+    with pytest.raises(et.TreeError, match=r"core\.v, line 8: Verilator shortens") as raised:
+        et.parameter_values(tree, META, OURS)
+    assert len(f"no usable syntax tree (TreeError: {raised.value})") <= 200  # `clip` in equiv
+    hashed = MIN_DEPTH | {"name": name}
+    linked = module(*NAMED, SAFE_F, helper(rd("(VG5)", "v"), kid=hashed))
+    with pytest.raises(et.TreeError, match="use a shorter name"):
+        et.constant_call(linked, META, OURS, plain=PLAIN)
+    std = module(*NAMED, SAFE_F, STD_P | {"name": name})
+    assert et.constant_call(std, META, OURS, plain=PLAIN) is None
 
 
 def test_the_built_values_are_what_either_tool_builds() -> None:

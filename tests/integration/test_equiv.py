@@ -125,6 +125,36 @@ async def test_equiv(server: Client, tmp_path: Path, fe: str) -> None:
         assert states["synthesis"] == "not_run"  # an equivalence run never sets another row
 
 
+@pytest.mark.parametrize(("name", "hidden"), [("lofold", True), ("lofoldn", False)])
+async def test_the_lint_without_comments_finds_a_race_a_comment_hid(
+    server: Client, tmp_path: Path, image: str, name: str, hidden: bool
+) -> None:
+    """Round 21: the real Verilator, run on the RTL with its comments removed, reports the
+    BLKSEQ that `/* verilator lint_off WIDTH,//,BLKSEQ */` hid from the emit lint (called past
+    the text rule, which refuses the same comment first); the control with nonblocking
+    assignments gives nothing."""
+    async with server as client:
+        project = await design_project(client, tmp_path, name, "verilog")
+    proc = run_hardened(
+        image,
+        project,
+        "python",
+        "/smoke/hidden_lint.py",
+        "/work/src",
+        name,
+        "/work/build/hidden",
+        mount=EQUIV_FIXTURES,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stderr
+    found = json.loads(proc.stdout.strip().splitlines()[-1])
+    if hidden:
+        assert found[0] == "guard_sim_synth_differ", found
+        assert f"({name}.v, line 16)" in found[1] and "BLKSEQ" in found[1], found
+    else:
+        assert found is None, found
+
+
 async def test_equiv_mismatch(server: Client, tmp_path: Path, image: str) -> None:
     async with server as client:
         project = await counter_project(client, tmp_path, "verilog")
@@ -745,6 +775,11 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # passed to a helper with a proven select in code that no tool builds: dead code everywhere).
 # Round 20: strhelp (a sized string localparam and a child's sized string parameter set by an
 # override, passed to helpers in plain assigns: they hold bits, never a real).
+# Round 21: lofoldn (the control of lofold and locut: lint_off comments that Verilator reads as
+# the other tools do), longok (a 127-character parameter name, which Verilator keeps), and
+# flocal, flocalg, flocalu (an untyped localparam inside a constant helper, a generate-pass helper
+# and an unused function, passed on with the function's argument: only the simulator lists it,
+# with a plain number, so it holds no real; all three were refused at bf5eb0a).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -780,6 +815,11 @@ EQUIVALENT = [
     "deadkid",
     "deadcase",
     "strhelp",
+    "lofoldn",
+    "longok",
+    "flocal",
+    "flocalg",
+    "flocalu",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
@@ -837,6 +877,18 @@ REFUSAL_ADVICE = {
     "realnest": "(realnest.v, line 21) calls the function `f`",
     "esctick": "(esctick.v, line 12) uses a back-tick inside an escaped identifier",
     "escquote": "(escquote.v, line 13) uses a double quote inside an escaped identifier",
+    # Round 21: lint_off comments read the way Verilator reads them (it deletes every `//` in a
+    # comment; it ends a `// verilator lint_off` comment at its first `/` and lints the rest of
+    # the line, here a hidden race: Icarus and the gates differ from cycle 2), parameter names
+    # that Verilator hashes (their values were never compared), and an infinite real declared
+    # inside a function, which still counts as a real (the control of flocal)
+    "lofold": "(lofold.v, line 14) uses `verilator lint_off BLKSEQ`",
+    "locut": "(locut.v, line 16) uses a `// verilator lint_off` (or lint_on) comment that goes "
+    "on after a single `/`",
+    "longname": "longname.v, line 14: Verilator shortens a parameter name of 128 characters",
+    "longesc": "longesc.v, line 12: Verilator shortens a parameter name of 128 characters",
+    "flocalreal": "(flocalreal.v, line 21) calls the function `f` with an argument that can hold "
+    "a real",
 }
 
 

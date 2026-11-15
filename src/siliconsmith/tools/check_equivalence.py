@@ -632,8 +632,13 @@ them: macros and `include, bit/int types (a loop index declared in a for header 
 for (int i = 0; ...), is fine), unique/priority, casex, ===, x or z literals, delays \
 (#), characters outside plain ASCII, a back-tick or a double quote inside an escaped \
 identifier (\\v`X, \\M": Icarus expands a macro there, and Verilator and Icarus spell the quote \
-differently), a lint_off of a race warning (also one code of a list, lint_off WIDTH,BLKSEQ, in \
-any case: lint_off blkseq), every level-sensitive \
+differently), a parameter name of 128 characters or more (Verilator shortens it, so its value \
+is never compared), a lint_off of a race warning (also one code of a list, lint_off \
+WIDTH,BLKSEQ, in any case: lint_off blkseq, and in a spelling only Verilator reads as one: it \
+deletes every // and /* inside a comment, so /* verilator lint_off WIDTH//,BLKSEQ */ hides \
+BLKSEQ), a // verilator lint_off comment that goes on after a single / (Verilator ends the \
+comment there and reads the rest as code or as a /* comment; write // verilator lint_off WIDTH \
+// why), every level-sensitive \
 always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational block that \
 can read a signal before it writes it on some path through the block (a branch, a case item \
 or a loop pass that does not write it first: write each signal at the top of the block), a \
@@ -666,17 +671,20 @@ v[7 - i], not v[i ^ 7]), a call as an argument, another local or an array elemen
 even through a select (v[m[0]], v[loc[1:0]]); a simulator works the call out itself: compute it \
 in an integer localparam first; such a call in a real or string parameter is refused too), a \
 real (as above: also a real or untyped parameter or localparam whose value is not a plain \
-number in both tools, such as an untyped string; one declared with an integer type or a packed \
-range, localparam [39:0] MSG = "HELLO", holds bits and is fine) or a hierarchical name (g.R) in \
+number in both tools, such as an untyped string, and a time or typedef one; one declared \
+integer, logic or reg or with a packed range, localparam [39:0] MSG = "HELLO", holds bits and \
+is fine) or a hierarchical name (g.R, also stage[i-1].q of a generate loop: keep the stages in \
+an array) in \
 an argument of ANY call of any of your functions, even a function without a select, wherever \
 the call is: also in the value of a parameter or localparam or in an override (localparam [7:0] \
 K = g(R)), and in an argument that reads a signal or a loop variable too (f(R + i) in a loop, \
 f(R + a) inside another function): Yosys works such a call out itself and turns the real into a \
 number without a warning where a simulator has x, and Verilator and a simulator can agree on a \
 parameter value that Yosys does not give (compute an integer localparam from the real first, \
-localparam integer N = R, and pass that; a parameter or localparam in code that no tool \
-builds, such as a generate branch the parameters do not choose or a module nothing \
-instantiates, needs no value: that call is dead code), a \
+localparam integer N = R, and pass that; only a parameter or localparam declared in code that \
+no tool builds, such as a generate branch the parameters do not choose or a module nothing \
+instantiates, needs no value, while a dead call with a live real or a real literal is still \
+refused), a \
 real that is infinite or not a number and is converted to an integer anywhere (an assign, a \
 wire or port, a function body, a clocked block, a case label; Yosys warns "converting real \
 value inf to binary 32'x", a simulator makes it all x: use a real only to compute an integer \

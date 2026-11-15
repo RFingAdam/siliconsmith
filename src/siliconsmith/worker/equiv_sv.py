@@ -74,7 +74,16 @@ In every file:
   catches (BLKSEQ, COMBDLY, CASEX, CASEWITHX, CASEINCOMPLETE, LATCH, MULTIDRIVEN, ...), also as
   any item of a comma list (`lint_off WIDTH,BLKSEQ`: Verilator turns off every code of it): the
   lint runs with every warning fatal, and that is what finds a blocking race or an x in a case
-  item.
+  item. Each comment is cut and read as Verilator 5.046 does (`_verilator_comments`,
+  `_lint_off_codes`; round 21): Verilator deletes every `//`, `/*` and `*/` inside a comment
+  before it reads it (`/* verilator lint_off WIDTH//,BLKSEQ */` hides BLKSEQ), and ends a
+  `// verilator lint_off` comment at its first `/` (`// verilator lint_off WIDTH // no latch
+  here` hides no LATCH);
+* a `// verilator lint_off` (or lint_on) comment that goes on after a single `/`, or after a
+  `/*` that does not close on that line: Verilator reads what follows as code or as a block
+  comment, the other tools as part of the line comment, so Verilator's lint would judge other
+  code than the proof (`// verilator lint_off WIDTH /*` ... `// */`, or `/**/ else q = 0;`,
+  hide a race or a latch from the lint).
 
 * `function` without `automatic` (any front-end): a simulator keeps the local variables of a plain
   function between calls; a function argument that is not an input (`output`, `inout` or `ref`
@@ -111,7 +120,7 @@ an attribute whose string holds `*)` (Verilator ends the attribute there) are re
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass
 
 ALLOWED_DIRECTIVES = frozenset(
@@ -377,7 +386,75 @@ _DECIMAL = re.compile(r"(?<![\w$'.])\d[\d_]*(?![\w$.]|\s*')", re.ASCII)
 _RADIX = {"b": 2, "o": 8, "d": 10, "h": 16}
 UNSIZED_MAX = (1 << 31) - 1  # the largest unsized number every tool reads the same way
 ARGUMENT_DIRECTIONS = frozenset({"output", "inout", "ref"})
-_LINT_OFF = re.compile(r"verilator\s+lint_off\b([^\n*]*)", re.I | re.ASCII)
+# Verilator 5.046's preprocessor (V3PreLex.l) ends a `//` comment that starts with exactly
+# `verilator lint_off` (or lint_on, lint_restore, lint_save) at its first `/` and reads on from
+# there; every other `//` comment runs to the end of the line, as in the other tools
+_LINE_LINT = re.compile(r"//[ \t\f\r]*verilator lint_(?:off|on|restore|save)[^\n\r/]*", re.ASCII)
+_LINT_OFF = re.compile(r"verilator\s*lint_off", re.I | re.ASCII)
+
+
+def _verilator_comments(text: str) -> Iterator[tuple[int, str]]:
+    """`(position, comment)` of every comment as Verilator 5.046's preprocessor cuts the text
+    into comments (round 21), skipping strings and escaped identifiers as `lex` does. A `/* */`
+    comment ends at its first `*/`. Where the other tools read a `//` comment to the end of the
+    line, Verilator ends one that starts with `// verilator lint_off` (`_LINE_LINT`) at its
+    first `/` and reads the rest of the line anew: another `//` comment, a `/* */` comment or
+    code. Each of those comments comes out on its own. `(position, "")` marks the place where
+    Verilator reads code there, or a `/* */` comment that runs past the end of the line: what
+    Verilator lints is then not what the other tools read (a race or a latch the others see,
+    hidden from Verilator's lint)."""
+    n, i = len(text), 0
+    while i < n:
+        two = text[i : i + 2]
+        if two == "//":
+            stop = text.find("\n", i)
+            stop = n if stop < 0 else stop  # where the other tools end this comment
+            while i < stop:
+                if text.startswith("//", i):
+                    m = _LINE_LINT.match(text, i)
+                    end = stop if m is None else m.end()  # (a CR before the LF stays in)
+                elif text.startswith("/*", i):
+                    end = text.find("*/", i + 2) + 2
+                    if end < 2 or end > stop:
+                        yield i, ""
+                        return
+                elif text[i] in " \t\f\r":
+                    i += 1
+                    continue
+                else:
+                    yield i, ""
+                    return
+                yield i, text[i:end]
+                i = end
+        elif two == "/*":
+            end = text.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            yield i, text[i:end]
+            i = end
+        elif text[i] == '"':
+            i = _string_end(text, i) or i + 1
+        elif text[i] == "\\":
+            i += 1
+            while i < n and text[i] not in ASCII_BLANKS:
+                i += 1
+        else:
+            i += 1
+
+
+def _lint_off_codes(comment: str) -> Iterator[list[str]]:
+    """The words after each `verilator lint_off` in a comment (`_verilator_comments`), read
+    twice: as written, and as Verilator's preprocessor cleans a comment before it reads it as a
+    meta-comment (V3PreProc commentCleanup: every `//`, `/*` and `*/` deleted, a double quote or
+    a tab made a space; `/* verilator lint_off WIDTH//,BLKSEQ */` and `B//LKSEQ` turn BLKSEQ
+    off). Every word after it counts, to the end of the comment: Verilator turns off every code
+    of a comma list (`WIDTH,BLKSEQ`, also with an empty item), and stops with an error on a word
+    that is not a code, so only odd spellings are refused for a word that hides nothing."""
+    body = comment[2:]
+    cleaned = body.replace("//", "").replace("/*", "").replace("*/", "")
+    for reading in (body, cleaned.replace('"', " ").replace("\t", " ")):
+        for m in _LINT_OFF.finditer(reading):
+            words = re.findall(r"[-\w]+", reading[m.end() :], re.ASCII)
+            yield [w for w in words if not w.startswith("-")]
 
 
 def _line(text: str, pos: int) -> int:
@@ -1402,17 +1479,23 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
     for m in re.finditer(r"#", scan):
         if not _parameter_list(scan, m.start()):
             return refuse("a delay (`#`)", m.start())
-    for m in _LINT_OFF.finditer(text):  # a comment: look at the original text
-        # Verilator turns off every code of a comma list (`lint_off WIDTH,BLKSEQ`, also with an
-        # empty item: `WIDTH,,BLKSEQ`), so every word counts, not only the first (round 19).
-        # Not the words of a `//` comment after it: Verilator reads no code there
-        # (`lint_off WIDTH // no latch here` still reports LATCH; round 20)
-        words = re.findall(r"[-\w]+", m.group(1).split("//")[0], re.ASCII)
-        codes = [w for w in words if not w.startswith("-")]
-        hidden = next((c for c in codes if c.upper() in LINT_CODES_NOT_TO_HIDE), None)
-        if not codes or hidden is not None:
-            code = hidden or ""
-            return refuse(f"`verilator lint_off {code}`".replace(" `", "`"), m.start(), src=text)
+    # Each comment as Verilator cuts and reads it (round 21): `lint_off WIDTH // no latch here`
+    # in a `//` comment still reports LATCH, `/* lint_off WIDTH//,BLKSEQ */` does not report BLKSEQ
+    for at, comment in _verilator_comments(text):
+        if not comment:
+            return refuse(
+                "a `// verilator lint_off` (or lint_on) comment that goes on after a single `/`: "
+                "Verilator ends that comment at the `/` and reads the rest of the line as code or "
+                "as a `/*` comment that can run over the next lines, the other tools as part of "
+                "the comment, so Verilator's lint does not see what they read",
+                at,
+                src=text,
+            )
+        for codes in _lint_off_codes(comment):
+            hidden = next((c for c in codes if c.upper() in LINT_CODES_NOT_TO_HIDE), None)
+            if not codes or hidden is not None:
+                code = hidden or ""
+                return refuse(f"`verilator lint_off {code}`".replace(" `", "`"), at, src=text)
     if hand:
         event = _event_controls(scan)
         if event is not None:
@@ -1460,6 +1543,9 @@ _ADVICE = (
     ("case-equality", "Use `==` or `!=`: the check cannot model what `===` does with x."),
     ("literal", "Remove the x or z (an x is a don't-care in the gates; use a plain value): a "
      "simulator and the gates treat it differently."),
+    ("goes on after a single", "End the comment before the `/`: give the reason in a second "
+     "`//` comment (`// verilator lint_off WIDTH // why`) or in a `/* */` that closes on the "
+     "same line."),
     ("lint_off", "Remove it and fix the lint warning instead: the lint step catches races and x "
      "in a case that no other check sees."),
     ("level-sensitive", "Use `@always_comb`: it writes the plain shape and lists every signal the "

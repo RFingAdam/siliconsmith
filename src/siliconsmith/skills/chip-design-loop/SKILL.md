@@ -92,6 +92,12 @@ In MyHDL the core must be the plain single module MyHDL writes, and a level-sens
 Use a parameter, not a macro, and keep a back-tick or a double quote out of an escaped name (``\v`X``, `\M"`): Icarus expands a macro there.
 Never switch off a race warning (`BLKSEQ`, `MULTIDRIVEN`, ...) with `lint_off`, also not as one code of a list such as `lint_off WIDTH,BLKSEQ` or in lower case (`lint_off blkseq`): every code of the list is judged, whatever its case.
 
+## Lint comments and long names
+
+The check reads a `lint_off` comment the way Verilator reads it. Verilator deletes every `//` and `/*` inside a comment before it reads the codes, so `/* verilator lint_off WIDTH//,BLKSEQ */` is refused as `lint_off BLKSEQ`.
+Give the reason for a `lint_off` in a second `//` comment (`// verilator lint_off WIDTH // why`) or in a `/* */` that closes on the same line. Verilator ends a `// verilator lint_off` comment at its first `/`, so a single `/` or an open `/*` after the codes is refused.
+Keep parameter names under 128 characters. Verilator shortens longer names, so the check cannot compare their values and refuses them.
+
 ## Constants the equivalence check accepts
 
 Give every parameter a defined value. One with an x or z bit (`1/0`, `5 % 0`, `0 ** -1`, `A[6]` of a 4-bit `A`, a function that returns x) is refused, and so is any other constant that comes out x (`8'd5 / 8'd0`), a constant index outside the declared range (even on a signal such as `ui_in[9]`, and in a branch a constant never selects), and RTL that Icarus (`iverilog -g2012`) cannot compile.
@@ -113,10 +119,10 @@ An argument that can be x refuses even a proven call: an x or z bit, a divide, a
 
 ## Reals and hierarchical names
 
-A real or a hierarchical name (`g.R`) in an argument refuses ANY call of your functions, even one without a select (`case (x) f(R): ...` with an infinite `R`), wherever it is: also in a `localparam` value or an override (`localparam [7:0] K = g(R)`), and when the argument reads a signal or loop variable too (`f(R + i)`). Yosys works the call out with a number, silently, where a simulator has x.
-Work an integer out first (`localparam integer N = R;`) and pass `N`. A `real` or untyped parameter whose value is not a plain number counts as a real (an untyped string too); one with a packed range or an integer type holds bits and is fine (`localparam [39:0] MSG = "HELLO";`, then `first_char(MSG)`).
-A parameter or `localparam` in code that no tool builds (a generate branch the parameters do not choose, a module nothing instantiates) needs no value, since that call is dead code everywhere.
-An infinite or NaN real converted to an integer anywhere else is refused too (`wire [3:0] w = integer'(R);`, `v = R;` in a function, `w <= R;` in a clocked block; Yosys warns `converting real value inf to binary 32'x`). Use a real only to compute an integer `localparam`, right there (`localparam integer DIV = CLK_HZ / BAUD;` with `// verilator lint_off REALCVT`; Yosys 0.62 cannot use a real in a function or an `int'()` cast), and keep it finite.
+A real or a hierarchical name (`g.R`) in an argument refuses ANY call of your functions, wherever it is (also a `localparam` value or an override: `localparam [7:0] K = g(R)`) and whatever else the argument reads (`f(R + i)`; `f(stage[i-1].q)`: keep the stages in an array, `f(q[i-1])`). Yosys works the call out with a number, silently, where a simulator has x.
+Work an integer out first (`localparam integer N = R;`) and pass `N`. A `real`, untyped, `time` or typedef parameter whose value is not a plain number counts as a real (an untyped string too); one declared `integer`, `logic`, `reg` or with a packed range holds bits (`localparam [39:0] MSG = "HELLO";`).
+Only a parameter declared in code that no tool builds (a generate branch not chosen, a module nothing instantiates) needs no value: a dead call with a live real or a real literal is still refused.
+An infinite or NaN real converted to an integer anywhere else is refused too (`wire [3:0] w = integer'(R);`, `v = R;` in a function, `w <= R;`; Yosys warns `converting real value inf to binary 32'x`). Use a real only to compute an integer `localparam`, right there (`localparam integer DIV = CLK_HZ / BAUD;` with `// verilator lint_off REALCVT`; Yosys 0.62 cannot use a real in a function or an `int'()` cast), and keep it finite.
 Not detected: a real parameter override (Yosys keeps six decimals: `1.0e-9` becomes 0) and a real in a signal expression (`ui_in == 2.5`, rounded first).
 
 ## Simulator limits

@@ -34,3 +34,6 @@ unit tests of the log readers (`tests/test_equiv_parse.py`) and of the verdict m
   nor3: both find the difference at cycle 4, with different traces).
 - `tests/fixtures/equiv/check_netlist.py` is the test-only script that gives the worker's check a
   hand-edited netlist inside the container (the production verb cannot take one).
+- `tests/fixtures/equiv/hidden_lint.py` is the test-only script that runs the worker's lint
+  without comments (`equiv._hidden_lint`) inside the container, past the text rule that would
+  refuse the same lint_off first.

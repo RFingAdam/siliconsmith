@@ -452,12 +452,31 @@ def _signed(var: dict[str, Any], nodes: dict[str, dict[str, Any]]) -> bool:
     return False
 
 
+# Verilator 5.046 replaces a name of 128 characters or more (an escaped name counts each special
+# character as several: `.` is `__02E`) by `__Vhsh` and a hash, in `name`, `origName` and
+# `verilogName` alike, so such a parameter's key is never the simulator's and its values are
+# never compared (round 21: an untyped localparam that overflows, named with 128 characters)
+_HASHED = "__Vhsh"
+
+
+def _param_name(node: dict[str, Any], file: str, line: int) -> str:
+    """The name of a parameter's VAR; TreeError if Verilator hashed it (`_HASHED`)."""
+    name = str(node.get("name", "?"))
+    if _HASHED in name:
+        raise TreeError(
+            f"{file}, line {line}: Verilator shortens a parameter name of 128 characters or more "
+            "(in an escaped name a special character counts as several); use a shorter name"
+        )
+    return name
+
+
 def parameter_values(tree: Any, meta: Any, ours: list[str]) -> ParamValues:
     """The value of every parameter and localparam of our files in Verilator's elaborated tree,
     once per module instance and loop pass, with its path (`_instances`, then the blocks around
     it in the module); a genvar has no value there and is left out. A value that is not a plain
     number (a real, an array, a string kept as text) makes it None. Compared with the
-    simulator's values by `equiv_icarus.disagreement`."""
+    simulator's values by `equiv_icarus.disagreement`. A name that Verilator hashed raises
+    TreeError (`_param_name`): its values could never be compared."""
     if not isinstance(tree, dict):
         raise TreeError("the tree is not an object")
     files = _file_letters(meta)
@@ -472,7 +491,8 @@ def parameter_values(tree: Any, meta: Any, ours: list[str]) -> ParamValues:
             match = _LOC.match(str(node.get("loc", "")))
             if match is None or match.group(1) not in files or files[match.group(1)] not in ours:
                 continue
-            key = (files[match.group(1)], int(match.group(2)), str(node.get("name", "?")))
+            file, line = files[match.group(1)], int(match.group(2))
+            key = (file, line, _param_name(node, file, line))
             known = found.setdefault(key, [])
             values = node.get("valuep") or []
             only = values[0] if isinstance(values, list) and len(values) == 1 else None
@@ -1101,7 +1121,10 @@ def _x_argument(call: dict[str, Any], unplain: frozenset[str]) -> bool:
 
 
 def _constant_calls(
-    tree: Any, known: dict[str, int] | None = None, plain: frozenset[str] = frozenset()
+    tree: Any,
+    known: dict[str, int] | None = None,
+    plain: frozenset[str] = frozenset(),
+    no_real: frozenset[str] = frozenset(),
 ) -> Iterator[tuple[dict[str, Any], dict[str, Any] | None, bool]]:
     """Every call of one of the design's functions that can give a simulator an x for constant
     arguments, made with constant arguments, with the parameter VAR whose value holds it (for
@@ -1112,7 +1135,8 @@ def _constant_calls(
     parameter, by the `addr` of its VAR (`_Ranges`). `plain`: the `addr`s of the parameters
     whose value is a plain number in every instance in both tools; any other parameter can make
     an argument x (`_x_argument`), or hold a real unless it is declared to hold bits
-    (`_holds_bits`). See `constant_call`."""
+    (`_holds_bits`) or its `addr` is in `no_real` (a function's local parameter that only the
+    simulator lists, with a plain number). See `constant_call`."""
     if not isinstance(tree, dict):
         raise TreeError("the tree is not an object")
     nodes = list(_subtree(tree))
@@ -1121,7 +1145,7 @@ def _constant_calls(
     functions = {str(n["addr"]): n for n in nodes if n.get("type") == "FUNC" and "addr" in n}
     ranges = _Ranges(variables, known or {})
     unplain = frozenset(a for a, k in kinds.items() if k in _PARAMETER_VALUES and a not in plain)
-    unreal = frozenset(a for a in unplain if not _holds_bits(variables[a]))
+    unreal = frozenset(a for a in unplain if not _holds_bits(variables[a]) and a not in no_real)
 
     def reads_a_variable(root: dict[str, Any]) -> bool:
         stack = [root]
@@ -1232,9 +1256,9 @@ def _constant_calls(
                 stack.append((item, under))
 
 
-def _keys(tree: Any, files: dict[str, str]) -> dict[str, ParamKey]:
+def _keys(tree: Any, files: dict[str, str], ours: list[str]) -> dict[str, ParamKey]:
     """The key of each parameter's VAR in `tree` (as `parameter_values` keys them), by its
-    `addr`."""
+    `addr`. A name of our files that Verilator hashed raises TreeError (`_param_name`)."""
     found: dict[str, ParamKey] = {}
     for node in _subtree(tree) if isinstance(tree, dict) else ():
         if node.get("type") != "VAR" or node.get("varType") not in _PARAMETER_VALUES:
@@ -1242,11 +1266,9 @@ def _keys(tree: Any, files: dict[str, str]) -> dict[str, ParamKey]:
         match = _LOC.match(str(node.get("loc", "")))
         if match is None or match.group(1) not in files or "addr" not in node:
             continue
-        found[str(node["addr"])] = (
-            files[match.group(1)],
-            int(match.group(2)),
-            str(node.get("name", "?")),
-        )
+        file, line = files[match.group(1)], int(match.group(2))
+        name = _param_name(node, file, line) if file in ours else str(node.get("name", "?"))
+        found[str(node["addr"])] = (file, line, name)
     return found
 
 
@@ -1286,6 +1308,14 @@ def plain_values(verilator: ParamValues, simulator: ParamValues) -> frozenset[Pa
     return frozenset(key for key, mine in verilator.items() if mine and simulator.get(key))
 
 
+def simulator_only_values(verilator: ParamValues, simulator: ParamValues) -> frozenset[ParamKey]:
+    """The parameters that the simulator's elaboration lists with a plain number in every
+    instance and loop pass and Verilator's tree does not list at all. Verilator's elaborated
+    tree leaves out a function that it only works out for a parameter value or never calls, so
+    the local parameters of such a function are here (`constant_call`, round 21)."""
+    return frozenset(key for key, theirs in simulator.items() if theirs and key not in verilator)
+
+
 def built_values(verilator: ParamValues, simulator: ParamValues) -> frozenset[ParamKey]:
     """The parameters that some tool builds: Verilator's tree has it in at least one module
     instance or loop pass, or with a value that is not a plain number (None: counted as built,
@@ -1308,6 +1338,7 @@ def constant_call(
     agreed: dict[ParamKey, int] | None = None,
     plain: frozenset[ParamKey] = frozenset(),
     built: frozenset[ParamKey] | None = None,
+    simulator_only: frozenset[ParamKey] = frozenset(),
 ) -> Unknown | None:
     """The first call (by file order, line, column) of one of the design's functions that can
     give a simulator an x for constant arguments, made with constant arguments anywhere but in
@@ -1370,10 +1401,17 @@ def constant_call(
     parameters of a function that it only works out for a parameter value, so only the
     simulator could list it, and a name that the two tools spelled differently would hide it.
 
+    Round 21: for the same reason, a parameter declared inside a function that only the
+    simulator lists (in `simulator_only`, from `simulator_only_values`), with a plain number in
+    every instance, holds no real (`localparam MIN_DEPTH = 2;` in a constant helper,
+    `clog2((depth < MIN_DEPTH) ? MIN_DEPTH : depth)`): a real or a string there is not a plain
+    number to the simulator, and a name the tools spell differently matches nothing, so both
+    still count. It is still not plain for an argument that can be x (`_x_argument`).
+
     An unresolved name (`PARSEREF`, a `VARREF` to no `VAR`) counts as a variable: only a module
     that nothing instantiates is left unlinked (in the design Verilator stops with an error)."""
     files = _file_letters(meta)
-    keys = _keys(tree, files)
+    keys = _keys(tree, files, ours)
     agreed = agreed or {}
     known = {addr: agreed[key] for addr, key in keys.items() if key in agreed}
     local = _function_locals(tree)
@@ -1383,8 +1421,9 @@ def constant_call(
         if key in plain
         or (built is not None and key[0] in ours and key not in built and addr not in local)
     )
+    no_real = frozenset(a for a, key in keys.items() if a in local and key in simulator_only)
     found: list[tuple[int, int, int, bool, str, str]] = []
-    for node, owner, real in _constant_calls(tree, known, plains):
+    for node, owner, real in _constant_calls(tree, known, plains, no_real):
         if owner is None:
             file, line, col = _place(node, files)
             if file in ours:
