@@ -714,6 +714,13 @@ gates; write 32'sh8), an unsized binary, octal or hex number whose digits, leadi
 included, need more than 32 bits ('h0_0000_000F: 32 bits wide in Icarus and Verilator, 36 in \
 Yosys; write 36'h0_0000_000F or 'hF), $countones and $countbits (a signed int in a simulator, \
 unsigned in Yosys 0.62, so $countones(x) > -1 differs; count with a loop), a function \
+argument narrower than the function's input, or the operand of a size or type cast (8'(x), \
+int'(x)) narrower than the cast, with a part that reads no signal (numbers, parameters, genvars, \
+a for loop's variable) whose +, -, *, <<, **, ~ or unary minus can carry past its own width \
+(Yosys 0.62 works that part out at the argument's width, a simulator at the input's: \
+clog2(LAST + 1'b1) with localparam [3:0] LAST = 4'd15 is 16 in a simulator and 0 in the gates; \
+write clog2(LAST + 1), widen an operand, {4'd0, LAST} + 8'd1, or compute it in a typed \
+localparam first, localparam integer N = LAST + 1'b1), a function \
 argument that is not an input (output, inout, ref: \
 Icarus cannot compile one either; return the value), a function that reads anything other than its \
 arguments and any task, an always block (any keyword) or function call that Yosys elaborates and \

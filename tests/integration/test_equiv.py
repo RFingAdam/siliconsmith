@@ -788,6 +788,8 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # localparams computed with an unsized number, W - 1 and W * 2, which Icarus makes wider than
 # 32 bits, used as a counter limit and a range, and 8'hff + 8'h00 with a size in a
 # concatenation: the control of wcat and wsum).
+# Round 25: k07c (the control of k07 and kd4: LAST + 1, a typed localparam computed first, and
+# {4'd0, LAST} + 8'd1 as function arguments, which every tool works out at the input's width).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -832,6 +834,7 @@ EQUIVALENT = [
     "lohdr",
     "floclit",
     "wint",
+    "k07c",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
@@ -938,6 +941,15 @@ REFUSAL_ADVICE = {
     "fcopies": "(fcopies.v, line 15) declares the localparam `M` inside the function `f`",
     "w40sum": "(w40sum.v, line 14) gives the parameter `M` the same value but 41 unsigned bits in "
     "a simulator (Icarus) and 40 unsigned bits",
+    # Round 25: a constant function argument narrower than the input, which Yosys 0.62 works out
+    # at its own width (16 in a simulator, 0 in the gates): a localparam that a generate `if`
+    # reads, a localparam that divides, a parameter override
+    "k07": "(k07.v, line 24) calls the function `clog2` with an argument that is 4 bits wide, "
+    "narrower than the function's input (32 bits)",
+    "kd4": "(kd4.v, line 17) calls the function `f` with an argument that is 4 bits wide, "
+    "narrower than the function's input (8 bits)",
+    "kp1": "(kp1.v, line 22) calls the function `f` with an argument that is 4 bits wide, "
+    "narrower than the function's input (8 bits)",
 }
 
 

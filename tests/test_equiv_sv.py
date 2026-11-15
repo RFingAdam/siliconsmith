@@ -385,6 +385,19 @@ def test_an_unsized_number_whose_digits_need_more_than_32_bits_is_refused(lit: s
 
 
 @pytest.mark.parametrize(
+    "lit", ["'h1_0000_00?F", "'h?_0000_000F", "'hz_0000_000F", "'o0000000000?"]
+)
+def test_a_z_or_question_digit_of_a_casez_label_counts_toward_the_32_bits(lit: str) -> None:
+    """Round 25 (zlong, mutant N11): a casez label may hold z and ? digits, and such a number
+    has no value (the 2**31 rule cannot see it), so only its digits refuse it: 36 bits in Yosys,
+    32 in the simulator."""
+    refused(
+        f"always @* casez (a)\n  {lit}: y = 1;\n  default: y = 0;\nendcase",
+        f"the unsized number `{lit}`, whose digits need more than 32 bits",
+    )
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "assign o = 'h0000_000F + 'hFFFF + 'o7777777777 + 'o0000000001;",  # 32 and 30 bits

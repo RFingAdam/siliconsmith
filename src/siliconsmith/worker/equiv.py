@@ -29,7 +29,9 @@ parameter value that the simulator Icarus works out differently, or to the same 
 another width or sign (an untyped `8'hff + 8'h00` is 9 bits wide in Icarus, 8 in Verilator and
 the gates), a different elaboration, a call with constant arguments of a function that selects
 at a computed index not proven inside the range or divides by a value not proven nonzero
-(`equiv_tree.constant_call`), a select outside the range that Yosys finds, also in an arm of
+(`equiv_tree.constant_call`), a constant function argument or cast operand narrower than the
+input or cast that can carry, which Yosys 0.62 works out at its own width
+(`equiv_tree.narrow_argument`), a select outside the range that Yosys finds, also in an arm of
 `?:` that a constant condition never selects, RTL that Icarus cannot compile or stops on). NOT
 detected: an index computed from a signal or a variable (a loop index passed into a function
 too) that goes outside the range or a division by a signal that is 0, a constant that is x to a
@@ -930,11 +932,19 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        converts one (its warning: an assignment, also inside a function, a wire, a port). Then
        `_yosys_outside`: no select outside the range in Yosys's elaboration (its warning; Yosys
        sees one inside a function it inlines, also in an arm of `?:` that a constant condition
-       never selects). Then `equiv_tree.uncompared_local`: a localparam declared inside a
-       function whose value is not compared with the simulator's (round 23: Verilator leaves
-       out a function it only works out as a constant, so `localparam M = 1 << 32;` there gave
-       `wire [h(3):0] w` another width in Icarus than in the gates) must be one number as
-       written. Last, so that a more specific finding about the same code is named first.
+       never selects). Then `equiv_tree.narrow_argument`, on the tree before V3Param (round
+       25): no call of a design function with an argument narrower than the input, and no size
+       or type cast of a narrower value, where a part that reads no signal can carry, borrow or
+       flip high bits (`+ - * << ** ~`, unary minus) unless its value is proven the same at every
+       width: Yosys 0.62 works such a part out at the argument's own width, a simulator at the
+       input's (`clog2(LAST + 1'b1)` with a 4-bit `LAST = 15`: 16 in a simulator, 0 in the
+       gates); after the real and select findings, which name a fail-closed width more exactly
+       (`f(R + a)` with an infinite real `R`). Then `equiv_tree.uncompared_local`: a localparam
+       declared inside a function whose value is not compared with the simulator's (round 23:
+       Verilator leaves out a function it only works out as a constant, so `localparam M = 1 <<
+       32;` there gave `wire [h(3):0] w` another width in Icarus than in the gates) must be one
+       number as written. Last, so that a more specific finding about the same code is named
+       first.
     """
     cleaned = {fname: equiv_sv.clean(text) for fname, text in sources}
     folder = r.scratch / "func_tree"
@@ -1009,6 +1019,7 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         built = equiv_tree.built_values(values, simulated)
         lone = equiv_tree.simulator_only_values(values, simulated)
         constant = equiv_tree.constant_call(before, meta, list(cleaned), agreed, plain, built, lone)
+        narrow = equiv_tree.narrow_argument(before, meta, list(cleaned), agreed, shapes)
         local = equiv_tree.uncompared_local(before, meta, list(cleaned), values, simulated)
     except (ValueError, equiv_tree.TreeError, RecursionError) as exc:
         return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
@@ -1045,6 +1056,8 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         return refuse("guard_sim_synth_differ", real)
     if outside is not None:
         return refuse("guard_sim_synth_differ", outside)
+    if narrow is not None:
+        return refuse("guard_sim_synth_differ", f"{narrow.sentence}.")
     if local is not None:
         return refuse("guard_sim_synth_differ", f"{local.sentence}.")
     return None

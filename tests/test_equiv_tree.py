@@ -2270,6 +2270,9 @@ def test_a_function_local_counts_as_compared_only_when_verilator_lists_every_cop
     got = lone_local(shifted, verilator=one, simulator=both)
     assert got is not None and (got.name, got.line) == ("M", 6)
     assert "declares the localparam `M` inside the function `h`" in got.sentence
+    # whatever the order of the simulator's copies (round 25 C6: the copy Verilator leaves out
+    # first, fpname)
+    assert lone_local(shifted, verilator=one, simulator={M_KEY: both[M_KEY][::-1]}) is not None
     # every copy listed by Verilator, also in another order or with one more: compared
     assert lone_local(shifted, verilator=both, simulator=both) is None
     assert lone_local(shifted, verilator={M_KEY: both[M_KEY][::-1]}, simulator=both) is None
@@ -2472,3 +2475,310 @@ def test_a_loop_guard_alone_refuses_a_loop_over_a_vector_wide_enough(
     8-bit vector, which refuses them anyway)."""
     got = judged(f8(*stmts, extra=(V16, U4, S4L)), SEGS, WPAR)
     assert got is not None and got.name == "f"
+
+
+# -- an argument that Yosys works out at its own width (narrow_argument) -------------------------
+
+NL_KEY = ("core.v", 2, "LAST")
+CORE_PATH = ("tt_um_x", "core")
+
+
+def lparam(addr: str, name: str, line: int, dtype: dict[str, Any]) -> dict[str, Any]:
+    return var(addr, name, line, varType="LPARAM", isParam=True, childDTypep=[dtype])
+
+
+def fn(addr: str, name: str, ret: dict[str, Any], *ports: dict[str, Any]) -> dict[str, Any]:
+    """`function name(ports...)` with its return variable under `fvarp`, as Verilator links it."""
+    back = local(f"({name}_r)", name, ret, isFuncReturn=True, direction="OUTPUT")
+    return func(addr, name, 5, *ports) | {"fvarp": [back]}
+
+
+LAST = lparam("(NL)", "LAST", 2, basic(3))  # localparam [3:0] LAST, agreed 15
+SA = lparam("(NSA)", "SA", 2, basic(3, signed=True))  # localparam signed [3:0] SA = -8
+AMT = lparam("(NAM)", "AMT", 2, basic(3))  # a shift amount
+NS4 = var("(NS)", "s", 3, varType="VAR", childDTypep=[basic(3)])  # a 4-bit signal
+NS8 = var("(NW)", "w", 3, varType="VAR", childDTypep=[basic(7)])  # an 8-bit signal
+F_8 = fn("(NF)", "f", basic(7), arg("(NFA)", "a", basic(7)))  # f(input [7:0] a)
+F_2 = fn("(NG)", "g", basic(7), arg("(NGA)", "a", basic(7)), arg("(NGB)", "b", basic(3)))
+CLOG2 = fn("(NC)", "clog2", INTEGER, arg("(NCV)", "value", INTEGER))  # input integer
+SHAPES = {
+    NL_KEY: [(CORE_PATH, (4, False))],
+    ("core.v", 2, "SA"): [(CORE_PATH, (4, True))],
+    ("core.v", 2, "AMT"): [(CORE_PATH, (4, False))],
+}
+AGREED = {NL_KEY: 15, ("core.v", 2, "SA"): -8, ("core.v", 2, "AMT"): 3}
+
+
+def last() -> dict[str, Any]:
+    return ref(f"({next(_N)})", "(NL)", "LAST", 9)
+
+
+def nref(to: str, name: str) -> dict[str, Any]:
+    return ref(f"({next(_N)})", to, name, 9)
+
+
+def un(kind: str, a: dict[str, Any]) -> dict[str, Any]:
+    return {"type": kind, "lhsp": [a]}
+
+
+def s4() -> dict[str, Any]:
+    return nref("(NS)", "s")
+
+
+def w8() -> dict[str, Any]:
+    return nref("(NW)", "w")
+
+
+def carry() -> dict[str, Any]:
+    """`LAST + 4'd1`: 16 at 8 bits, 0 at 4."""
+    return ar("ADD", last(), num(1, "4'h"))
+
+
+def low_k(to: str) -> dict[str, Any]:
+    """`k[3:0] + 4'd15`."""
+    low = {"type": "SELEXTRACT", "fromp": [nref(to, "k")], "leftp": [num(3)], "rightp": [num(0)]}
+    return ar("ADD", low, num(15, "4'h"))
+
+
+def call_of(*args: dict[str, Any], to: str = "(NF)", name: str = "f", line: int = 9,
+            labels: tuple[str, ...] = ()) -> dict[str, Any]:  # fmt: skip
+    """`name(args...)` at `line` (`.label(arg)` for each of `labels`)."""
+    pairs = zip(labels, args[: len(labels)], strict=True)
+    named_args = [{"type": "ARG", "name": n, "exprp": [a]} for n, a in pairs]
+    plain = [{"type": "ARG", "exprp": [a]} for a in args[len(labels) :]]
+    return call(f"({next(_N)})", to, name, line) | {"argsp": named_args + plain}
+
+
+def narrow(
+    *kids: dict[str, Any],
+    agreed: dict[Any, int] | None = None,
+    shapes: dict[Any, Any] | None = None,
+) -> et.Unknown | None:
+    tree = module(LAST, SA, AMT, NS4, NS8, F_8, F_2, CLOG2, *kids)
+    return et.narrow_argument(
+        tree, META, OURS, AGREED if agreed is None else agreed, SHAPES if shapes is None else shapes
+    )
+
+
+def test_a_constant_argument_that_carries_past_its_own_width_is_refused() -> None:
+    """Round 25 (k07, k03): `localparam AW = clog2(LAST + 1'b1);` with `localparam [3:0] LAST =
+    4'd15` is 16 in a simulator and Verilator (the 32-bit input is the context) and 0 in Yosys
+    0.62, which works the constant argument out at its own 4 bits; `generate if (AW == 4)` took
+    the other branch in the gates."""
+    plus_one = ar("ADD", last(), num(1, "1'h"))
+    aw = lparam("(AW)", "AW", 9, UNTYPED)
+    got = narrow(aw | {"valuep": [call_of(plus_one, to="(NC)", name="clog2")]})
+    assert got is not None and (got.name, got.line) == ("clog2", 9)
+    narrower = "with an argument that is 4 bits wide, narrower than the function's input (32 bits)"
+    assert narrower in got.sentence
+    assert "A simulator works the argument out at the input's width, Yosys 0.62" in got.sentence
+    assert "Make the argument as wide as the input: use a plain number (`LAST + 1`" in got.sentence
+    assert "`localparam integer N = LAST + 1'b1;`, then `clog2(N)`)" in got.sentence
+    # anywhere: an assign, an override, an always block (any FUNCREF of the tree)
+    assert narrow(un("ASSIGNW", call_of(carry()))) is not None
+
+
+@pytest.mark.parametrize(
+    ("agreed", "shapes", "arg", "refused"),
+    [
+        # LAST = 14: 14 + 1 = 15 fits 4 bits, the same at every width
+        pytest.param({NL_KEY: 14}, None, None, False, id="no-carry"),
+        # localparam [4:0] LAST = 5'd15: 16 fits 5 bits
+        pytest.param(None, {NL_KEY: [(CORE_PATH, (5, False))]}, None, False, id="five-bits"),
+        # no agreed value of LAST: not proven
+        pytest.param({}, None, None, True, id="no-value"),
+        # LAST + 1 (unsized: 32 bits, as wide as the input)
+        pytest.param(None, None, ar("ADD", last(), num(1)), False, id="unsized"),
+        # {4'd0, LAST} + 8'd1 (Verilator writes `{1{...}}`): 16 fits 8 bits
+        pytest.param(None, None, ar("ADD", {"type": "REPLICATE", "srcp": [
+            ar("CONCAT", num(0, "4'h"), last())], "countp": [num(1)]}, num(1, "8'h")), False,
+            id="widened"),
+        # the narrowest width of a parameter with several: 4 bits in one instance
+        pytest.param({}, {NL_KEY: [(CORE_PATH, (32, False)), ((*CORE_PATH, "u"), (4, False))]},
+                     None, True, id="narrowest-instance"),
+        pytest.param({}, {NL_KEY: [(CORE_PATH, (32, False))]}, None, False, id="wide-instance"),
+    ],
+)  # fmt: skip
+def test_a_value_proven_the_same_at_every_width_or_a_wide_argument_passes(
+    agreed: dict[Any, int] | None, shapes: dict[Any, Any] | None, arg: dict[str, Any] | None,
+    refused: bool,
+) -> None:  # fmt: skip
+    """`clog2(LAST + 1'b1)` passes when no bit is cut at the argument's own width (a value that
+    both tools agree on, every result on the way below 2 ** width), or when the argument is
+    already as wide as the input; the narrowest instance of a parameter counts."""
+    expr = arg if arg is not None else ar("ADD", last(), num(1, "1'h"))
+    got = narrow(un("ASSIGNW", call_of(expr, to="(NC)", name="clog2")), agreed=agreed,
+                 shapes=shapes)  # fmt: skip
+    assert (got is not None) == refused
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pytest.param(un("NOT", last()), id="not"),  # ~4'hf is 0 in 4 bits, f0 in 8
+        pytest.param(un("NEGATE", last()), id="negate"),
+        pytest.param(ar("SHIFTL", last(), num(1)), id="shift-left"),
+        pytest.param(ar("MUL", last(), num(2, "4'h")), id="multiply"),
+        pytest.param(ar("SUB", num(0, "4'h"), num(1, "4'h")), id="borrow"),
+        pytest.param(ar("POW", last(), num(2, "2'h")), id="power"),
+        pytest.param(un("NOT", ar("XOR", last(), num(3, "4'h"))), id="xnor"),
+        pytest.param(ar("SHIFTR", nref("(NSA)", "SA"), num(1)), id="signed-shift-right"),
+        pytest.param(ar("DIV", nref("(NSA)", "SA"), num(0xF, "4'sh")), id="signed-divide"),
+        pytest.param(ar("ADD", num(7, "4'sh"), num(1, "4'sh")), id="signed-sign-bit"),
+        # `t'(LAST + 4'd1)` for a typedef `t`: a width the check does not know
+        pytest.param(un("CASTPARSE", ar("ADD", last(), num(1, "4'h"))) | {"dtp": [
+            {"type": "REFDTYPE"}], "loc": "e,9:7,9:8"}, id="cast"),
+        pytest.param(ar("SHIFTL", num(1, "4'h"), nref("(NAM)", "AMT")), id="shift-by-amount"),
+        # `4'd1 << $bits(s)`: `$bits` of a signal is a number, not a read of the signal
+        pytest.param(ar("SHIFTL", num(1, "4'h"), {"type": "ATTROF", "fromp": [s4()]}),
+                     id="shift-by-bits"),
+    ],
+)  # fmt: skip
+def test_an_operator_that_a_wider_width_can_change_is_refused(expr: dict[str, Any]) -> None:
+    """Probed in Icarus, Verilator and Yosys 0.62 (f with an 8-bit input): each differs in the
+    gates. A cast is a node the walk does not know (fail closed), and so is a typedef's width."""
+    agreed = AGREED | ({("core.v", 2, "AMT"): 4} if "AMT" in str(expr) else {})
+    got = narrow(un("ASSIGNW", call_of(expr)), agreed=agreed)
+    assert got is not None and got.name == "f"
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pytest.param(ar("AND", last(), num(3, "4'h")), id="and"),
+        pytest.param(ar("OR", last(), num(0, "4'h")), id="or"),
+        pytest.param(ar("SHIFTR", last(), num(1)), id="unsigned-shift-right"),
+        pytest.param(ar("SHIFTRS", nref("(NSA)", "SA"), num(1)), id="arithmetic-shift-right"),
+        pytest.param(ar("DIV", last(), num(2, "4'h")), id="unsigned-divide"),
+        pytest.param(un("NOT", nref("(NW)", "w")), id="not-of-a-signal"),
+        pytest.param(ar("CONCAT", ar("ADD", last(), num(1, "4'h")), nref("(NS)", "s")),
+                     id="self-determined-concatenation"),
+        pytest.param({"type": "COND", "condp": [ar("EQ", nref("(NW)", "w"), ar(
+            "ADD", last(), num(1, "4'h")))], "thenp": [num(1, "8'h")], "elsep": [num(2, "8'h")]},
+                     id="compare-in-a-condition"),
+        pytest.param(nref("(NSA)", "SA"), id="a-signed-parameter-alone"),
+        pytest.param(ar("ADD", num(7, "4'h"), num(1, "4'h")), id="unsigned-top-bit"),
+        pytest.param(ar("SHIFTL", num(1, "4'h"), nref("(NAM)", "AMT")), id="shift-by-3"),
+        # as wide as the input: the same carry in every tool, whatever the value
+        pytest.param(ar("ADD", num(0xFF, "8'h"), num(1, "8'h")), id="as-wide-as-the-input"),
+    ],
+)  # fmt: skip
+def test_an_operator_that_keeps_its_bits_or_a_value_that_fits_passes(expr: dict[str, Any]) -> None:
+    """Each gives the same bits in Icarus, Verilator and Yosys 0.62 (f with an 8-bit input)."""
+    assert narrow(un("ASSIGNW", call_of(expr))) is None
+
+
+def test_only_a_part_that_reads_no_signal_is_worked_out_at_the_argument_width() -> None:
+    """Round 25 (probes a5, a6, a8): Yosys works a part of the argument that reads no signal out
+    at the width of the whole argument: `f(s + (LAST + 4'd1))` with a 4-bit `s` loses the carry,
+    `f(w + (LAST + 4'd1))` with an 8-bit `w` (as wide as the input) does not, and neither does
+    `f((s + LAST) + 4'd1)`, whose parts that read no signal are plain numbers. The arms of `?:`
+    take the context, its condition does not."""
+    assert narrow(un("ASSIGNW", call_of(ar("ADD", s4(), carry())))) is not None
+    assert narrow(un("ASSIGNW", call_of(ar("OR", carry(), s4())))) is not None
+    arms = {"type": "COND", "condp": [s4()], "thenp": [num(0, "4'h")], "elsep": [carry()]}
+    assert narrow(un("ASSIGNW", call_of(arms))) is not None
+    assert narrow(un("ASSIGNW", call_of(ar("ADD", w8(), carry())))) is None
+    assert narrow(un("ASSIGNW", call_of(ar("ADD", ar("ADD", s4(), last()), num(1, "4'h"))))) is None
+    assert narrow(un("ASSIGNW", call_of(ar("ADD", s4(), num(1, "4'h"))))) is None
+    # another argument that reads a signal does not help (probe a4: f2(A + 4'd1, s))
+    assert narrow(un("ASSIGNW", call_of(carry(), s4(), to="(NG)", name="g"))) is not None
+    # a named argument is matched to its port: `.b` is 4 bits, so `LAST + 4'd1` fills it
+    to_b = call_of(carry(), w8(), to="(NG)", name="g", labels=("b", "a"))
+    assert narrow(un("ASSIGNW", to_b)) is None
+    to_a = call_of(carry(), w8(), to="(NG)", name="g", labels=("a", "b"))
+    assert narrow(un("ASSIGNW", to_a)) is not None
+
+
+def test_a_loop_variable_or_a_function_variable_counts_as_a_number() -> None:
+    """Round 25 (probes a2, a3d, a3f): Yosys puts a number in for the variable of a `for` loop it
+    unrolls (`f(k[3:0] + 4'd15)` in an always block or a function) and for the variables of a
+    function it works out with constant arguments (`f(x + 4'd1)` inside `g(4'd15)`), so these
+    count as numbers; any other signal keeps Yosys from working the part out first."""
+    flagged = var("(NK)", "k", 3, varType="VAR", childDTypep=[INTEGER], isUsedLoopIdx=True)
+    plain = var("(NK)", "k", 3, varType="VAR", childDTypep=[INTEGER])
+    assert narrow(flagged, un("ASSIGNW", call_of(low_k("(NK)")))) is not None
+    assert narrow(plain, un("ASSIGNW", call_of(low_k("(NK)")))) is None
+    # not marked, but set by the statement right before a LOOP (a `for` loop's first assignment)
+    start = assign(nref("(NK)", "k") | {"access": "WR"}, num(0))
+    loop = {"type": "LOOP", "stmtsp": [call_of(low_k("(NK)"))]}
+    assert narrow(plain, {"type": "ALWAYS", "stmtsp": [start, loop]}) is not None
+    # an argument of the function the call is in
+    x = arg("(NX)", "x", basic(3))
+    inside = fn("(NH)", "h", basic(7), x, call_of(ar("ADD", nref("(NX)", "x"), num(1, "4'h"))))
+    assert narrow(inside) is not None
+    assert narrow(fn("(NH)", "h", basic(7), x, call_of(nref("(NX)", "x")))) is None  # no operator
+
+
+def test_an_input_or_a_width_the_check_cannot_work_out_fails_closed() -> None:
+    """A call of a function the tree does not hold, an argument of a type the check cannot size:
+    refused when a part that reads no signal can carry, never for a plain one."""
+    assert narrow(un("ASSIGNW", call_of(carry(), to="(NOPE)"))) is not None
+    assert narrow(un("ASSIGNW", call_of(last(), to="(NOPE)"))) is None
+    typed = var("(NT)", "t", 3, varType="VAR", childDTypep=[{"type": "REFDTYPE"}])
+    assert narrow(typed, un("ASSIGNW", call_of(ar("ADD", nref("(NT)", "t"), carry())))) is not None
+    assert narrow(typed, un("ASSIGNW", call_of(ar("ADD", nref("(NT)", "t"), num(1))))) is None
+
+
+def cast_of(operand: dict[str, Any], size: dict[str, Any] | None = None,
+            to: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+    """`size'(operand)` (CASTPARSE), or `type'(operand)` (CAST) for a dtype `to`, at line 9."""
+    if to is not None:
+        return {"type": "CAST", "fromp": [operand], "childDTypep": [to], "loc": "e,9:5,9:8"}
+    return {"type": "CASTPARSE", "lhsp": [operand], "dtp": [size], "loc": "e,9:5,9:8"}
+
+
+def test_a_size_or_type_cast_of_a_constant_that_carries_is_refused_too() -> None:
+    """Round 25 (probes lp_widen, lp_int, sig_int): Yosys 0.62 works the operand of a cast out
+    the same way, at its own width first: `localparam integer P = 8'(LAST + 4'd1);` and
+    `assign y = int'(LAST + 4'd1);` are 16 in Icarus and Verilator and 0 in the gates."""
+    p = lparam("(NP)", "P", 9, INTEGER)
+    got = narrow(p | {"valuep": [cast_of(carry(), num(8))]})
+    assert got is not None and (got.name, got.line) == ("", 9)
+    assert "casts a value that is 4 bits wide, narrower than the cast (8 bits)" in got.sentence
+    assert "A simulator works the operand out at the cast's width" in got.sentence
+    assert "Make the operand as wide as the cast" in got.sentence
+    assert "then `8'(N)`)" in got.sentence
+    got = narrow(un("ASSIGNW", cast_of(carry(), to=INTEGER)))
+    assert got is not None and "narrower than the cast (32 bits)" in got.sentence
+    # `W'(...)`: the width of a parameter's agreed value (8, or 4: as wide as the operand)
+    assert narrow(un("ASSIGNW", cast_of(carry(), nref("(NAM)", "AMT"))),
+                  agreed=AGREED | {("core.v", 2, "AMT"): 8}) is not None  # fmt: skip
+    assert narrow(un("ASSIGNW", cast_of(carry(), nref("(NAM)", "AMT"))),
+                  agreed=AGREED | {("core.v", 2, "AMT"): 4}) is None  # fmt: skip
+    # `f(8'(LAST + 4'd1))`: the argument is as wide as the input, the cast is what differs;
+    # `4'(integer'(R))` cuts a 32-bit value (the realfin control): no carry is lost
+    got = narrow(un("ASSIGNW", call_of(cast_of(carry(), num(8)))))
+    assert got is not None and got.name == "" and "narrower than the cast (8 bits)" in got.sentence
+    assert narrow(un("ASSIGNW", cast_of(cast_of(last(), to=INTEGER), num(4)))) is None
+    assert narrow(un("ASSIGNW", call_of(cast_of(last(), num(8))))) is None  # f(8'(LAST)): 8 bits
+    # a typedef's width is not known: refused only when a part can carry
+    assert narrow(un("ASSIGNW", cast_of(carry(), {"type": "REFDTYPE"}))) is not None
+    assert narrow(un("ASSIGNW", cast_of(last(), {"type": "REFDTYPE"}))) is None
+
+
+@pytest.mark.parametrize(
+    "cast",
+    [
+        pytest.param(lambda: cast_of(last(), num(8)), id="a-parameter-alone"),  # 8'(LAST)
+        pytest.param(lambda: cast_of(ar("ADD", s4(), num(1, "4'h")), num(8)), id="a-signal"),
+        pytest.param(lambda: cast_of(ar("ADD", num(0xFF, "8'h"), num(1, "8'h")), num(4)),
+                     id="narrowing"),  # 4'(8'hff + 8'h01): every tool cuts the same 8 bits
+        pytest.param(lambda: cast_of(ar("ADD", last(), num(1, "4'h")), num(8)), id="no-carry"),
+    ],
+)  # fmt: skip
+def test_a_cast_that_every_tool_works_out_the_same_passes(cast: Any) -> None:
+    """Probed (lp_cast_plain, x_castsig, lp_narrow): the same bits in Icarus, Verilator and Yosys
+    0.62; with LAST = 14 the sum fits 4 bits."""
+    agreed = AGREED | {NL_KEY: 14}
+    assert narrow(un("ASSIGNW", cast()), agreed=agreed) is None
+
+
+def test_the_first_narrow_argument_by_file_order_then_line_and_only_in_our_files() -> None:
+    later, earlier = call_of(carry(), line=12), call_of(carry(), line=10)
+    got = narrow(un("ASSIGNW", later), un("ASSIGNW", earlier))
+    assert got is not None and got.line == 10
+    theirs = call_of(carry()) | {"loc": "d,9:5,9:8"}
+    assert narrow(un("ASSIGNW", theirs)) is None
+    with pytest.raises(et.TreeError):
+        et.narrow_argument([], META, OURS)

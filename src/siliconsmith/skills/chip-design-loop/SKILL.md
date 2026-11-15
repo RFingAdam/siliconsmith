@@ -121,6 +121,13 @@ Instead, compute such a call in an integer localparam first (`localparam integer
 A select outside the range that Yosys finds once it inlines a function or unrolls a loop (`pick(ui_in[3:0], 6)` reading bit 6 of a 4-bit argument) is refused as well. So is one in an arm of `?:` that a constant condition never selects (`(i == 7) ? 1'b0 : getbit(v, i + 1)` in a loop): guard it with an `if (i < 7)` instead.
 Keep a `localparam` inside a function one number as written (`localparam W = 8;`, `localparam [32:0] M = 33'h1_0000_0000;`): Verilator leaves out a function it only works out as a constant (`wire [h(3):0] w`), so such a local is not compared, and `1 << 32`, `8'hff + 8'h01` or `$bits(a)` there is refused. Move a computed one out of the function.
 
+## Narrow constant arguments
+
+A call whose argument is narrower than the function's input is refused, wherever it is (a localparam too), when a part of the argument that reads no signal (numbers, parameters, genvars, a `for` loop's variable, a function's own variables) holds `+`, `-`, `*`, `<<`, `**`, `~` or a unary minus that can carry past the argument's own width.
+A simulator works the argument out at the input's width, Yosys 0.62 such a part at the argument's width first: `clog2(LAST + 1'b1)` with `localparam [3:0] LAST = 4'd15` is 16 in the simulator and 0 in the gates, and a generate `if` on it takes another branch. The operand of a size or type cast that widens it is refused the same way (`8'(LAST + 1'b1)`, `int'(LAST + 1'b1)`).
+Write `clog2(LAST + 1)` (an unsized number makes the sum 32 bits), widen an operand (`{4'd0, LAST} + 8'd1` for an 8-bit input), or compute the value in a typed localparam first (`localparam integer N = LAST + 1'b1;`, then `clog2(N)`).
+A sum that fits (`LAST + 1'b1` with `LAST = 14`) passes, and so does `f(count + 4'd1)`: only the parts without a signal are worked out first.
+
 ## Indices a constant call may use
 
 Proven: an index from a simple `for` loop inside the range (`for (i = 0; i < 8; i++)` on 8 bits), one whose declared width fits (a 2-bit index into 4 bits) and constants or parameters with one value, also through `+ - *`, so a bit-reverse helper `rev(8'h81)` is fine. A constant select of one of these (`k[1:0]`) counts too, with the range of its width only, not its loop's (the divisor `i[7:0] + 8'd1` of an 8-bit divide is not proven nonzero).

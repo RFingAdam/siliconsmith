@@ -1517,6 +1517,459 @@ def valued_calls(tree: Any, meta: Any, ours: list[str]) -> frozenset[ParamKey]:
     return frozenset(found)
 
 
+# -- a constant part of an argument that Yosys works out at the argument's own width -----------
+
+# The operators whose operands take the width and sign of their context (IEEE 1800-2017 11.6.1,
+# 11.8.1): both operands, or only the left one (a shift amount and a `**` exponent are
+# self-determined, and so is the condition of `?:`, whose two arms take the context). `$signed`
+# and `$unsigned` pass it on here (fail closed: the simulators read their operand at its own
+# width).
+_CONTEXT_BOTH = frozenset(
+    {"ADD", "SUB", "MUL", "MULS", "DIV", "DIVS", "MODDIV", "MODDIVS", "AND", "OR", "XOR"}
+)
+_CONTEXT_LEFT = frozenset(
+    {"NOT", "NEGATE", "SHIFTL", "SHIFTR", "SHIFTRS", "SIGNED", "UNSIGNED", *_POWERS}
+)
+# The operators whose result can change when they work at a wider width: a carry or a borrow
+# (`+`, `-`, `*`, `<<`, `**`), the high bits of `~` and of a unary minus; `>>`, `/` and `%` only
+# in a signed context (a negative operand is extended with ones). `&`, `|`, `^`, `>>>`, `?:`,
+# `$signed` and `$unsigned` keep their bits whatever the extension.
+_WIDENS = frozenset({"ADD", "SUB", "MUL", "MULS", "NEGATE", "NOT", "SHIFTL", *_POWERS})
+_WIDENS_SIGNED = frozenset({"SHIFTR", "DIV", "DIVS", "MODDIV", "MODDIVS"})
+# Nodes whose operands are self-determined (their own width in every tool): one bit for a compare,
+# a logical operator or a reduction; the selects (`_is_select`), a concatenation, a replication,
+# `$bits` and the like (`ATTROF`), a call, a constant and a variable are the others.
+_ONE_BIT = frozenset(
+    {
+        "EQ", "NEQ", "LT", "LTE", "GT", "GTE", "EQCASE", "NEQCASE", "EQWILD", "NEQWILD", "LTS",
+        "LTES", "GTS", "GTES", "LOGAND", "LOGOR", "LOGNOT", "LOGIF", "LOGEQ", "REDAND", "REDOR",
+        "REDXOR",
+    }
+)  # fmt: skip
+_SELF_DETERMINED = _ONE_BIT | {"CONCAT", "REPLICATE", "ATTROF", "FUNCREF", "CONST", "VARREF"}
+_ANY_CONST = re.compile(r"^(?:\?(\d+)\?|(\d+)')(s?)[bodhBODH]")
+_MAX_SHIFT = 4096  # a constant shift amount or exponent past this is not proven (fail closed)
+
+Shape = tuple[int, bool | None]  # (width in bits, signed: True, False or None for not known)
+
+
+def _both_signed(signs: list[bool | None]) -> bool | None:
+    """The sign of an operator whose operands have `signs`: signed only if every one is."""
+    return False if False in signs else (None if None in signs else True)
+
+
+def _context_children(node: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """The operands of `node` that take its context, [] for a node whose operands are all
+    self-determined, or None for a node type this does not know."""
+    kind = str(node.get("type", ""))
+    keys: tuple[str, ...]
+    if kind in _CONTEXT_BOTH:
+        keys = ("lhsp", "rhsp")
+    elif kind in _CONTEXT_LEFT:
+        keys = ("lhsp",)
+    elif kind == "COND":
+        keys = ("thenp", "elsep")
+    elif kind in _SELF_DETERMINED or _is_select(kind):
+        return []
+    else:
+        return None
+    return [c for c in (_only(node, k) for k in keys) if c is not None]
+
+
+class _Widths:
+    """The self-determined width and sign of an expression in the tree before V3Param, and the
+    value of a constant one (`narrow_argument`). A parameter has the width and sign Verilator's
+    elaborated tree gives it (`shapes`, the narrowest of its instances), else those of its
+    declared type, and the one value both tools agree on (`known`); a genvar is a signed
+    integer; any other variable has its declared type. Anything else has no width (None)."""
+
+    def __init__(
+        self,
+        variables: dict[str, dict[str, Any]],
+        functions: dict[str, dict[str, Any]],
+        known: dict[str, int],
+        shapes: dict[str, list[tuple[int, bool]]],
+    ) -> None:
+        self.variables = variables
+        self.functions = functions
+        self.known = known
+        self.shapes = shapes
+        self.ranges = _Ranges(variables, known)
+
+    def declared(self, var: dict[str, Any] | None) -> Shape | None:
+        """The width and sign of a VAR's declared type: a plain vector or integer type."""
+        dtype = _only(var, "childDTypep") if var is not None else None
+        bounds = self.ranges._bounds(dtype) if dtype is not None else None
+        if dtype is None or bounds is None:
+            return None
+        return abs(bounds[0] - bounds[1]) + 1, dtype.get("signed") is True
+
+    def _variable(self, ref: dict[str, Any]) -> Shape | None:
+        addr = str(ref.get("varp"))
+        var = self.variables.get(addr)
+        if var is None:
+            return None
+        if var.get("varType") == "GENVAR":
+            return 32, True
+        held = self.shapes.get(addr)
+        if var.get("varType") in _PARAMETER_VALUES and held:
+            signs = {s for _, s in held}
+            return min(w for w, _ in held), signs.pop() if len(signs) == 1 else None
+        return self.declared(var)
+
+    def shape(self, node: dict[str, Any] | None) -> Shape | None:
+        """The self-determined width and sign of `node`, else None."""
+        if node is None:
+            return None
+        kind = str(node.get("type", ""))
+        if kind == "CONST":
+            match = _ANY_CONST.match(str(node.get("name", "")))
+            if match is None:
+                return None
+            return int(match.group(1) or match.group(2)), bool(match.group(3))
+        if kind == "VARREF":
+            return self._variable(node)
+        if kind in _ONE_BIT:
+            return 1, False
+        if kind == "ATTROF":
+            return 32, None  # `$bits` and the like: an integer (its sign differs between tools)
+        if kind == "FUNCREF":
+            func = self.functions.get(str(node.get("taskp")))
+            return self.declared(_only(func, "fvarp")) if func is not None else None
+        if kind == "CAST":  # `integer'(x)`: the type's width and sign
+            return self.declared(node)
+        if kind == "CASTPARSE":  # `4'(x)`: the size, and the sign of `x`
+            size, inner = self.amount(_only(node, "dtp")), self.shape(_only(node, "lhsp"))
+            return (size, inner[1] if inner is not None else None) if size else None
+        parts = _context_children(node)
+        if parts:
+            got = [self.shape(p) for p in parts]
+            if any(g is None for g in got):
+                return None
+            widths, signs = [g[0] for g in got if g], [g[1] for g in got if g]
+            if kind == "SIGNED":
+                return widths[0], True
+            if kind == "UNSIGNED":
+                return widths[0], False
+            if kind in _POWERS:
+                return widths[0], False if signs[0] is False else None
+            return max(widths), _both_signed(signs)
+        if kind == "CONCAT":
+            pieces = [self.shape(_only(node, k)) for k in ("lhsp", "rhsp")]
+            if any(p is None for p in pieces):
+                return None
+            return sum(p[0] for p in pieces if p), False
+        if kind == "REPLICATE":
+            count = self.ranges._exact(_only(node, "countp"))
+            inner = self.shape(_only(node, "srcp"))
+            return None if count is None or inner is None else (count * inner[0], False)
+        if kind == "SELBIT":
+            source = _only(node, "fromp")
+            var = self.variables.get(str(source.get("varp"))) if source is not None else None
+            dtype = _only(var, "childDTypep") if var is not None else None
+            plain = source is not None and source.get("type") == "VARREF"
+            return (1, False) if plain and dtype and dtype.get("type") == "BASICDTYPE" else None
+        if kind == "SELEXTRACT":
+            left = self.ranges._exact(_only(node, "leftp"))
+            right = self.ranges._exact(_only(node, "rightp"))
+            return None if left is None or right is None else (abs(left - right) + 1, False)
+        if kind in ("SELPLUS", "SELMINUS"):
+            width = self.ranges._exact(_only(node, "widthp"))
+            return (width, False) if width is not None and width >= 1 else None
+        return None
+
+    def whole(self, node: dict[str, Any] | None, limit: int) -> int | None:
+        """The value of a constant expression worked out on whole numbers, if every operand and
+        every result on the way is a plain number of 0 or more and below `limit` (so no width
+        from the argument's own up to any wider one changes a bit of it), else None."""
+        if node is None:
+            return None
+        kind = str(node.get("type", ""))
+        got: int | None = None
+        if kind == "CONST":
+            number = _number(node)
+            got = None if number is None or number[1] else number[0]
+        elif kind == "VARREF":
+            var = self.variables.get(str(node.get("varp")))
+            if var is not None and var.get("varType") in _PARAMETER_VALUES:
+                got = self.known.get(str(node.get("varp")))
+        elif kind in _CONTEXT_BOTH:
+            a, b = self.whole(_only(node, "lhsp"), limit), self.whole(_only(node, "rhsp"), limit)
+            if a is not None and b is not None:
+                got = _apply(kind, a, b)
+        elif kind in ("SHIFTL", "SHIFTR", "SHIFTRS", *_POWERS):
+            a, b = self.whole(_only(node, "lhsp"), limit), self.amount(_only(node, "rhsp"))
+            if a is not None and b is not None and b <= _MAX_SHIFT:
+                # a ** b is at least 2 ** ((bits of a - 1) * b): past the limit, not worked out
+                small = a <= 1 or (a.bit_length() - 1) * b < limit.bit_length()
+                got = (
+                    a << b if kind == "SHIFTL" else a >> b if kind.startswith("SHIFT") else
+                    (a**b if small else None)
+                )  # fmt: skip
+        elif kind in ("SIGNED", "UNSIGNED"):
+            got = self.whole(_only(node, "lhsp"), limit)
+        elif kind == "CONCAT":  # each piece at its own width, as every tool works it out
+            high, low = _only(node, "lhsp"), _only(node, "rhsp")
+            high_shape, low_shape = self.shape(high), self.shape(low)
+            if high_shape is not None and low_shape is not None:
+                top = self.whole(high, 1 << high_shape[0])
+                bottom = self.whole(low, 1 << low_shape[0])
+                if top is not None and bottom is not None:
+                    got = top << low_shape[0] | bottom
+        elif kind == "REPLICATE":  # `{n{x}}`; Verilator writes a concatenation as `{1{...}}`
+            source = _only(node, "srcp")
+            count, inner = self.ranges._exact(_only(node, "countp")), self.shape(source)
+            if count is not None and inner is not None and 1 <= count * inner[0] <= _MAX_SHIFT:
+                piece = self.whole(source, 1 << inner[0])
+                if piece is not None:
+                    got = sum(piece << (inner[0] * i) for i in range(count))
+        return got if got is not None and 0 <= got < limit else None
+
+    def amount(self, node: dict[str, Any] | None) -> int | None:
+        """The value of a self-determined constant (a shift amount, an exponent) that is a
+        plain number of 0 or more and fits its own width and sign."""
+        shape = self.shape(node)
+        if shape is None or shape[0] < 1:
+            return None
+        return self.whole(node, 1 << (shape[0] - (0 if shape[1] is False else 1)))
+
+
+def _apply(kind: str, a: int, b: int) -> int | None:
+    """`a <op> b` on whole numbers for an operator of `_CONTEXT_BOTH` (None: a divide by 0)."""
+    if kind == "ADD":
+        return a + b
+    if kind == "SUB":
+        return a - b
+    if kind in ("MUL", "MULS"):
+        return a * b
+    if kind == "AND":
+        return a & b
+    if kind == "OR":
+        return a | b
+    if kind == "XOR":
+        return a ^ b
+    if b == 0:
+        return None
+    return a // b if kind in ("DIV", "DIVS") else a % b
+
+
+def _loop_variables(nodes: list[dict[str, Any]], variables: dict[str, Any]) -> frozenset[str]:
+    """The `addr` of every VAR that a `for` loop steps: marked as a loop index
+    (`isUsedLoopIdx`), or written by the statement right before a LOOP (its first assignment).
+    Yosys puts a number in for it in each pass of a loop it unrolls."""
+    found = {addr for addr, var in variables.items() if var.get("isUsedLoopIdx") is True}
+    for parent in nodes:
+        for items in parent.values():
+            if not isinstance(items, list):
+                continue
+            for before, loop in itertools.pairwise(items):
+                if isinstance(before, dict) and isinstance(loop, dict) and _is_loop(loop):
+                    found.update(
+                        str(n.get("varp"))
+                        for n in _subtree(before)
+                        if n.get("type") == "VARREF" and n.get("access") != "RD"
+                    )
+    return frozenset(found)
+
+
+def narrow_argument(
+    tree: Any,
+    meta: Any,
+    ours: list[str],
+    agreed: dict[ParamKey, int] | None = None,
+    shapes: ParamShapes | None = None,
+) -> Unknown | None:
+    """The first call (by file order, line, column) of one of the design's functions with an
+    argument that Yosys 0.62 can work out to another value than a simulator, or such a size or
+    type cast (`8'(x)`, `int'(x)`: its operand counts as an argument, the cast's width as the
+    input's, unknown for a typedef), else None. `tree`
+    is Verilator's tree BEFORE V3Param (the `linkinc` stage), where every call is still there as
+    written; `agreed` are the values of `agreed_values`, `shapes` those of `parameter_shapes`.
+
+    Round 25: an argument takes the width of the function's input when that is wider (IEEE
+    1800-2017 13.5, an assignment), so a simulator and Verilator work `clog2(LAST + 1'b1)` out
+    at 32 bits: 16 for `localparam [3:0] LAST = 4'd15`. Yosys 0.62 first works each part of an
+    argument that reads no signal out at the width of the whole argument, here 4 bits: 0. A
+    generate `if (AW == 4)` then took another branch in the gates (also a shift amount, and a
+    divide that became x), in a localparam value, an override, an assign, an always block and
+    the loop of a function (a call inside a function it works out reads that function's own
+    variables as numbers, and so does a call in a loop it unrolls: `f(k[3:0] + 4'd15)`). It does
+    the same with the operand of a cast that widens: `localparam integer P = 8'(LAST + 4'd1);`
+    and `assign y = int'(LAST + 4'd1);` are 16 in Icarus and Verilator, 0 in the gates.
+
+    So a call is refused when, for some argument, (1) its own width is narrower than the
+    input's, or one of the two is not known (`_Widths.shape`, the input's declared type), and
+    (2) a part of it in the argument's context (`_context_children`: not inside a select, a
+    concatenation, a compare or a call) reads no signal: only numbers, parameters, genvars,
+    the loop variables of `for` loops (`_loop_variables`) and the variables of functions
+    (`_function_locals`), with `$bits` and the like (`ATTROF`) counting as a number; and (3)
+    that part holds, in its own context, an operator whose result changes at a wider width
+    (`_WIDENS`: `+`, `-`, `*`, `<<`, `**`, `~`, unary minus; `>>`, `/` and `%` unless the
+    argument is unsigned) or a node this does not know (a cast too), unless (4) its value is
+    proven the same at every width from the argument's up (`_Widths.whole`: every operand and
+    result on the way a plain number of 0 or more, below 2 ** width, or 2 ** (width - 1) unless
+    the argument is unsigned, so nothing is cut and no sign bit is set).
+
+    Why this is sound. Where (1) fails, the argument is at least as wide as the input, so its
+    context is its own width in every tool. A part of it that reads a signal is not worked out
+    first, and the operators that pass the context down pass it to their operands only (a
+    select, a concatenation, a compare and a call have self-determined operands, worked out the
+    same in every tool), so only the parts of (2) can differ, and the walk stops at each one: a
+    signal inside it would keep Yosys from working it out first, which cannot make a difference
+    either. Inside such a part, `&`, `|`, `^`, `>>>`, `?:` and a select keep the bits of their
+    operands whatever the width and the extension, and `>>`, `/`, `%` too when the argument is
+    unsigned (every operand is extended with zeros); every other operator is in (3). Where (4)
+    holds, every value on the way is the same whole number at any width from the argument's up
+    and its top bit is 0, so a sign or a zero extension of the result gives the same bits."""
+    if not isinstance(tree, dict):
+        raise TreeError("the tree is not an object")
+    files = _file_letters(meta)
+    keys = _keys(tree, files, ours)
+    agreed = agreed or {}
+    shapes = shapes or {}
+    nodes = list(_subtree(tree))
+    variables = {str(n["addr"]): n for n in nodes if n.get("type") == "VAR" and "addr" in n}
+    functions = {str(n["addr"]): n for n in nodes if n.get("type") == "FUNC" and "addr" in n}
+    known = {addr: agreed[key] for addr, key in keys.items() if key in agreed}
+    held: dict[str, list[tuple[int, bool]]] = {}
+    for addr, key in keys.items():
+        values = shapes.get(key)
+        if values:
+            held[addr] = [s for _, s in values]
+    widths = _Widths(variables, functions, known, held)
+    constant = _function_locals(tree) | _loop_variables(nodes, variables)
+
+    def folds(root: dict[str, Any]) -> bool:
+        """True if `root` reads no signal: Yosys can work it out to a number first. A signal is
+        a VAR that is no parameter or genvar, no function's variable and no loop variable; a
+        name that resolves to no VAR (a PARSEREF, a hierarchical name) is no signal (fail
+        closed)."""
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.get("type") == "ATTROF":
+                continue  # the size of a variable, not its value
+            if node.get("type") == "VARREF":
+                addr = str(node.get("varp"))
+                var = variables.get(addr)
+                kind = var.get("varType") if var is not None else None
+                if var is not None and kind not in PARAM_TYPES and addr not in constant:
+                    return False
+            stack.extend(_children(node))
+        return True
+
+    def widens(root: dict[str, Any], signed: bool | None) -> bool:
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            kind = str(node.get("type", ""))
+            if kind in _WIDENS or (kind in _WIDENS_SIGNED and signed is not False):
+                return True
+            inner = _context_children(node)
+            if inner is None:
+                return True  # a node this does not know: a cast, a `$clog2`, ...
+            stack.extend(inner)
+        return False
+
+    def differs(expr: dict[str, Any], own: Shape | None) -> bool:
+        signed = own[1] if own is not None else None
+        stack = [expr]
+        while stack:
+            node = stack.pop()
+            if folds(node):
+                if not widens(node, signed):
+                    continue
+                if own is None or own[0] < 1:
+                    return True
+                limit = 1 << (own[0] - (0 if signed is False else 1))
+                if widths.whole(node, limit) is None:
+                    return True
+                continue
+            inner = _context_children(node)
+            stack.extend(inner if inner is not None else _children(node))
+        return False
+
+    def operands(node: dict[str, Any]) -> list[tuple[dict[str, Any] | None, Shape | None]]:
+        """Each argument of a call of the design's functions with the shape of its input, or the
+        operand of a size or type cast with the cast's (its width only), else []."""
+        kind = node.get("type")
+        if kind == "CASTPARSE":  # `8'(x)`, `W'(x)`, `t'(x)` for a typedef `t`
+            size = widths.amount(_only(node, "dtp"))  # None for a typedef: fail closed
+            return [(_only(node, "lhsp"), (size, None) if size else None)]
+        if kind == "CAST":  # `int'(x)`, `logic [7:0]'(x)`
+            return [(_only(node, "fromp"), widths.declared(node))]
+        if kind != "FUNCREF":
+            return []
+        func = functions.get(str(node.get("taskp")))
+        body = (func.get("stmtsp") or []) if func is not None else []
+        ports = [
+            n
+            for n in body
+            if isinstance(n, dict)
+            and n.get("type") == "VAR"
+            and n.get("direction") not in (None, "NONE")
+        ]
+        got = []
+        arguments = [a for a in node.get("argsp") or [] if isinstance(a, dict)]
+        for index, argument in enumerate(arguments):
+            label = str(argument.get("name") or "")
+            if label:  # `.a(...)`
+                port = next((p for p in ports if p.get("name") == label), None)
+            else:
+                port = ports[index] if index < len(ports) else None
+            got.append((_only(argument, "exprp"), widths.declared(port)))
+        return got
+
+    found: list[tuple[int, int, int, str, str, int | None, int | None]] = []
+    for node in nodes:
+        for expr, need in operands(node):
+            if expr is None:
+                continue
+            own = widths.shape(expr)
+            if need is not None and own is not None and own[0] >= need[0]:
+                continue
+            if differs(expr, own):
+                file, line, col = _place(node, files)
+                if file in ours:
+                    name = str(node.get("name", "")) if node.get("type") == "FUNCREF" else ""
+                    mine = own[0] if own is not None else None
+                    theirs = need[0] if need is not None else None
+                    found.append((ours.index(file), line, col, name, file, mine, theirs))
+                break
+    if not found:
+        return None
+    _, line, _, name, file, mine, theirs = min(found, key=lambda at: at[:4])
+    if name:
+        what = f"calls the function `{name}` with an argument that"
+        noun, target, into = "argument", "input", "the function's input"
+        example, then = "`clog2(LAST + 1'b1)`", "`clog2(N)`"
+    else:
+        what = "casts a value that"
+        noun, target, into = "operand", "cast", "the cast"
+        example, then = "`8'(LAST + 1'b1)` (also `int'(...)`)", "`8'(N)`"
+    if mine is not None and theirs is not None:
+        widths_text = f"is {mine} bits wide, narrower than {into} ({theirs} bits)"
+    else:
+        widths_text = f"has a width that the check cannot work out or compare with the {target}'s"
+    return Unknown(
+        name,
+        file,
+        line,
+        f"the RTL ({file}, line {line}) {what} {widths_text}, and a part of it that reads no "
+        "signal (numbers, parameters, genvars, a `for` loop's variable or a function's own "
+        "variables) holds `+`, `-`, `*`, `<<`, `**`, `~`, a unary minus or a cast whose value "
+        f"the check cannot prove the same at every width. A simulator works the {noun} out at "
+        f"the {target}'s width, Yosys 0.62 works such a part out at the {noun}'s own width "
+        "first, so a carry, a borrow or the high bits of `~` can be lost in the gates "
+        f"({example} with `localparam [3:0] LAST = 4'd15` is 16 in a simulator and 0 in the "
+        "gates, and a generate `if` on it takes another branch), and the check cannot vouch "
+        f"for the design. Make the {noun} as wide as the {target}: use a plain number "
+        "(`LAST + 1` is 32 bits) or widen an operand (`{4'd0, LAST} + 8'd1` for 8 bits), or "
+        "compute the value in a localparam with a type first (`localparam integer N = LAST + "
+        f"1'b1;`, then {then})",
+    )
+
+
 # The types a function's local parameter may have when its value is not compared
 # (`uncompared_local`): integer and bit vectors (`LOGIC_IMPLICIT` is an untyped one).
 _LOCAL_TYPES = frozenset({"LOGIC_IMPLICIT", "logic", "reg", "integer"})
