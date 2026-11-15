@@ -651,9 +651,9 @@ of 0 or more, or a call of one of your functions in the condition of a generate 
 arguments anywhere but in the value of a parameter or localparam (its range or type is not its \
 value) when the function reads a vector at a computed index that the check cannot prove inside \
 the declared range, or divides by a value it cannot prove nonzero, or when such a proven function \
-gets an argument that can be x (an x or z bit, a divide, another call, or a real: a literal such \
-as 1.0e999, a real or untyped parameter holding one, $sqrt(-1), a cast such as integer'(R); a \
-simulator converts an infinite or NaN real to an all-x integer) (proven: an index from a simple \
+gets an argument that can be x (an x or z bit, a divide, another call, any cast, also a size \
+cast such as 3'(N) (write N[2:0] instead), or a real: a literal such as 1.0e999, a real or \
+untyped parameter holding one, $sqrt(-1); a simulator converts an infinite or NaN real to an all-x integer) (proven: an index from a simple \
 for loop inside the range, an input argument whose declared width fits, constants and parameters \
 with one value and constant selects of these (k[1:0]), also through + - *, so rev(8'h81) with \
 for (i = 0; i < 8; i++) is fine; not proven: a 3-bit index into 4 bits, a loop to i <= 8 over 8 \
