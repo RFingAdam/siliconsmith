@@ -3089,3 +3089,33 @@ def test_a_recheck_that_fails_is_an_error_and_ends_the_check(tmp_path: Path) -> 
         "kind_x_check",
     ]
     assert got["message"].startswith("Could not run the check from reset")
+
+
+def test_the_narrow_argument_rule_gets_only_the_values_both_tools_list_and_its_refusal_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 27 (mutations E01 to E04 survived): `equiv_tree.narrow_argument` judges a parameter
+    with each of its values only when the simulator lists them too (they were compared instance
+    by instance); a value only Verilator lists, or only the simulator, is not used one by one,
+    and its refusal is the verdict."""
+    both, verilator_only, simulator_only = (
+        ("chip.v", 2, "A"),
+        ("chip.v", 3, "B"),
+        ("chip.v", 4, "C"),
+    )
+    u0, u1 = ("tt_um_chip", "u0"), ("tt_um_chip", "u1")
+    values = {both: [(u0, 14), (u1, 13)], verilator_only: [(u0, 1), (u1, 2)]}
+    simulated = {both: [(u0, 14), (u1, 13)], simulator_only: [(u0, 5), (u1, 6)]}
+    monkeypatch.setattr(equiv.equiv_tree, "parameter_values", lambda tree, meta, ours: values)
+    monkeypatch.setattr(equiv, "_icarus_checks", lambda *args: (None, simulated))
+    seen: list[Any] = []
+
+    def narrow(*args: Any) -> Any:
+        seen.append(args[5:])
+        return equiv.equiv_tree.Unknown("f", "chip.v", 12, "the RTL (chip.v, line 12) is narrow")
+
+    monkeypatch.setattr(equiv.equiv_tree, "narrow_argument", narrow)
+    fake = fake_elab("module \\tt_um_chip\nend\n")
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, fake=fake)
+    assert seen == [({both: values[both]},)]
+    assert got == ("guard_sim_synth_differ", "the RTL (chip.v, line 12) is narrow."), got

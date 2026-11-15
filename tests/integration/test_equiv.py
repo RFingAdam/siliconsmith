@@ -794,6 +794,9 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # enumarg (enum items as function arguments), multiw (a module used twice whose function's input
 # width and argument TOP - 1'b1 depend on the copy's W) and multicast (AW'(DEPTH - 1) in a module
 # used with two depths).
+# Round 27 (both refused at 6da0a89 as a width the check could not work out): enumcast
+# (dec(mode_t'(ui_in[1:0])), a cast to a 2-bit enum) and clogrange (rotl(ui_in, i + 1) with
+# `input [$clog2(N)-1:0] n`).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -843,6 +846,8 @@ EQUIVALENT = [
     "enumarg",
     "multiw",
     "multicast",
+    "enumcast",
+    "clogrange",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
@@ -967,6 +972,17 @@ REFUSAL_ADVICE = {
     "`-`, whose value",
     "loopst": "(loopst.v, line 25) calls the function `f` with an argument that is 4 bits wide, "
     "narrower than the function's input (8 bits)",
+    # Round 27 (genst and typeparam equivalent at 6da0a89, with Icarus RTL and gates differing):
+    # a generate loop whose genvar starts from a 4-bit localparam (Yosys 0.62 makes the genvar
+    # and a localparam made from it 4 bits wide), a localparam of a typedef type whose value
+    # Yosys 0.62 works out at its own 4 bits; and enumbad, a carry into a wider enum cast
+    # (refused at 6da0a89 as a width the check could not work out, now for the carry)
+    "genst": "(genst.v, line 23) starts a generate `for` loop of the genvar `g` from a value that "
+    "is 4 bits wide",
+    "typeparam": "(typeparam.v, line 18) gives the parameter `K`, whose type is a typedef, a "
+    "value that is 4 bits wide, narrower than its type (8 bits)",
+    "enumbad": "(enumbad.v, line 19) casts a value that is 2 bits wide, narrower than the cast "
+    "(3 bits)",
 }
 
 

@@ -2815,8 +2815,12 @@ def test_clog2_an_enum_item_or_an_unlinked_name_as_an_argument_passes() -> None:
     got = narrow(un("ASSIGNW", call_of(ar("ADD", item, num(1, "2'h")))))
     assert got is not None and "has a width that the check cannot work out" in got.sentence
     assert "holds `+`, whose value the check cannot prove" in got.sentence
-    assert narrow(F_64, un("ASSIGNW", call_of(ar("ADD", clog2_of(last()), num(1)), to="(NF64)"))
-                  ) is not None  # fmt: skip
+    # round 27: `$clog2(LAST) + 1` is 5 at 32 bits and at 64, its operand at its own width;
+    # `$clog2(LAST + 4'd1) + 1` has an operand that carries at its own width: not worked out
+    clog_plus = call_of(ar("ADD", clog2_of(last()), num(1)), to="(NF64)")
+    assert narrow(F_64, un("ASSIGNW", clog_plus)) is None
+    unknown_plus = call_of(ar("ADD", clog2_of(carry()), num(1)), to="(NF64)")
+    assert narrow(F_64, un("ASSIGNW", unknown_plus)) is not None
 
 
 def test_a_signed_operand_whose_top_bit_is_set_is_not_a_whole_number() -> None:
@@ -3045,3 +3049,194 @@ def test_a_signed_function_variable_and_the_port_order() -> None:
              arg("(NG3B)", "b", basic(3)))  # fmt: skip
     g3 = fn("(NG3)", "g3", basic(7), *ports)
     assert narrow(g3, un("ASSIGNW", call_of(s4(), carry(), to="(NG3)", name="g3"))) is None
+
+
+# -- Round 27 ------------------------------------------------------------------------------------
+
+
+def typedef(addr: str, name: str, dtype: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "TYPEDEF", "addr": addr, "name": name, "childDTypep": [dtype]}
+
+
+def to(addr: str) -> dict[str, Any]:
+    """A reference to the typedef at `addr` (`t` in `t'(x)` or `localparam t K`)."""
+    return {"type": "REFDTYPE", "typedefp": addr}
+
+
+def enum(base: dict[str, Any] | None) -> dict[str, Any]:
+    return {"type": "ENUMDTYPE", "childDTypep": [base] if base is not None else []}
+
+
+BYTE_T = typedef("(NTB)", "byte_t", basic(7))  # typedef logic [7:0] byte_t
+MODE_T = typedef("(NTM)", "mode_t", enum(basic(1)))  # typedef enum logic [1:0] {...} mode_t
+WIDE_T = typedef("(NTW)", "wide_t", enum(basic(4)))  # a 5-bit enum
+S4_T = typedef("(NTS)", "s4_t", basic(3, signed=True))  # typedef logic signed [3:0] s4_t
+NIB_T = typedef("(NTN)", "nib_t", basic(3))  # typedef logic [3:0] nib_t
+
+
+def gen_for(start: dict[str, Any], step: dict[str, Any] | None = None, *,
+            declared: bool = False, where: str = "e") -> dict[str, Any]:  # fmt: skip
+    """`for (g = start; g < 8; g = step)` at line 9 as Verilator links a GENFOR (`g + 1` for
+    no `step`; `declared`: a `genvar g` declaration in its first part)."""
+    first = [assign(nref("(NGV)", "g") | {"access": "WR"}, start)]
+    if declared:
+        first.insert(0, GV)
+    bump = step if step is not None else ar("ADD", nref("(NGV)", "g"), num(1))
+    return {
+        "type": "GENFOR", "loc": f"{where},9:3,9:6", "initsp": first,
+        "condp": [ar("LT", nref("(NGV)", "g"), num(8))],
+        "incsp": [assign(nref("(NGV)", "g") | {"access": "WR"}, bump)], "itemsp": [],
+    }  # fmt: skip
+
+
+def test_a_generate_loop_that_starts_or_steps_narrower_than_32_bits_is_refused() -> None:
+    """Round 27 (g04, a02, a06, a08, b08): Yosys 0.62 makes a genvar as wide as its start value,
+    so `for (g = FIRST; g < 8; g = g + 1)` with `localparam [3:0] FIRST = 4'd7` made `f(g +
+    4'd9)` f(0) in the gates and f(16) in Icarus, and so did `localparam Q = g;` and `.P(g)`
+    made from it (equivalent at 6da0a89). A start or a step narrower than 32 bits, or one the
+    check cannot size or read, is refused; one of 32 bits passes."""
+    got = narrow(GV, gen_for(last()))
+    assert got is not None and (got.name, got.file, got.line) == ("g", "core.v", 9)
+    assert "starts a generate `for` loop of the genvar `g` from a value that is 4 bits wide" in (
+        got.sentence
+    )
+    assert "Yosys 0.62 makes it only as wide as the loop's start value" in got.sentence
+    assert "Start and step a generate loop with unsized numbers or integer localparams" in (
+        got.sentence
+    )
+    assert narrow(GV, gen_for(num(15, "4'h"))) is not None  # a01: 4'd15, extended by its sign
+    assert narrow(GV, gen_for(num(7, "31'h"))) is not None  # one bit short
+    # 32 bits: an unsized number, a sum with one, an integer localparam, `genvar g` declared there
+    first = lparam("(NFI)", "FIRST", 2, INTEGER)
+    assert narrow(GV, gen_for(num(7))) is None
+    assert narrow(GV, gen_for(ar("SUB", last(), num(1)))) is None
+    assert narrow(GV, first, gen_for(nref("(NFI)", "FIRST"))) is None
+    assert narrow(gen_for(num(0), declared=True)) is None
+    # a 4-bit step, a start the check cannot size, a first part that is no plain assignment
+    got = narrow(GV, gen_for(num(0), num(1, "4'h")))
+    step = "steps a generate `for` loop of the genvar `g` with a value that is 4 bits wide"
+    assert got is not None and step in got.sentence
+    got = narrow(GV, gen_for({"type": "WEIRD"}))
+    assert got is not None and "from a value whose width the check cannot work out" in got.sentence
+    odd = gen_for(num(0)) | {"initsp": [{"type": "ASSIGNDLY", "lhsp": [nref("(NGV)", "g")],
+                                         "rhsp": [num(0)]}]}  # fmt: skip
+    assert narrow(GV, odd) is not None
+    # a loop of another file is not judged
+    assert narrow(GV, gen_for(last(), where="d")) is None
+
+
+def test_a_parameter_of_a_typedef_type_is_judged_as_a_cast_of_its_value() -> None:
+    """Round 27 (f08, f17, f19, f23, f25, f40): Yosys 0.62 works `localparam byte_t K = LAST +
+    4'd1;` out at the value's own 4 bits (0; 16 in Icarus and Verilator, so the parameter
+    comparison cannot see it), though it keeps `localparam [7:0] K` and `localparam int K`
+    right (f20, probes t01 to t05). Its value is judged as the operand of a cast to its type."""
+    k = lparam("(NK8)", "K", 9, to("(NTB)"))
+    got = narrow(BYTE_T, k | {"valuep": [carry()]})
+    assert got is not None and (got.name, got.line) == ("K", 9)
+    assert "gives the parameter `K`, whose type is a typedef, a value that is 4 bits wide, " in (
+        got.sentence
+    )
+    assert "narrower than its type (8 bits)" in got.sentence and "holds `+`" in got.sentence
+    assert "give the parameter a plain type (`localparam [7:0] K = LAST + 4'd1;`)" in got.sentence
+    assert narrow(BYTE_T, k | {"varType": "GPARAM", "valuep": [carry()]}) is not None  # f40
+    # a packed array of a typedef, and a typedef the tree does not hold: no width (fail closed)
+    packed = {"type": "PACKARRAYDTYPE", "childDTypep": [to("(NTB)")]}
+    assert narrow(BYTE_T, k | {"childDTypep": [packed], "valuep": [carry()]}) is not None
+    assert narrow(k | {"valuep": [carry()]}) is not None
+    # passes: a value that fits, one as wide as the type, a plain type, an enum item, no value
+    assert narrow(BYTE_T, k | {"valuep": [carry()]}, agreed=AGREED | {NL_KEY: 14}) is None
+    assert narrow(BYTE_T, k | {"valuep": [ar("ADD", num(15, "8'h"), num(1, "8'h"))]}) is None
+    assert narrow(lparam("(NK8)", "K", 9, basic(7)) | {"valuep": [carry()]}) is None  # f20
+    item = {"type": "ENUMITEMREF", "name": "FAST", "itemp": "(NEI)"}
+    assert narrow(MODE_T, lparam("(NKM)", "M", 9, to("(NTM)")) | {"valuep": [item]}) is None
+    assert narrow(BYTE_T, k) is None
+
+
+def test_an_enum_has_the_width_and_sign_of_its_base_type() -> None:
+    """Round 27 (w49, w15b, w14b, w39, w26b; x02enumbad the control): `dec(mode_t'(ui_in[1:0]))`
+    with a 2-bit enum and `input [1:0] m` was refused as a width the check cannot work out (a
+    `REFDTYPE` node); an enum has its base type's width and sign (IEEE 1800-2017 6.19)."""
+    dec = fn("(NDE)", "dec", basic(3), arg("(NDEM)", "m", basic(1)))
+    low = {"type": "SELEXTRACT", "fromp": [w8()], "leftp": [num(1)], "rightp": [num(0)]}
+    call = call_of(cast_of(low, to("(NTM)")), to="(NDE)", name="dec")
+    assert narrow(MODE_T, dec, un("ASSIGNW", call)) is None
+    # an input of the enum type given a narrower sum, a cast to a wider enum (x02enumbad)
+    code = fn("(NCO)", "code", basic(7), arg("(NCOS)", "s", to("(NTW)")))
+    got = narrow(WIDE_T, code, un("ASSIGNW", call_of(carry(), to="(NCO)", name="code")))
+    assert got is not None and "4 bits wide, narrower than the function's input (5 bits)" in (
+        got.sentence
+    )
+    got = narrow(WIDE_T, un("ASSIGNW", cast_of(carry(), to("(NTW)"))))
+    wider = "casts a value that is 4 bits wide, narrower than the cast (5 bits)"
+    assert got is not None and wider in got.sentence
+    # an enum without a base type the tree shows has no width (fail closed)
+    no_base = typedef("(NTX)", "x_t", enum(None))
+    assert narrow(no_base, un("ASSIGNW", cast_of(carry(), to("(NTX)")))) is not None
+
+
+def test_the_type_of_a_cast_is_no_part_of_the_value_and_a_typedef_cast_has_its_sign() -> None:
+    """Round 27 (b02, b04, b05): `f(nib_t'(ui_in[7:4]))` was refused for its `REFDTYPE` node, a
+    type and no value. `f(s4_t'(s) + (4'sb1000 >> 1))` with a signed `s4_t` and a signed 8-bit
+    input is signed: `>>` of 4'sb1000 is 0x7c at 8 bits and 0x04 at 4 (Icarus 7b, gates 13), so
+    it must still be refused, now for `>>`: the cast has the typedef's sign, not its operand's."""
+    assert narrow(NIB_T, un("ASSIGNW", call_of(cast_of(s4(), to("(NTN)"))))) is None
+    assert narrow(F_64, un("ASSIGNW", call_of(cast_of(w8(), to=INTEGER), to="(NF64)"))) is None
+    signed_f = fn("(NSF)", "sf", basic(7), arg("(NSFA)", "a", basic(7, signed=True)))
+    half = ar("SHIFTR", num(8, "4'sh"), num(1))
+    arg_ = ar("ADD", cast_of(s4(), to("(NTS)")), half)
+    got = narrow(S4_T, signed_f, un("ASSIGNW", call_of(arg_, to="(NSF)", name="sf")))
+    assert got is not None and "holds `>>` on a value that can be signed" in got.sentence, got
+    # an unsigned typedef of the same width: `>>` keeps its bits
+    arg_ = ar("ADD", cast_of(s4(), to("(NTN)")), half)
+    assert narrow(NIB_T, signed_f, un("ASSIGNW", call_of(arg_, to="(NSF)", name="sf"))) is None
+
+
+def test_a_range_bound_is_worked_out_at_its_own_width() -> None:
+    """Round 27 (w05, w07, w46, w48, w51; x01clogbad the control): `rotl(ui_in, i + 1)` with
+    `input [$clog2(N)-1:0] n` and `localparam N = 8` was refused because the check could not work
+    out `$clog2(N) - 1`; each bound is now worked out at its own width, as every tool does."""
+    n_key = ("core.v", 2, "N")
+    n = lparam("(NN)", "N", 2, UNTYPED)
+    shapes = SHAPES | {n_key: [(CORE_PATH, (32, True))]}
+
+    def judge(bound: dict[str, Any], value: int | None, argument: dict[str, Any],
+              keyword: str = "logic") -> Any:  # fmt: skip
+        """`rotl(w, argument)` with `input [7:0] x` and `input <keyword> [bound:0] n`."""
+        rotl = fn("(NRO)", "rotl", basic(7), arg("(NROX)", "x", basic(7)),
+                  arg("(NRON)", "n", basic(bound, keyword=keyword)))  # fmt: skip
+        agreed = AGREED | ({n_key: value} if value is not None else {})
+        call = call_of(w8(), argument, to="(NRO)", name="rotl")
+        return narrow(n, GV, rotl, un("ASSIGNW", call), agreed=agreed, shapes=shapes)
+
+    clog = ar("SUB", clog2_of(nref("(NN)", "N")), num(1))  # [$clog2(N)-1:0]
+    half = ar("SUB", ar("DIV", nref("(NN)", "N"), num(2)), num(1))  # [N/2-1:0]
+    plus = ar("ADD", nref("(NGV)", "g"), num(1))  # i + 1: 32 bits
+    assert judge(clog, 8, plus) is None
+    assert judge(half, 8, plus) is None
+    # x01clogbad: N = 256 makes the input 8 bits, and LAST + 1'b1 (4 bits) carries
+    got = judge(clog, 256, ar("ADD", last(), num(1, "1'h")))
+    assert got is not None and "4 bits wide, narrower than the function's input (8 bits)" in (
+        got.sentence
+    )
+    # no value of N, or a type that is no plain vector: the width is not known (fail closed)
+    got = judge(clog, None, plus)
+    assert got is not None and "has a width that the check cannot work out" in got.sentence
+    assert judge(clog, 8, plus, keyword="string") is not None
+
+
+def test_one_narrow_instance_with_a_smaller_value_refuses_too() -> None:
+    """Round 27 (mutation R15, mi01: one module used with LAST = 4'd15 and with 8'd200):
+    clog2(LAST + 1'b1) carries only in the narrower copy, which has the smaller value, so it is
+    not the last combination in value order; every combination is judged."""
+    plus_one = ar("ADD", last(), num(1, "1'h"))
+    shapes = SHAPES | {NL_KEY: [(P4, (4, False)), (P6, (8, False))]}
+    several = {NL_KEY: [(P4, 15), (P6, 200)]}
+    agreed = {k: v for k, v in AGREED.items() if k != NL_KEY}
+    tree = module(LAST, SA, AMT, NS4, NS8, F_8, F_2, CLOG2,
+                  un("ASSIGNW", call_of(plus_one, to="(NC)", name="clog2")))  # fmt: skip
+    got = et.narrow_argument(tree, META, OURS, agreed, shapes, several)
+    assert got is not None and "is 4 bits wide, narrower than the function's input (32 bits)" in (
+        got.sentence
+    )
+    several = {NL_KEY: [(P4, 14), (P6, 200)]}  # 14 + 1 fits 4 bits
+    assert et.narrow_argument(tree, META, OURS, agreed, shapes, several) is None

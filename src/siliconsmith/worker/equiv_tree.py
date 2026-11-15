@@ -1591,6 +1591,21 @@ def _context_children(node: dict[str, Any]) -> list[dict[str, Any]] | None:
     return [c for c in (_only(node, k) for k in keys) if c is not None]
 
 
+def _values(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """The children of `node` that hold a value: all but a type (a `...DTYPE` node, such as the
+    REFDTYPE of a cast `t'(x)`, which names a width and holds nothing to work out)."""
+    return [c for c in _children(node) if not str(c.get("type", "")).endswith("DTYPE")]
+
+
+def _typed(var: dict[str, Any]) -> bool:
+    """A parameter or localparam VAR whose declared type names a typedef (`localparam byte_t K`):
+    Yosys 0.62 works its value out at the value's own width first (round 27 f08)."""
+    if var.get("type") != "VAR" or var.get("varType") not in _PARAMETER_VALUES:
+        return False
+    dtype = _only(var, "childDTypep")
+    return dtype is not None and any(n.get("type") == "REFDTYPE" for n in _subtree(dtype))
+
+
 class _Widths:
     """The self-determined width and sign of an expression in the tree before V3Param, and the
     value of a constant one (`narrow_argument`). A parameter has the width and sign Verilator's
@@ -1598,7 +1613,8 @@ class _Widths:
     declared type, and the one value both tools agree on (`known`); a genvar is a signed
     integer; the variable of a `for` loop is no wider than its start and step values (`loops`:
     Yosys 0.62 unrolls the loop with the start value's own width, round 26 n06); any other
-    variable has its declared type (a typedef's, `typedefs`). Anything else has no width
+    variable has its declared type (a typedef's, `typedefs`; an enum's base type). A range bound
+    is worked out at its own width (`bounds`: `[$clog2(N)-1:0]`). Anything else has no width
     (None)."""
 
     def __init__(
@@ -1620,18 +1636,40 @@ class _Widths:
         self.busy: set[str] = set()  # the loop variables whose start or step is being sized
 
     def resolve(self, dtype: dict[str, Any] | None) -> dict[str, Any] | None:
-        """`dtype`, or the type a typedef reference (REFDTYPE) names, followed to its end."""
+        """`dtype`, or the type a typedef reference (REFDTYPE) names, followed to its end; an enum
+        type (ENUMDTYPE) stands for its base type (IEEE 1800-2017 6.19: an enum has the width and
+        sign of its base type; round 27 w49: `dec(mode_t'(ui_in[1:0]))` was refused), None for
+        an enum without one."""
         for _ in range(16):
-            if dtype is None or dtype.get("type") != "REFDTYPE":
+            if dtype is None:
+                return None
+            kind = dtype.get("type")
+            if kind == "REFDTYPE":
+                typedef = self.typedefs.get(str(dtype.get("typedefp")))
+                dtype = _only(typedef, "childDTypep") if typedef is not None else None
+            elif kind == "ENUMDTYPE":
+                dtype = _only(dtype, "childDTypep")
+            else:
                 return dtype
-            typedef = self.typedefs.get(str(dtype.get("typedefp")))
-            dtype = _only(typedef, "childDTypep") if typedef is not None else None
         return None
+
+    def bounds(self, dtype: dict[str, Any]) -> tuple[int, int] | None:
+        """`(left, right)` of a plain type's packed range (`_Ranges._bounds`), else each bound
+        worked out at its own width (`amount`), as every tool works out a range: `[$clog2(N)-1:0]`
+        and `[W/2-1:0]` (round 27 w05, w46: such an input made every call unknown)."""
+        got = self.ranges._bounds(dtype)
+        if got is not None or dtype.get("type") != "BASICDTYPE":
+            return got
+        rng = _only(dtype, "rangep") if dtype.get("keyword") in _SIZED_KEYWORDS else None
+        if rng is None:
+            return None
+        left, right = self.amount(_only(rng, "leftp")), self.amount(_only(rng, "rightp"))
+        return None if left is None or right is None else (left, right)
 
     def declared(self, var: dict[str, Any] | None) -> Shape | None:
         """The width and sign of a VAR's declared type: a plain vector or integer type."""
         dtype = self.resolve(_only(var, "childDTypep") if var is not None else None)
-        bounds = self.ranges._bounds(dtype) if dtype is not None else None
+        bounds = self.bounds(dtype) if dtype is not None else None
         if dtype is None or bounds is None:
             return None
         return abs(bounds[0] - bounds[1]) + 1, dtype.get("signed") is True
@@ -1640,7 +1678,7 @@ class _Widths:
         """The width of a size cast `size'(x)`: a constant, or a typedef of a plain type."""
         if size is not None and size.get("type") == "REFDTYPE":
             dtype = self.resolve(size)
-            bounds = self.ranges._bounds(dtype) if dtype is not None else None
+            bounds = self.bounds(dtype) if dtype is not None else None
             return abs(bounds[0] - bounds[1]) + 1 if bounds is not None else None
         return self.amount(size)
 
@@ -1688,8 +1726,12 @@ class _Widths:
             return self.declared(_only(func, "fvarp")) if func is not None else None
         if kind == "CAST":  # `integer'(x)`: the type's width and sign
             return self.declared(node)
-        if kind == "CASTPARSE":  # `4'(x)`: the size, and the sign of `x`
-            size, inner = self.cast_size(_only(node, "dtp")), self.shape(_only(node, "lhsp"))
+        if kind == "CASTPARSE":  # `4'(x)`: the size, and the sign of `x`; `t'(x)`: the type's
+            to = _only(node, "dtp")
+            size, inner = self.cast_size(to), self.shape(_only(node, "lhsp"))
+            if size and to is not None and to.get("type") == "REFDTYPE":
+                typed = self.resolve(to)
+                return size, typed is not None and typed.get("signed") is True
             return (size, inner[1] if inner is not None else None) if size else None
         parts = _context_children(node)
         if parts:
@@ -1763,6 +1805,9 @@ class _Widths:
                 got = self.whole(operand, 1 << (size[0] - 1))
         elif kind == "UNSIGNED":
             got = self.whole(_only(node, "lhsp"), limit)
+        elif kind == "CLOG2":  # `$clog2(n)`: n worked out at its own width, as in every tool
+            n = self.amount(_only(node, "lhsp"))
+            got = None if n is None else max(n - 1, 0).bit_length()
         elif kind == "CONCAT":  # each piece at its own width, as every tool works it out
             high, low = _only(node, "lhsp"), _only(node, "rhsp")
             high_shape, low_shape = self.shape(high), self.shape(low)
@@ -1912,6 +1957,17 @@ def narrow_argument(
     `for` loop is no wider than its start and step values (`_loop_values`): Yosys 0.62 unrolls
     `for (i = FIRST; ...)` with an integer `i` and `localparam [3:0] FIRST = 4'd15` with `i` 4
     bits wide in the first pass, so `f(i + 4'd1)` lost its carry (round 26 n06).
+
+    Round 27: a generate `for` loop whose start or step is narrower than 32 bits is refused
+    (`_narrow_genvar`: Yosys 0.62 makes the genvar as wide as its start, so a localparam or a
+    parameter made from it lost the carry too). The value of a parameter whose type is a typedef
+    (`_typed`) is judged as the operand of a cast to that type: Yosys 0.62 works `localparam
+    byte_t K = LAST + 4'd1;` out at the value's own 4 bits (0; 16 in a simulator), though it
+    keeps a plain `localparam [7:0] K` right (round 27 f08, f40). An enum type has its base
+    type's width and sign, a cast `t'(x)` to a typedef the typedef's sign, a range bound such as
+    `$clog2(N) - 1` is worked out at its own width (`_Widths.bounds`), and a cast's type is no
+    part of the value (`_values`), so `dec(mode_t'(ui_in[1:0]))` and a 3-bit `[$clog2(N)-1:0]`
+    input given `i + 1` pass (round 27 w49, w05).
 
     Why this is sound. Where (1) fails, the argument is at least as wide as the input, so its
     context is its own width in every tool (the width of a loop variable is the narrowest that
@@ -2067,20 +2123,23 @@ def narrow_argument(
                     return kind
                 continue
             inner = _context_children(node)
-            stack.extend(inner if inner is not None else _children(node))
+            stack.extend(inner if inner is not None else _values(node))  # not a cast's type
         return None
 
     def operands(
         node: dict[str, Any], sized: _Widths
     ) -> list[tuple[dict[str, Any] | None, Shape | None]]:
-        """Each argument of a call of the design's functions with the shape of its input, or the
-        operand of a size or type cast with the cast's (its width only), else []."""
+        """Each argument of a call of the design's functions with the shape of its input, the
+        operand of a size or type cast with the cast's (its width only), or the value of a
+        parameter of a typedef type (`_typed`) with the type's, else []."""
         kind = node.get("type")
         if kind == "CASTPARSE":  # `8'(x)`, `W'(x)`, `t'(x)` for a typedef `t`
             size = sized.cast_size(_only(node, "dtp"))
             return [(_only(node, "lhsp"), (size, None) if size else None)]
         if kind == "CAST":  # `int'(x)`, `logic [7:0]'(x)`
             return [(_only(node, "fromp"), sized.declared(node))]
+        if kind == "VAR":  # `localparam byte_t K = LAST + 4'd1;`: a cast of the value to its type
+            return [(_only(node, "valuep"), sized.declared(node))]
         if kind != "FUNCREF":
             return []
         inputs = ports(functions.get(str(node.get("taskp"))))
@@ -2111,27 +2170,39 @@ def narrow_argument(
                     return mine, (need[0] if need is not None else None), kind
         return None
 
-    found: list[tuple[int, int, int, str, str, int | None, int | None, str]] = []
+    # (file order, line, column, name, file, role, own width, needed width, what differs)
+    found: list[tuple[int, int, int, str, str, str, int | None, int | None, str]] = []
     for node in nodes:
-        if node.get("type") not in ("FUNCREF", "CAST", "CASTPARSE"):
-            continue
-        got = judged(node)
-        if got is not None:
+        role = {"FUNCREF": "call", "CAST": "cast", "CASTPARSE": "cast"}.get(str(node.get("type")))
+        if role is None and _typed(node):
+            role = "parameter"
+        got = judged(node) if role is not None else None
+        if role is not None and got is not None:
             file, line, col = _place(node, files)
             if file in ours:
-                name = str(node.get("name", "")) if node.get("type") == "FUNCREF" else ""
-                found.append((ours.index(file), line, col, name, file, *got))
+                name = str(node.get("name", "")) if role != "cast" else ""
+                found.append((ours.index(file), line, col, name, file, role, *got))
+        if node.get("type") == "GENFOR":
+            found.extend(_narrow_genvar(node, widths, files, ours))
     if not found:
         return None
-    _, line, _, name, file, mine, theirs, kind = min(found, key=lambda at: at[:4])
-    if name:
+    _, line, _, name, file, role, mine, theirs, kind = min(found, key=lambda at: at[:4])
+    if role in ("start", "step"):
+        return _genvar_refusal(name, file, line, role, mine)
+    last = "compute the value in a localparam with a type first (`localparam integer N = LAST + "
+    if role == "call":
         what = f"calls the function `{name}` with an argument that"
         noun, target, into = "argument", "input", "the function's input"
-        example, then = "`clog2(LAST + 1'b1)`", "`clog2(N)`"
-    else:
+        example, last = "`clog2(LAST + 1'b1)`", f"{last}1'b1;`, then `clog2(N)`)"
+    elif role == "cast":
         what = "casts a value that"
         noun, target, into = "operand", "cast", "the cast"
-        example, then = "`8'(LAST + 1'b1)` (also `int'(...)`)", "`8'(N)`"
+        example, last = "`8'(LAST + 1'b1)` (also `int'(...)`)", f"{last}1'b1;`, then `8'(N)`)"
+    else:
+        what = f"gives the parameter `{name}`, whose type is a typedef, a value that"
+        noun, target, into = "value", "type", "its type"
+        example = "`K` of `localparam byte_t K = LAST + 4'd1;`"
+        last = "give the parameter a plain type (`localparam [7:0] K = LAST + 4'd1;`)"
     if mine is not None and theirs is not None:
         widths_text = f"is {mine} bits wide, narrower than {into} ({theirs} bits)"
     else:
@@ -2153,8 +2224,59 @@ def narrow_argument(
         "gates, and a generate `if` on it takes another branch), and the check cannot vouch "
         f"for the design. Make the {noun} as wide as the {target}: use a plain number "
         "(`LAST + 1` is 32 bits) or widen an operand (`{4'd0, LAST} + 8'd1` for 8 bits), or "
-        "compute the value in a localparam with a type first (`localparam integer N = LAST + "
-        f"1'b1;`, then {then})",
+        f"{last}",
+    )
+
+
+def _narrow_genvar(
+    loop: dict[str, Any], widths: _Widths, files: dict[str, str], ours: list[str]
+) -> list[tuple[int, int, int, str, str, str, int | None, int | None, str]]:
+    """The start and step of a generate `for` loop (GENFOR) of our files whose value is narrower
+    than 32 bits, or of a width (`_Widths.shape`) or a form the check cannot work out, as
+    `narrow_argument` lists its findings (role "start" or "step").
+
+    Round 27 (g04, a02, a06, a08): Yosys 0.62 gives a genvar the width of its start value (its
+    parser sets the genvar's range 31:0 but does not mark it valid, so the unrolled loop does not
+    extend the start), where a simulator makes it a 32-bit integer. With `localparam [3:0] FIRST
+    = 4'd7`, `for (g = FIRST; g < 8; g = g + 1)` made `g + 4'd9` 0 in the gates and 16 in a
+    simulator, and so did `localparam Q = g;` and `.P(g)` made from it; a start with its top bit
+    set (4'd15) was extended by its sign, so the loop made more passes. A start or step of 32
+    bits or more cannot be cut that way."""
+    got: list[tuple[int, int, int, str, str, str, int | None, int | None, str]] = []
+    for role, key in (("start", "initsp"), ("step", "incsp")):
+        for item in loop.get(key) or []:
+            if not isinstance(item, dict) or item.get("type") == "VAR":
+                continue  # `for (genvar g = ...)` declares it there
+            assigned = _assigned(item)
+            target = _only(item, "lhsp") if item.get("type") == "ASSIGN" else None
+            shape = widths.shape(assigned[1]) if assigned is not None else None
+            if shape is not None and shape[0] >= 32:
+                continue
+            file, line, col = _place(loop, files)
+            if file in ours:
+                name = str(target.get("name", "")) if target is not None else ""
+                mine = shape[0] if shape is not None else None
+                got.append((ours.index(file), line, col, name, file, role, mine, 32, "GENFOR"))
+    return got
+
+
+def _genvar_refusal(name: str, file: str, line: int, role: str, mine: int | None) -> Unknown:
+    """The refusal of a generate loop whose start or step is narrower than 32 bits."""
+    which = f"the genvar `{name}`" if name else "its genvar"
+    did, how = ("starts", "from a value") if role == "start" else ("steps", "with a value")
+    size = "whose width the check cannot work out" if mine is None else f"that is {mine} bits wide"
+    return Unknown(
+        name,
+        file,
+        line,
+        f"the RTL ({file}, line {line}) {did} a generate `for` loop of {which} {how} {size}. A "
+        "simulator makes a genvar a 32-bit integer; Yosys 0.62 makes it only as wide as the "
+        "loop's start value, so a sum with it (`g + 4'd9`), or a localparam or a parameter made "
+        "from it, can lose a carry in the gates (with `localparam [3:0] FIRST = 4'd7`, `for (g = "
+        "FIRST; ...)` makes `g + 4'd9` 16 in a simulator and 0 in the gates), and a start with "
+        "its top bit set is extended by its sign, which can add passes; the check cannot vouch "
+        "for the design. Start and step a generate loop with unsized numbers or integer "
+        "localparams (`for (g = 7; g < 8; g = g + 1)`, `localparam integer FIRST = 7;`)",
     )
 
 

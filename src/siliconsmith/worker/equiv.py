@@ -30,7 +30,8 @@ another width or sign (an untyped `8'hff + 8'h00` is 9 bits wide in Icarus, 8 in
 the gates), a different elaboration, a call with constant arguments of a function that selects
 at a computed index not proven inside the range or divides by a value not proven nonzero
 (`equiv_tree.constant_call`), a constant function argument or cast operand narrower than the
-input or cast that can carry, which Yosys 0.62 works out at its own width
+input or cast that can carry, which Yosys 0.62 works out at its own width, also the value of a
+typedef-typed parameter, and a generate loop that starts or steps with fewer than 32 bits
 (`equiv_tree.narrow_argument`), a select outside the range that Yosys finds, also in an arm of
 `?:` that a constant condition never selects, RTL that Icarus cannot compile or stops on). NOT
 detected: an index computed from a signal or a variable (a loop index passed into a function
@@ -938,7 +939,9 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        flip high bits (`+ - * << ** ~`, unary minus) unless its value is proven the same at every
        width: Yosys 0.62 works such a part out at the argument's own width, a simulator at the
        input's (`clog2(LAST + 1'b1)` with a 4-bit `LAST = 15`: 16 in a simulator, 0 in the
-       gates); after the real and select findings, which name a fail-closed width more exactly
+       gates; round 27: also the value of a parameter whose type is a typedef, and a generate
+       loop whose start or step is narrower than 32 bits, as Yosys 0.62 makes the genvar that
+       narrow); after the real and select findings, which name a fail-closed width more exactly
        (`f(R + a)` with an infinite real `R`). Then `equiv_tree.uncompared_local`: a localparam
        declared inside a function whose value is not compared with the simulator's (round 23:
        Verilator leaves out a function it only works out as a constant, so `localparam M = 1 <<
