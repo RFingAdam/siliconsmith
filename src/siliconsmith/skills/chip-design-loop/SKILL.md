@@ -96,7 +96,7 @@ Never switch off a race warning (`BLKSEQ`, `MULTIDRIVEN`, ...) with `lint_off`, 
 
 The check reads a `lint_off` comment the way Verilator reads it. Verilator deletes every `//` and `/*` inside a comment before it reads the codes, so `/* verilator lint_off WIDTH//,BLKSEQ */` is refused as `lint_off BLKSEQ`.
 Give the reason for a `lint_off` in a second `//` comment (`// verilator lint_off WIDTH // why`) or in a `/* */` that closes on the same line. Verilator ends a `// verilator lint_off` comment at its first `/`, so a single `/` or an open `/*` after the codes is refused.
-Keep parameter names under 128 characters. Verilator shortens longer names, so the check cannot compare their values and refuses them.
+Keep parameter names short and without `__`. Verilator shortens a name of 128 characters or more as it encodes it (each `__` and each special character of an escaped name counts as several), so the check cannot compare its values and refuses it.
 
 ## Constants the equivalence check accepts
 

@@ -780,6 +780,9 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # flocal, flocalg, flocalu (an untyped localparam inside a constant helper, a generate-pass helper
 # and an unused function, passed on with the function's argument: only the simulator lists it,
 # with a plain number, so it holds no real; all three were refused at bf5eb0a).
+# Round 22: lonote and lohdr (a taught-style counter and a registered adder whose prose block
+# comment only mentions a lint_off, then a latch or BLKSEQ: Verilator reads a comment as a
+# meta-comment only when it starts with `verilator`; both were refused at 70f0f4e).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -820,6 +823,8 @@ EQUIVALENT = [
     "flocal",
     "flocalg",
     "flocalu",
+    "lonote",
+    "lohdr",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()

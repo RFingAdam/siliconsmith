@@ -1705,18 +1705,48 @@ def test_a_race_warning_that_a_comment_hid_is_found_without_the_comments(
     assert "chip.v, line 3" in got["message"] and "BLKSEQ" in got["message"]
     assert "a comment switched off" in got["message"] and fake.tags == ["elab"]
     argv, copy = seen[0]
-    assert argv[:2] == ["verilator", "--lint-only"] and "-Wno-fatal" in argv and "-Wall" in argv
-    assert "--json-only" not in argv and argv[-2:] == ["project.v", "chip.v"]
+    # the emit lint's flags (HL11, HL12, HL16: round 22), every warning a warning, not fatal
+    assert argv == [
+        "verilator", "--lint-only", "-Wall", "-Wno-fatal", "--timing", "--timescale", "1ns/1ps",
+        "-Wno-DECLFILENAME", "--top-module", "tt_um_chip", "project.v", "chip.v",
+    ]  # fmt: skip
     assert "a note" not in copy and "always @*" in copy and copy.count("\n") == 6
 
 
-@pytest.mark.parametrize("code", sorted(equiv.HIDDEN_LINT_CODES))
+# The race and x codes of the emit lint that only a comment can switch off there: every code
+# that equiv_sv refuses in a lint_off but CASEINCOMPLETE (HC1-HC4, round 22: a literal list, so
+# that a code dropped from the set fails here).
+HIDDEN_CODES = [
+    "ALWCOMBORDER", "BLKANDNBLK", "BLKSEQ", "CASEOVERLAP", "CASEWITHX", "CASEX", "COMBDLY",
+    "IMPLICITSTATIC", "INITIALDLY", "LATCH", "MULTIDRIVEN", "NOLATCH", "SYNCASYNCNET",
+]  # fmt: skip
+
+
+def test_the_lint_without_comments_judges_every_race_code_but_caseincomplete() -> None:
+    assert frozenset(HIDDEN_CODES) == equiv.HIDDEN_LINT_CODES
+
+
+@pytest.mark.parametrize("code", HIDDEN_CODES)
 def test_every_race_code_counts_in_the_lint_without_comments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str
 ) -> None:
     run = equiv.LintRun(0, BLKSEQ_HIDDEN.replace("BLKSEQ", code))
     got, _, _ = check_hidden(tmp_path, monkeypatch, run)
     assert got["reason"] == "guard_sim_synth_differ" and code in got["message"]
+    assert "a comment switched off" in got["message"]
+
+
+def test_a_race_code_that_verilator_reports_as_an_error_is_named_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HL3 (round 22): Verilator prints some codes as an error (`%Error-BLKANDNBLK`); the
+    finding names the code, not only the first error."""
+    run = equiv.LintRun(1, "%Error-BLKANDNBLK: chip.v:3:7: Unsupported: Blocked and non-blocking "
+                           "assignments to same variable: 'q'\n")  # fmt: skip
+    got, _, _ = check_hidden(tmp_path, monkeypatch, run)
+    assert got["reason"] == "guard_sim_synth_differ", got
+    assert "(chip.v, line 3) has a Verilator BLKANDNBLK warning" in got["message"], got
+    assert "a comment switched off" in got["message"]
 
 
 @pytest.mark.parametrize(
@@ -1752,6 +1782,11 @@ def test_the_lint_without_comments_does_not_pass_by_giving_up(
     assert "chip.v, line 4: syntax error" in got["message"]
     got, _, _ = check_hidden(tmp_path / "x", monkeypatch, equiv.LintRun(3, "killed\n"))
     assert got["reason"] == "guard_sim_synth_differ" and "killed" in got["message"]
+    (tmp_path / "z").mkdir()  # HL8 (round 22): an error line counts whatever the exit code
+    zero = equiv.LintRun(0, "%Error: chip.v:4:5: syntax error, unexpected end\n")
+    got, _, _ = check_hidden(tmp_path / "z", monkeypatch, zero)
+    assert got["reason"] == "guard_sim_synth_differ", got
+    assert "once its comments are removed" in got["message"], got
     got, _, fake = check_hidden(tmp_path / "n", monkeypatch, None)  # cannot start: inconclusive
     assert "comment" not in got["message"] and len(fake.tags) > 1
 
@@ -2761,6 +2796,75 @@ def test_a_proven_call_with_a_parameter_counts_its_values_in_both_tools(
     if refused:
         assert got is not None and got[0] == "guard_sim_synth_differ", got
         assert "(chip.v, line 12) calls the function `f` with constant arguments" in got[1]
+    else:
+        assert got is None, got
+    assert fake.tags == ["elab"]
+
+
+# Round 21 (fl01, r04; NR5, round 22): `localparam MIN_DEPTH = 2;` (untyped) inside the helper
+# `g`, passed on to `f`, as Verilator's tree has it before V3Param. Verilator's elaborated tree
+# leaves `g` out, so only the simulator lists the local; with a plain number there it holds no
+# real (`equiv_tree.simulator_only_values`, passed to `constant_call`).
+def local_param_tree() -> str:
+    def at(line: int) -> str:
+        return f"e,{line}:3,{line}:5"
+
+    def ref(to: str, name: str, line: int, access: str = "RD") -> dict[str, Any]:
+        return {"type": "VARREF", "varp": to, "name": name, "access": access, "loc": at(line)}
+
+    bound = [{"type": "CONST", "name": "?32?sh7"}]
+    rng = {"type": "RANGE", "leftp": bound, "rightp": [{"type": "CONST", "name": "?32?sh0"}]}
+    byte = {"type": "BASICDTYPE", "keyword": "logic", "rangep": [rng]}
+
+    def local(addr: str, name: str, line: int, **more: Any) -> dict[str, Any]:
+        return {"type": "VAR", "addr": addr, "name": name, "loc": at(line), "isFuncLocal": True,
+                "childDTypep": [byte], **more}  # fmt: skip
+
+    f = {"type": "FUNC", "addr": "(F)", "name": "f", "loc": at(2), "stmtsp": [
+        local("(rf)", "f", 2, isFuncReturn=True),
+        local("(v)", "v", 2, varType="PORT", direction="INPUT"),
+        {"type": "ASSIGN", "loc": at(3), "lhsp": [ref("(rf)", "f", 3, "WR")],
+         "rhsp": [ref("(v)", "v", 3)]},
+    ]}  # fmt: skip
+    depth = {"type": "VAR", "addr": "(MD)", "name": "MIN_DEPTH", "varType": "LPARAM",
+             "isParam": True, "loc": at(6),
+             "childDTypep": [{"type": "BASICDTYPE", "keyword": "LOGIC_IMPLICIT"}],
+             "valuep": [{"type": "CONST", "name": "?32?sh2"}]}  # fmt: skip
+    call_f = {"type": "FUNCREF", "taskp": "(F)", "name": "f", "loc": at(7),
+              "argsp": [{"type": "ARG", "exprp": [ref("(MD)", "MIN_DEPTH", 7)]}]}  # fmt: skip
+    g = {"type": "FUNC", "addr": "(G)", "name": "g", "loc": at(5), "stmtsp": [
+        local("(rg)", "g", 5, isFuncReturn=True),
+        local("(w)", "w", 5, varType="PORT", direction="INPUT"),
+        depth,
+        {"type": "ASSIGN", "loc": at(7), "lhsp": [ref("(rg)", "g", 7, "WR")], "rhsp": [call_f]},
+    ]}  # fmt: skip
+    top = {"type": "MODULE", "addr": "(T)", "name": "tt_um_chip", "level": 1, "stmtsp": [f, g]}
+    return json.dumps({"type": "NETLIST", "modulesp": [top]})
+
+
+SIM_MD = (
+    SIM_TOP
+    + 'P_0x2 .param/l "MIN_DEPTH" 1 4 6, +C4<00000000000000000000000000000010>;\n'
+    + SIM_TABLE
+)
+
+
+@pytest.mark.parametrize(
+    ("vvp", "refused"),
+    [(SIM_MD, False), (SIM_CLEAN, True)],  # listed by no tool: a function local still counts
+    ids=["simulator-only-plain", "listed-by-no-tool"],
+)
+def test_a_function_local_that_only_the_simulator_lists_holds_no_real_in_the_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, vvp: str, refused: bool
+) -> None:
+    simulator(monkeypatch, equiv.LintRun(0, ""), vvp)
+    fake = fake_elab("module \\tt_um_chip\nend\n")
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE,
+                    before=local_param_tree(), fake=fake)  # fmt: skip
+    if refused:
+        assert got is not None and got[0] == "guard_sim_synth_differ", got
+        want = "(chip.v, line 7) calls the function `f` with an argument that can hold a real"
+        assert want in got[1], got
     else:
         assert got is None, got
     assert fake.tags == ["elab"]

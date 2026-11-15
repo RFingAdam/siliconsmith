@@ -452,8 +452,9 @@ def _signed(var: dict[str, Any], nodes: dict[str, dict[str, Any]]) -> bool:
     return False
 
 
-# Verilator 5.046 replaces a name of 128 characters or more (an escaped name counts each special
-# character as several: `.` is `__02E`) by `__Vhsh` and a hash, in `name`, `origName` and
+# Verilator 5.046 replaces a name of 128 characters or more as it encodes it (an escaped name
+# counts each special character as several, `.` is `__02E`, and each `__` is `___05F`) by `__Vhsh`
+# and a hash, in `name`, `origName` and
 # `verilogName` alike, so such a parameter's key is never the simulator's and its values are
 # never compared (round 21: an untyped localparam that overflows, named with 128 characters)
 _HASHED = "__Vhsh"
@@ -465,7 +466,7 @@ def _param_name(node: dict[str, Any], file: str, line: int) -> str:
     if _HASHED in name:
         raise TreeError(
             f"{file}, line {line}: Verilator shortens a parameter name of 128 characters or more "
-            "(in an escaped name a special character counts as several); use a shorter name"
+            "as it encodes it (`__` counts as several); use a shorter name"
         )
     return name
 

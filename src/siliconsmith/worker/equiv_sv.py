@@ -78,7 +78,8 @@ In every file:
   `_lint_off_codes`; round 21): Verilator deletes every `//`, `/*` and `*/` inside a comment
   before it reads it (`/* verilator lint_off WIDTH//,BLKSEQ */` hides BLKSEQ), and ends a
   `// verilator lint_off` comment at its first `/` (`// verilator lint_off WIDTH // no latch
-  here` hides no LATCH);
+  here` hides no LATCH); a comment whose text does not start with `verilator` is no
+  meta-comment, so a note that only mentions a lint_off hides nothing (round 22);
 * a `// verilator lint_off` (or lint_on) comment that goes on after a single `/`, or after a
   `/*` that does not close on that line: Verilator reads what follows as code or as a block
   comment, the other tools as part of the line comment, so Verilator's lint would judge other
@@ -448,8 +449,16 @@ def _lint_off_codes(comment: str) -> Iterator[list[str]]:
     a tab made a space; `/* verilator lint_off WIDTH//,BLKSEQ */` and `B//LKSEQ` turn BLKSEQ
     off). Every word after it counts, to the end of the comment: Verilator turns off every code
     of a comma list (`WIDTH,BLKSEQ`, also with an empty item), and stops with an error on a word
-    that is not a code, so only odd spellings are refused for a word that hides nothing."""
+    that is not a code, so only odd spellings are refused for a word that hides nothing.
+
+    Only a meta-comment has codes (round 22): V3PreProc::comment reads a comment as one only
+    when its text starts with `verilator` after blanks (`v` or `V`; here in any case, which
+    fails closed), so a note such as `/* No verilator lint_off is needed: no latch here */`
+    hides nothing and is not judged. What Verilator does hide is also caught by the lint
+    without comments (`equiv._hidden_lint`)."""
     body = comment[2:]
+    if not re.match(r"\s*verilator", body, re.I | re.ASCII):
+        return
     cleaned = body.replace("//", "").replace("/*", "").replace("*/", "")
     for reading in (body, cleaned.replace('"', " ").replace("\t", " ")):
         for m in _LINT_OFF.finditer(reading):

@@ -632,8 +632,9 @@ them: macros and `include, bit/int types (a loop index declared in a for header 
 for (int i = 0; ...), is fine), unique/priority, casex, ===, x or z literals, delays \
 (#), characters outside plain ASCII, a back-tick or a double quote inside an escaped \
 identifier (\\v`X, \\M": Icarus expands a macro there, and Verilator and Icarus spell the quote \
-differently), a parameter name of 128 characters or more (Verilator shortens it, so its value \
-is never compared), a lint_off of a race warning (also one code of a list, lint_off \
+differently), a parameter name of 128 characters or more as Verilator encodes it, where each __ \
+and each special character of an escaped name counts as several (Verilator shortens it, so its \
+value is never compared), a lint_off of a race warning (also one code of a list, lint_off \
 WIDTH,BLKSEQ, in any case: lint_off blkseq, and in a spelling only Verilator reads as one: it \
 deletes every // and /* inside a comment, so /* verilator lint_off WIDTH//,BLKSEQ */ hides \
 BLKSEQ), a // verilator lint_off comment that goes on after a single / (Verilator ends the \
@@ -671,7 +672,9 @@ v[7 - i], not v[i ^ 7]), a call as an argument, another local or an array elemen
 even through a select (v[m[0]], v[loc[1:0]]); a simulator works the call out itself: compute it \
 in an integer localparam first; such a call in a real or string parameter is refused too), a \
 real (as above: also a real or untyped parameter or localparam whose value is not a plain \
-number in both tools, such as an untyped string, and a time or typedef one; one declared \
+number in both tools, such as an untyped string, and a time or typedef one, though a \
+localparam inside a function that only the simulator works out, with a plain number there, \
+holds no real; one declared \
 integer, logic or reg or with a packed range, localparam [39:0] MSG = "HELLO", holds bits and \
 is fine) or a hierarchical name (g.R, also stage[i-1].q of a generate loop: keep the stages in \
 an array) in \

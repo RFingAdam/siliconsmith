@@ -469,6 +469,11 @@ def test_lint_off_with_no_code_or_a_rule_flag_is_judged_too() -> None:
     refused("// verilator lint_off\nwire a;", "lint_off")
     refused("/* verilator lint_off */\nwire a;", "lint_off")
     refused("// verilator lint_off -rule BLKSEQ\nwire a;", "BLKSEQ")
+    # a word that starts with `-` is no code (LO10, round 22): with nothing after it, no code
+    found = refused("// verilator lint_off -rule\nwire a;", "lint_off")
+    assert found.what == "`verilator lint_off`", found
+    found = refused("/* verilator lint_off -rule */\nwire a;", "lint_off")
+    assert found.what == "`verilator lint_off`", found
 
 
 @pytest.mark.parametrize(
@@ -609,6 +614,48 @@ def test_words_verilator_does_not_read_as_codes_are_not_judged(comment: str) -> 
     ok(f"module m;\n  {comment}\n  wire a;\nendmodule\n")
 
 
+# Round 22 (x20note, x21hdr; fixtures lonote, lohdr): Verilator 5.046 reads a comment as a
+# meta-comment only when its text starts with `verilator` after blanks (V3PreProc::comment), so
+# each note below still reports BLKSEQ or LATCH there; its words are no codes.
+@pytest.mark.parametrize(
+    "comment",
+    [
+        "/* No verilator lint_off is needed in this file: next_count is written\n"
+        "     at the top of the always block, so Verilator reports no latch. */",
+        "/*\n   * Lint policy: no verilator lint_off comments; there is no blocking race (BLKSEQ)\n"
+        "   * and no latch.\n   */",
+        "/* No verilator lint_off is needed: no\n     BLKSEQ here, and no latch. */",  # pr1
+        "/* note verilator lint_off BLKSEQ */",  # pr2
+        "/* //verilator lint_off BLKSEQ */",  # pq1: the `//` is not deleted before the test
+        "/* /*verilator lint_off BLKSEQ */",  # pq2
+        "/** verilator lint_off BLKSEQ */",
+        "/*/ verilator lint_off BLKSEQ */",
+        "// no verilator lint_off needed: the latch is gone",
+        "// x // verilator lint_off BLKSEQ",  # one comment to the end of the line
+    ],
+)
+def test_a_comment_that_does_not_start_with_verilator_has_no_codes(comment: str) -> None:
+    ok(f"module m;\n  {comment}\n  wire a;\nendmodule\n")
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        "/*\n   verilator lint_off BLKSEQ */",  # pq3
+        "/*\tverilator lint_off BLKSEQ */",  # ps7
+        "/*\x0bverilator lint_off BLKSEQ */",
+        "/*\x0cverilator lint_off BLKSEQ */",
+        "/*\r\n   verilator lint_off BLKSEQ */",  # (a lone CR is refused on its own)
+        "/* Verilator lint_off BLKSEQ */",  # pr4
+        "/* VERILATOR lint_off BLKSEQ */",  # no meta-comment for Verilator: fails closed
+        "// Verilator lint_off BLKSEQ",
+    ],
+)
+def test_a_comment_that_starts_with_verilator_after_blanks_is_judged(comment: str) -> None:
+    found = refused(f"  {comment}\n  wire a;", "lint_off")
+    assert found.line == 2 and found.what == "`verilator lint_off BLKSEQ`", found
+
+
 def test_a_lint_off_in_a_string_or_an_escaped_name_is_no_comment() -> None:
     """Verilator's preprocessor reads a string and an escaped identifier as one token (`\\x//v`
     is a name to it, as to Icarus and Yosys)."""
@@ -644,6 +691,12 @@ def test_a_lint_off_over_several_lines_is_named_at_its_first_line() -> None:
         "  // verilator lint_off WIDTH / 2",
         '  // verilator lint_off WIDTH "/x',
         "  // verilator lint_off WIDTH /* never closed on this line\n  wire a; */",
+        # VC1 (round 22): Verilator ends a `// verilator lint_save` or `lint_restore` comment
+        # at its first `/` too (a syntax error at the `/`, and a block comment over the lines)
+        "  // verilator lint_save / 2",
+        "  // verilator lint_restore / 2",
+        "  // verilator lint_save /* x\n  wire a; */",
+        "  // verilator lint_restore /* x\n  wire a; */",
     ],
 )
 def test_a_lint_off_comment_that_goes_on_after_a_single_slash_is_refused(text: str) -> None:
