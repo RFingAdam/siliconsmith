@@ -483,6 +483,29 @@ def test_other_lint_codes_may_be_switched_off(code: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("comment", "code"),
+    [
+        # round 19 lo01/lo03: Verilator 5.046 turns off every code of a comma list, so a race
+        # warning after the first code was hidden while the scan looked at the first word only
+        ("/* verilator lint_off WIDTH,BLKSEQ */", "BLKSEQ"),
+        ("// verilator lint_off UNUSEDSIGNAL,BLKSEQ", "BLKSEQ"),
+        ("// verilator lint_off UNUSED,LATCH", "LATCH"),
+        ("// verilator lint_off WIDTH,,CASEINCOMPLETE", "CASEINCOMPLETE"),  # an empty item
+        ("// verilator lint_off WIDTH,UNUSED,MULTIDRIVEN", "MULTIDRIVEN"),
+        ("// verilator lint_off BLKSEQ,WIDTH", "BLKSEQ"),
+    ],
+)
+def test_every_code_of_a_lint_off_list_is_judged(comment: str, code: str) -> None:
+    found = refused(f"  {comment}\n  wire a;", "lint_off")
+    assert found.line == 2 and found.what == f"`verilator lint_off {code}`", found
+
+
+def test_a_lint_off_list_of_other_codes_may_be_switched_off() -> None:
+    ok("module m;\n  // verilator lint_off WIDTH,UNUSEDSIGNAL\n  wire a;\nendmodule\n")
+    ok("module m;\n  /* verilator lint_off WIDTHTRUNC,WIDTHEXPAND */\n  wire a;\nendmodule\n")
+
+
 def test_lint_on_and_other_comments_are_fine() -> None:
     ok("// verilator lint_on BLKSEQ\n// verilator public\nmodule m; endmodule\n")
 

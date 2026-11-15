@@ -630,7 +630,8 @@ macros out of the way (synthesis did not change your logic). A simulator can rea
 constructs differently from Yosys. The tool refuses the common ones as not proven and names \
 them: macros and `include, bit/int types (a loop index declared in a for header with no range, \
 for (int i = 0; ...), is fine), unique/priority, casex, ===, x or z literals, delays \
-(#), characters outside plain ASCII, a lint_off of a race warning, every level-sensitive \
+(#), characters outside plain ASCII, a lint_off of a race warning (also one code of a list, \
+lint_off WIDTH,BLKSEQ), every level-sensitive \
 always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational block that \
 can read a signal before it writes it on some path through the block (a branch, a case item \
 or a loop pass that does not write it first: write each signal at the top of the block), a \
@@ -661,7 +662,15 @@ bits, v[i - 1] from i = 0, a signed argument as index, a loop step other than 1,
 v[7 - i], not v[i ^ 7]), a call as an argument, another local or an array element as index, \
 even through a select (v[m[0]], v[loc[1:0]]); a simulator works the call out itself: compute it \
 in an integer localparam first; such a call in a real or string parameter is refused too), a \
-select outside the \
+real (as above) or a hierarchical name (g.R) as an argument of a call of any of your functions \
+with constant arguments outside the value of a parameter or localparam, even a function \
+without a select (Yosys works the call out with a number where a simulator has x; a \
+parameter or localparam in code that no tool builds, such as a generate branch the parameters \
+do not choose or a module nothing instantiates, needs no value: that call is dead code), a \
+real that is infinite or not a number and is converted to an integer anywhere (an assign, a \
+wire or port, a function body, a clocked block, a case label; Yosys warns "converting real \
+value inf to binary 32'x", a simulator makes it all x: use a real only to compute an integer \
+parameter or localparam, and keep it finite), a select outside the \
 range that Yosys finds once it inlines a function or unrolls a loop (pick(ui_in[3:0], 6) reading \
 bit 6 of a 4-bit argument), also one in an arm of ?: that a constant condition never selects \
 (guard it with an if instead), RTL that Icarus (iverilog -g2012) \

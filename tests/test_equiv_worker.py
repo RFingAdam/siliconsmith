@@ -712,10 +712,11 @@ def test_a_one_shot_difference_waits_for_the_first_differing_cycle(tmp_path: Pat
 
 # A stand-in for Yosys in the real race (`race_yosys`): `python helper.py <plan.json> <tag>` in
 # the scratch folder. The plan says, per tag, what to write to `<tag>.log`, how long to sleep
-# first, whether to start a child that sleeps (to see that the whole group is killed), whether
-# to kill itself (as the OOM killer would), and its exit code. It writes its pid (and its
-# child's) to `<tag>.pid`, all at once. With `"after": [file, n]` it first waits (up to 20 s)
-# until `file` holds n pids, so that it ends only after another helper has started.
+# first, how many bytes to write to its standard output, whether to start a child that sleeps
+# (to see that the whole group is killed), whether to kill itself (as the OOM killer would),
+# and its exit code. It writes its pid (and its child's) to `<tag>.pid`, all at once. With
+# `"after": [file, n]` it first waits (up to 20 s) until `file` holds n pids, so that it ends
+# only after another helper has started.
 HELPER = """
 import json, os, signal, subprocess, sys, time
 plan = json.load(open(sys.argv[1]))[sys.argv[2]]
@@ -732,6 +733,8 @@ if plan.get("after"):
             break
         time.sleep(0.05)
 time.sleep(plan.get("sleep", 0))
+sys.stdout.write("x" * plan.get("stdout", 0))
+sys.stdout.flush()
 open(f"{tag}.log", "w").write(plan.get("log", ""))
 sys.stderr.write(plan.get("stderr", ""))
 if plan.get("kill"):
@@ -780,6 +783,19 @@ def test_the_real_race_reports_each_script_as_it_ends(
     assert got == [("fast", 3, "fast log\n"), ("slow", 0, "slow log\nwarn\n")]
     assert time.monotonic() - started < 10.0  # at once, not one after the other
     assert (tmp_path / "slow.ys").read_text() == "script a"  # each with its own script and log
+
+
+def test_a_script_that_writes_a_lot_to_its_output_still_ends_in_time(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """RY3 (round 19): no one reads a script's standard output, so it must not be a pipe: a
+    Yosys that printed more than a pipe holds would block until the time limit (a false
+    `time_limit`) instead of ending with its exit code."""
+    helper_race(monkeypatch, tmp_path, {"loud": {"stdout": 2_000_000, "log": "ok\n", "code": 0}})
+    started = time.monotonic()
+    got = list(equiv.race_yosys(tmp_path, [("", "loud")], 30.0))
+    assert got == [("loud", 0, "ok\n")]
+    assert time.monotonic() - started < 15.0
 
 
 def test_closing_the_race_kills_the_other_search_and_its_children(
@@ -2501,6 +2517,140 @@ def test_a_constant_call_outside_a_parameter_value_is_refused_after_the_elaborat
     got, _ = purity(tmp_path / "b", monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE,
                     before=pick_tree("assign"), fake=fake)  # fmt: skip
     assert got is not None and "calls the function `pick`" in got[1]  # before Yosys's warning
+
+
+# -- round 19: a real that is infinite or NaN, converted where Yosys warns --------------------
+
+REAL_INF = "chip.v:11: Warning: converting real value inf to binary 32'x.\n"
+
+
+@pytest.mark.parametrize(
+    ("log", "shown"),
+    [
+        (REAL_INF, "the RTL (chip.v, line 11) converts a real that is infinite or not a number "
+                   "(Yosys: `inf`)"),
+        ("fr7.v:7: Warning: converting real value inf to binary 16'x.\n", "(fr7.v, line 7)"),
+        ("rc3.v:7: Warning: converting real value -nan to binary 32'x.\n", "(Yosys: `-nan`)"),
+        ("a.v:3: Warning: converting real value -inf to binary 4'xxxx.\n", "(Yosys: `-inf`)"),
+        ("Warning: converting real value nan to binary 8'x.\n", "the RTL converts a real"),
+    ],
+)  # fmt: skip
+def test_an_infinite_or_nan_real_that_yosys_converts_is_named_with_its_line(
+    log: str, shown: str
+) -> None:
+    got = equiv._yosys_real_x(f"1. Executing Verilog frontend.\n{log}End of script.\n")
+    assert got is not None and shown in got, got
+    assert "A simulator makes that integer all x" in got
+    assert "keep its value finite" in got
+
+
+def test_a_finite_real_that_yosys_converts_is_no_finding() -> None:
+    finite = (
+        "rw09c.v:7: Warning: converting real value 3.000000e+00 to binary 3.\n"
+        "fr.v:2: Warning: converting real value 2.500000e+00 to binary 3.\n"
+        "big.v:2: Warning: converting real value 1.000000e+30 to binary 32'10010110.\n"
+    )
+    assert equiv._yosys_real_x(finite) is None
+    assert equiv._yosys_real_x(OUT_OF_RANGE) is None
+    assert equiv._yosys_real_x("") is None
+
+
+def test_a_real_that_is_x_once_yosys_converts_it_is_refused_after_the_constant_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 19 fr1/fr10/rw09/rw10: `v = R;` in a function, `w <= R;`, `wire [3:0] w =
+    4'(integer'(R));` with `R = 1.0e999`: Yosys warns that the real comes out all x. Named
+    after a constant call and before a select outside the range (a more general finding)."""
+    module_il = "module \\tt_um_chip\nend\n"
+    fake = fake_elab(module_il, elab=(0, "inline", REAL_INF))
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, fake=fake)
+    assert got is not None and got[0] == "guard_sim_synth_differ", got
+    assert got[1].startswith("the RTL (chip.v, line 11) converts a real that is infinite"), got
+    fake = fake_elab(module_il, elab=(0, "inline", OUT_OF_RANGE + REAL_INF))
+    got, _ = purity(tmp_path / "b", monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, fake=fake)
+    assert got is not None and "converts a real that is infinite" in got[1]
+    fake = fake_elab(module_il, elab=(0, "inline", REAL_INF))
+    got, _ = purity(tmp_path / "c", monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE,
+                    before=pick_tree("assign"), fake=fake)  # fmt: skip
+    assert got is not None and "calls the function `pick`" in got[1]  # the constant call first
+    fake = fake_elab(module_il, elab=(0, "inline", REAL_INF.replace("inf to binary 32'x", "1")))
+    got, _ = purity(tmp_path / "d", monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE, fake=fake)
+    assert got is None
+
+
+# `f(8'h81, M)` on line 12 of chip.v (an `assign`), where f reads `v[k]` with a 3-bit argument k
+# into an 8-bit v (proven), and `localparam M` is on line 11: as Verilator's tree has it before
+# V3Param. Whether M is plain depends on both tools' values.
+def proven_call_tree() -> str:
+    def at(line: int) -> str:
+        return f"e,{line}:3,{line}:5"
+
+    def logic(left: int) -> dict[str, Any]:
+        bound = [{"type": "CONST", "name": f"?32?sh{left:x}"}]
+        rng = {"type": "RANGE", "leftp": bound, "rightp": [{"type": "CONST", "name": "?32?sh0"}]}
+        return {"type": "BASICDTYPE", "keyword": "logic", "rangep": [rng]}
+
+    def port(addr: str, name: str, left: int) -> dict[str, Any]:
+        return {"type": "VAR", "addr": addr, "name": name, "varType": "PORT", "loc": at(3),
+                "direction": "INPUT", "isFuncLocal": True,
+                "childDTypep": [logic(left)]}  # fmt: skip
+
+    ret = {"type": "VAR", "addr": "(r)", "name": "f", "loc": at(3), "isFuncLocal": True,
+           "isFuncReturn": True, "childDTypep": [logic(0)]}  # fmt: skip
+    read = {
+        "type": "ASSIGN",
+        "loc": at(4),
+        "lhsp": [{"type": "VARREF", "varp": "(r)", "name": "f", "access": "WR", "loc": at(4)}],
+        "rhsp": [{
+            "type": "SELBIT", "loc": at(4),
+            "fromp": [{"type": "VARREF", "varp": "(v)", "name": "v", "access": "RD", "loc": at(4)}],
+            "bitp": [{"type": "VARREF", "varp": "(k)", "name": "k", "access": "RD", "loc": at(4)}],
+        }],
+    }  # fmt: skip
+    func = {"type": "FUNC", "addr": "(F)", "name": "f", "loc": at(2),
+            "stmtsp": [ret, port("(v)", "v", 7), port("(k)", "k", 2), read]}  # fmt: skip
+    m = {"type": "VAR", "addr": "(M)", "name": "M", "varType": "LPARAM", "isParam": True,
+         "loc": "e,11:20,11:21", "valuep": [{"type": "CONST", "name": "?32?sh3"}]}  # fmt: skip
+    args = [
+        {"type": "ARG", "exprp": [{"type": "CONST", "name": "8'h81", "loc": at(12)}]},
+        {"type": "ARG", "exprp": [{"type": "VARREF", "varp": "(M)", "name": "M", "loc": at(12)}]},
+    ]
+    call_f = {"type": "FUNCREF", "taskp": "(F)", "name": "f", "loc": at(12), "argsp": args}
+    item = {"type": "ASSIGNW", "loc": at(12), "rhsp": [call_f]}
+    top = {"type": "MODULE", "addr": "(T)", "name": "tt_um_chip", "level": 1,
+           "stmtsp": [func, m, item]}  # fmt: skip
+    return json.dumps({"type": "NETLIST", "modulesp": [top]})
+
+
+SIM_M3 = SIM_TOP + 'P_0x1 .param/l "M" 1 4 11, +C4<00000000000000000000000000000011>;\n' + SIM_TABLE
+
+
+@pytest.mark.parametrize(
+    ("verilator", "vvp", "refused"),
+    [
+        (param_tree("32'sh3"), SIM_M3, False),  # a plain number in both tools
+        # PV6: only Verilator lists M: its value is not compared, so it is not plain (the
+        # simulator's values, not Verilator's twice, decide)
+        (param_tree("32'sh3"), SIM_CLEAN, True),
+        (EMPTY_TREE, SIM_M3, True),  # only the simulator lists it: built, not plain
+        # r01/r09: neither tool builds M (an unchosen generate branch): dead code in every tool
+        (EMPTY_TREE, SIM_CLEAN, False),
+    ],
+    ids=["plain", "verilator-only", "simulator-only", "built-by-no-tool"],
+)
+def test_a_proven_call_with_a_parameter_counts_its_values_in_both_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verilator: str, vvp: str, refused: bool
+) -> None:
+    simulator(monkeypatch, equiv.LintRun(0, ""), vvp)
+    fake = fake_elab("module \\tt_um_chip\nend\n")
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=verilator,
+                    before=proven_call_tree(), fake=fake)  # fmt: skip
+    if refused:
+        assert got is not None and got[0] == "guard_sim_synth_differ", got
+        assert "(chip.v, line 12) calls the function `f` with constant arguments" in got[1]
+    else:
+        assert got is None, got
+    assert fake.tags == ["elab"]
 
 
 def test_a_simulator_that_times_out_or_cannot_start(

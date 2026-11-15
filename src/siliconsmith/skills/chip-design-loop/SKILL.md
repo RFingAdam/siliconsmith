@@ -90,6 +90,7 @@ Write every signal of a combinational block at the top of the block, before any 
 A `function` may read only its arguments (pass the rest in), every argument must be an `input` (return the value; Icarus cannot compile an `output` argument) and a `task` is refused; so is a hierarchical function call (`g.f(a)`) and a hierarchical name in a function (`g.k`; a member of an argument or local, such as `p.lo` of a struct `p`, is fine unless `p` is also a label, module, instance or call name (the port name in a connection such as `.p(p)` does not count), or declared inside an `if`).
 In MyHDL the core must be the plain single module MyHDL writes, and a level-sensitive block must have the plain shape `@always_comb` writes and list every signal it reads; otherwise it is refused, so use `@always_comb`.
 Use a parameter, not a macro.
+Never switch off a race warning (`BLKSEQ`, `MULTIDRIVEN`, ...) with `lint_off`, also not as one code of a list such as `lint_off WIDTH,BLKSEQ`: every code of the list is judged.
 
 ## Constants the equivalence check accepts
 
@@ -109,6 +110,11 @@ A select outside the range that Yosys finds once it inlines a function or unroll
 Proven: an index from a simple `for` loop inside the range (`for (i = 0; i < 8; i++)` on 8 bits), one whose declared width fits (a 2-bit index into 4 bits) and constants or parameters with one value, also through `+ - *`, so a bit-reverse helper `rev(8'h81)` is fine. A constant select of one of these (`k[1:0]`) counts too, with the range of its width only, not its loop's (the divisor `i[7:0] + 8'd1` of an 8-bit divide is not proven nonzero).
 Not proven: a 3-bit index into 4 bits, a loop to `i <= 8` over 8 bits, `v[i - 1]` from `i = 0`, a `signed` argument as index, a loop step other than 1, a `while` loop (write it as a `for` loop), a `$bits` bound, any operator other than `+ - *` (a shift `v[i << 1]`, `^`, `&`, `|`: write `v[7 - i]`, not `v[i ^ 7]`), a call as an argument (`f(g(8'd1))`), another local or an element of an array as index, even through a select (`v[m[0]]`, `v[loc[1:0]]`).
 An argument that can be x refuses even a proven call: an x or z bit, a divide, another call, or a real (`1.0e999`, a `real` or untyped parameter that holds one, `$sqrt(-1)`, a cast such as `integer'(R)`), because a simulator turns an infinite or NaN real into an all-x integer, which reads x at the index. Pass plain integers.
+
+## Reals and hierarchical names
+
+A real or a hierarchical name (`g.R`) as an argument refuses a constant call of any of your functions, even one without a select (`case (x) f(R): ...` with an infinite `R`): Yosys works the call out with a number where a simulator has x. A parameter or `localparam` in code that no tool builds (a generate branch the parameters do not choose, a module nothing instantiates) needs no value, since that call is dead code everywhere.
+An infinite or NaN real converted to an integer anywhere else is refused too (`wire [3:0] w = integer'(R);`, `v = R;` in a function, `w <= R;` in a clocked block; Yosys warns `converting real value inf to binary 32'x`). Use a real only to compute an integer parameter or `localparam`, and keep it finite.
 
 ## Simulator limits
 

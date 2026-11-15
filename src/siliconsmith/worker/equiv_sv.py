@@ -68,8 +68,10 @@ In every file:
   `module NAME #(` and `NAME #( ... ) INSTANCE [range] (`; neither name may be a reserved word;
 * `$readmemh`, `$readmemb`, `$test$plusargs`, `$value$plusargs`;
 * a `// verilator lint_off` comment with no code, or with a code that hides what the lint step
-  catches (BLKSEQ, COMBDLY, CASEX, CASEWITHX, CASEINCOMPLETE, LATCH, MULTIDRIVEN, ...): the lint
-  runs with every warning fatal, and that is what finds a blocking race or an x in a case item.
+  catches (BLKSEQ, COMBDLY, CASEX, CASEWITHX, CASEINCOMPLETE, LATCH, MULTIDRIVEN, ...), also as
+  any item of a comma list (`lint_off WIDTH,BLKSEQ`: Verilator turns off every code of it): the
+  lint runs with every warning fatal, and that is what finds a blocking race or an x in a case
+  item.
 
 * `function` without `automatic` (any front-end): a simulator keeps the local variables of a plain
   function between calls; a function argument that is not an input (`output`, `inout` or `ref`
@@ -1387,9 +1389,13 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
         if not _parameter_list(scan, m.start()):
             return refuse("a delay (`#`)", m.start())
     for m in _LINT_OFF.finditer(text):  # a comment: look at the original text
+        # Verilator turns off every code of a comma list (`lint_off WIDTH,BLKSEQ`, also with an
+        # empty item: `WIDTH,,BLKSEQ`), so every word counts, not only the first (round 19)
         words = re.findall(r"[-\w]+", m.group(1), re.ASCII)
-        code = next((w for w in words if not w.startswith("-")), "")
-        if code == "" or code.upper() in LINT_CODES_NOT_TO_HIDE:
+        codes = [w for w in words if not w.startswith("-")]
+        hidden = next((c for c in codes if c.upper() in LINT_CODES_NOT_TO_HIDE), None)
+        if not codes or hidden is not None:
+            code = hidden or ""
             return refuse(f"`verilator lint_off {code}`".replace(" `", "`"), m.start(), src=text)
     if hand:
         event = _event_controls(scan)

@@ -1752,6 +1752,122 @@ def test_the_plain_values_are_numbers_in_both_tools() -> None:
     assert et.plain_values(verilator, {}) == set()
 
 
+# -- round 19: a real in any constant call, a hierarchical name, a parameter no tool builds -------
+# xr01: `f(g.R)` with `if (1) begin : g localparam real R = 1.0e999; end` (a VARXREF before
+# V3Param, which no rule looked at). xs5: `case (ui_in) f(R): ...` with `f = a + 1`, a function
+# without a computed index: Yosys works the call out itself without a warning, a simulator gets
+# x back and its case label of x matches nothing, while the gates need not keep the x.
+
+SAFE_F = f8(to_f(rd("(V8)", "v")))  # f = v: no computed select, no divide
+XREF = {"type": "VARXREF", "name": "R", "dotted": "g", "loc": "e,9:5,9:8"}  # g.R
+DOT = {"type": "DOT", "name": "R", "loc": "e,9:5,9:8"}  # a dotted name not resolved
+STD_P = var("(SP)", "SP", 2, varType="LPARAM", isParam=True, valuep=[num(3)]) | {
+    "loc": "d,2:1,2:4"  # a parameter of Verilator's own std package, not one of our files
+}
+P_KEY, W_KEY = ("core.v", 2, "P"), ("core.v", 2, "W")
+REAL_ARGUMENTS = [
+    pytest.param(const("inf.0"), PLAIN, id="literal-inf"),  # f(1.0e999)
+    pytest.param(const("2.5"), PLAIN, id="literal-finite"),  # any real literal (fail closed)
+    pytest.param(named("(RL)", "R"), PLAIN, id="real-parameter"),  # f(R)
+    pytest.param(named("(LP)", "P"), frozenset({W_KEY}), id="localparam-not-plain"),
+    # X8: a GPARAM (a child's parameter that an override sets to a real) counts like an LPARAM
+    pytest.param(named("(GP)", "W"), frozenset({P_KEY}), id="parameter-not-plain"),
+    pytest.param(XREF, PLAIN, id="hierarchical"),  # f(g.R)
+    pytest.param(DOT, PLAIN, id="unresolved-dot"),
+    pytest.param(unary("SQRTD", unary("NEGATE", const("1.0"))), PLAIN, id="sqrt"),
+    pytest.param(unary("SQRTD", num(4)), PLAIN, id="sqrt-of-a-number"),  # $sqrt(4): makes a real
+    pytest.param(unary("ITORD", num(3)), PLAIN, id="itor"),  # $itor(3)
+    pytest.param(unary("RTOIS", unary("BITSTOREALD", num(0x7FF0000000000000, "64'h"))), PLAIN,
+                 id="bitstoreal"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("value", "plain"), REAL_ARGUMENTS)
+@pytest.mark.parametrize("proven", [False, True], ids=["safe-function", "proven-function"])
+def test_a_real_or_hierarchical_argument_refuses_a_constant_call_of_any_function(
+    value: dict[str, Any], plain: frozenset[et.ParamKey], proven: bool
+) -> None:
+    fn, args = (PROVEN_K, (num(0x81, "8'h"), value)) if proven else (SAFE_F, (value,))
+    got = judged(fn, REAL_R, args=args, plain=plain)
+    assert got is not None and (got.name, got.line) == ("f", 9)
+    assert "a hierarchical name, a real: a simulator converts an infinite or NaN real to an " in (
+        got.sentence
+    )
+    assert "which any function can give back" in got.sentence
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(num(3), id="number"),
+        pytest.param(named("(LP)", "P"), id="plain-localparam"),
+        pytest.param(named("(GP)", "W"), id="plain-parameter"),
+        pytest.param(named("(GV)", "g"), id="genvar"),
+        pytest.param(const("'1"), id="fill"),  # not a real (a proven function refuses it)
+        pytest.param(const("8'h41"), id="sized"),  # "A" as Verilator links it in an argument
+        pytest.param(const('"AB"'), id="string"),
+        pytest.param(unary("CASTPARSE", num(3)), id="size-cast"),  # 8'(3): its operand counts
+        pytest.param(unary("CAST", named("(LP)", "P"), childDTypep=[INTEGER]), id="cast"),
+        pytest.param(ar("DIV", num(8), named("(LP)", "P")), id="divide"),  # x is not a real
+        pytest.param({"type": "ATTROF", "fromp": [named("(WS)", "w")]}, id="bits"),
+    ],
+)  # fmt: skip
+def test_an_argument_that_holds_no_real_lets_a_safe_constant_call_through(
+    value: dict[str, Any],
+) -> None:
+    assert judged(SAFE_F, REAL_R, args=(value,), plain=PLAIN) is None
+
+
+def test_a_real_argument_in_a_parameter_value_is_left_to_the_value_comparison() -> None:
+    """Only an inline call counts a real argument for a function without a computed index: a
+    call in a parameter's value is compared with the simulator's value (`x_parameter`,
+    `disagreement`), so `valued_calls` does not name it. A proven function's call there with a
+    hierarchical argument is named (its value must then be compared)."""
+
+    def value(*args: dict[str, Any]) -> dict[str, Any]:
+        call_f = call("(c)", "(F8)", "f", 7) | {
+            "argsp": [{"type": "ARG", "exprp": [a]} for a in args]
+        }
+        return var("(V)", "V", 7, varType="LPARAM", isParam=True, valuep=[call_f])
+
+    def valued(fn: dict[str, Any], *args: dict[str, Any]) -> frozenset[et.ParamKey]:
+        return et.valued_calls(module(*NAMED, fn, REAL_R, value(*args)), META, OURS)
+
+    assert valued(SAFE_F, named("(RL)", "R")) == set()
+    assert valued(SAFE_F, XREF) == set()
+    assert valued(PROVEN_K, num(0x81, "8'h"), XREF) == {("core.v", 7, "V")}
+    assert valued(PROVEN_K, num(0x81, "8'h"), num(3)) == set()
+
+
+@pytest.mark.parametrize("fn", [PROVEN_K, SAFE_F], ids=["proven-function", "safe-function"])
+def test_a_parameter_that_no_tool_builds_counts_as_plain(fn: dict[str, Any]) -> None:
+    """r01, r07, r09 (round 19): a localparam in a generate branch that the parameters do not
+    choose, or a parameter of a sub-module that no branch instantiates, is in neither tool's
+    values: the call that uses it is dead code in every tool. One that a tool builds, or one of
+    a file that is not ours, still counts as not plain."""
+    args = (num(0x81, "8'h"), named("(LP)", "P")) if fn is PROVEN_K else (named("(LP)", "P"),)
+    assert judged(fn, REAL_R, args=args) is not None  # no `built`: every parameter can be x
+    assert judged(fn, REAL_R, args=args, built=frozenset()) is None  # P is built by no tool
+    assert judged(fn, REAL_R, args=args, built=frozenset({P_KEY})) is not None
+    assert judged(fn, REAL_R, args=args, built=frozenset({W_KEY})) is None
+    std = (num(0x81, "8'h"), named("(SP)", "SP")) if fn is PROVEN_K else (named("(SP)", "SP"),)
+    assert judged(fn, REAL_R, STD_P, args=std, built=frozenset()) is not None  # not our file
+    # a real localparam that no tool builds: dead code too
+    real = (num(0x81, "8'h"), named("(RL)", "R")) if fn is PROVEN_K else (named("(RL)", "R"),)
+    assert judged(fn, REAL_R, args=real, built=frozenset()) is None
+    assert judged(fn, REAL_R, args=real, built=frozenset({("core.v", 4, "R")})) is not None
+
+
+def test_the_built_values_are_what_either_tool_builds() -> None:
+    a, b, c, d = ("core.v", 2, "A"), ("core.v", 3, "B"), ("core.v", 4, "C"), ("core.v", 5, "D")
+    e = ("core.v", 6, "E")
+    verilator = {a: [(("t",), 8)], b: None, c: [], d: []}  # c, d: a module with no instance
+    simulator = {d: [(("t",), 1)], e: None}
+    assert et.built_values(verilator, simulator) == {a, b, d, e}
+    assert et.built_values(verilator, {}) == {a, b}  # a value that is not a number: built
+    assert et.built_values({}, simulator) == {d, e}
+
+
 # -- round 18: guards of `_Ranges` that only a test of their own can pin --------------------------
 
 V16 = arg("(V16)", "u", basic(15))  # a 16-bit argument
@@ -1842,6 +1958,17 @@ def test_the_range_guard_cases_have_proven_twins() -> None:
     wide = f8(WIDE, B8, *for_loop("(B8)", num(0), lt(rd("(B8)", "i"), num(25)), [to_f(read_bit(
         rd("(WD)", "t"), ar("MUL", rd("(B8)", "i"), rd("(WP)", "W"))))]))  # fmt: skip
     assert judged(wide, SEGS, WPAR, G, agreed={("core.v", 2, "W"): 5}) is None
+
+
+def test_a_parameter_of_unknown_sign_is_one_bit_wider_when_it_is_signed() -> None:
+    """G71 (round 19): t[i + W] for a byte i = 0 to 3 and W = 200 of unknown sign: 200 to 203
+    fits 8 bits unsigned, and a signed W is at least 9 bits wide (200 needs them), so the sum
+    fits 9 bits signed too and the select is proven. Without that one bit it would not fit 8
+    bits signed, and the call would be refused."""
+    fn = f8(WIDE, B8, *for_loop("(B8)", num(0), lt(rd("(B8)", "i"), num(4)), [to_f(read_bit(
+        rd("(WD)", "t"), ar("ADD", rd("(B8)", "i"), rd("(WP)", "W"))))]))  # fmt: skip
+    assert judged(fn, SEGS, WPAR, G, agreed={("core.v", 2, "W"): 200}) is None
+    assert judged(fn, SEGS, WPAR, G, agreed={("core.v", 2, "W"): 253}) is not None  # to 256
 
 
 @pytest.mark.parametrize(

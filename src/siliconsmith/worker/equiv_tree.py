@@ -649,11 +649,12 @@ class _Ranges:
     An expression's operands are constants (a number without an x or z bit), parameters and
     localparams with their one value in every instance (`known`: the value Verilator and the
     simulator agree on, found by the caller), input arguments that the function never writes, the
-    variable of a simple loop inside the loop's body, and bit or part selects of them at constant
-    indices inside their range (only of a plain vector or integer that is itself one of these
-    operands). An argument takes every value of its declared type (its width and sign: `logic [3:0]`
-    0 to 15, `integer` -2**31 to 2**31-1); the variable of a simple loop takes, in the loop's body,
-    the values the loop gives it (`scan`). `+`, `-` and `*` are worked out on whole numbers, then
+    variable of a simple loop inside the loop's body, and bit selects or constant part-selects
+    (`k[3]`, `k[1:0]`; not an indexed part-select such as `k[0 +: 2]`) of them inside their range
+    (only of a plain vector or integer that is itself one of these operands). An argument takes
+    every value of its declared type (its width and sign: `logic [3:0]` 0 to 15, `integer` -2**31
+    to 2**31-1); the variable of a simple loop takes, in the loop's body, the values the loop
+    gives it (`scan`). `+`, `-` and `*` are worked out on whole numbers, then
     checked against the expression's real width and sign (`value`). Anything else (another
     operator, a local outside a simple loop, an argument the function writes, a variable of another
     type, a genvar, a parameter with several values, and a select of any of these or of an array's
@@ -690,12 +691,15 @@ class _Ranges:
     in Yosys; a divisor that is never 0 gives a defined quotient. So inside a function whose every
     such select and divide is proven, x can only come from somewhere else: an argument that is x
     (`_constant_calls` refuses a constant call whose arguments can be x, see `_x_argument`), a local
-    read before it is written, or a function that leaves its result unset (both not detected, see
+    read before it is written, a function that leaves its result unset (both not detected, see
     `constant_call`; neither can reach a proven index, whose operands are constants, parameters with
     one value, unwritten arguments, loop variables, which the loop's first statement sets, and
-    constant selects of these). A call of a function whose selects are proven, made inside another
-    function, counts as proven only when every argument has a proven range itself
-    (`_constant_calls`), so a callee's argument is never x either. By induction over the order the
+    constant selects of these), or a real that is infinite or NaN converted to an integer in the
+    body (`v = R;` with `R = 1.0e999`, then `v[k]` at a proven index reads an x bit; round 19:
+    refused from Yosys's warning, `equiv._yosys_real_x`; it cannot reach a proven index either).
+    A call of a function whose selects are proven, made inside another function, counts as
+    proven only when every argument has a proven range itself (`_constant_calls`), so a callee's
+    argument is never x either. By induction over the order the
     function runs in, the first x cannot come from a proven select or divide, whose operands are
     then all defined."""
 
@@ -1018,22 +1022,53 @@ def _real(kind: str) -> bool:
     )
 
 
+def _real_argument(call: dict[str, Any], unplain: frozenset[str]) -> bool:
+    """True if an argument of a call can hold a real although it reads no variable: a real
+    literal (a CONST whose name is neither a number, `?32?sh5` or `4'ha`, nor a fill such as
+    `'1`, nor a string: `inf.0`, `2.5`), a parameter or localparam whose `addr` is in `unplain`
+    (its value is not a plain number in every instance in both tools: a real, typed or untyped,
+    also one an override sets; a string or another value that is not a plain number counts
+    too, fail closed), a hierarchical name or one not yet resolved (a VARXREF, any type ending
+    in XREF, a DOT: `g.R` of a generate block; before V3Param it points at no VAR whose value
+    could be judged, and `reads_a_variable` does not count it), or a node that makes a real
+    (`_real`: `$sqrt(-1)`, `$ln(0)`, `$bitstoreal(...)`; not a cast, whatever a cast converts
+    is judged by itself).
+
+    Round 19: Yosys works a call with constant arguments out itself and converts a real
+    argument without a warning (`equiv._yosys_real_x` does not see it), while a simulator
+    converts an infinite or NaN real to an all-x integer. Even a function without a computed
+    index gives that x back (`f = a + 1`), and a case label that is x matches nothing in a
+    simulator while the gates need not keep the x (`case (ui_in) f(R): ...` with
+    `R = 1.0e999`), so this counts for a call of any function (`f(g.R)` with `localparam real
+    R = 1.0e999` in the generate block `g`, too)."""
+    for arg in call.get("argsp") or []:
+        for node in _subtree(arg) if isinstance(arg, dict) else ():
+            kind = str(node.get("type", ""))
+            if kind == "CONST" and not any(c in str(node.get("name", "")) for c in "'?\""):
+                return True
+            if kind == "VARREF" and str(node.get("varp")) in unplain:
+                return True
+            if kind.endswith("XREF") or kind in UNRESOLVED:
+                return True
+            if _real(kind) and not kind.startswith("CAST"):
+                return True
+    return False
+
+
 def _x_argument(call: dict[str, Any], unplain: frozenset[str]) -> bool:
-    """True if an argument of a call can be x for a simulator although it reads no variable: a
-    constant that is not a plain number (an x or z bit; a real such as `inf.0` or `3.0`; a
-    string), a parameter or localparam whose `addr` is in `unplain` (its value is not a plain
-    number in every instance in both tools: a real, typed or untyped, also one an override
-    sets; a string), a node that makes or converts a real (`_real`: `$sqrt(-1)`, `$ln(0)`,
-    `$bitstoreal(...)`, a cast), or an operator that can give x (`_x_operator`: a divide, a
-    `**`, another call). A real that is infinite or NaN (`1.0e999`, `1.0e999 - 1.0e999`,
-    `$sqrt(-1)`) becomes an all-x integer in a simulator when it is converted to an integer
-    (round 18: `f(integer'(R))` with `R = 1.0e999`), so a real counts whatever its value."""
+    """True if an argument of a call can be x for a simulator although it reads no variable:
+    one that can hold a real (`_real_argument`), a constant that is not a plain number (an x
+    or z bit; a fill such as `'1`; a string), a cast (`_real`: `integer'(R)`, `8'(R)`), or an
+    operator that can give x (`_x_operator`: a divide, a `**`, another call). A real that is
+    infinite or NaN (`1.0e999`, `1.0e999 - 1.0e999`, `$sqrt(-1)`) becomes an all-x integer in
+    a simulator when it is converted to an integer (round 18: `f(integer'(R))` with
+    `R = 1.0e999`), so a real counts whatever its value."""
+    if _real_argument(call, unplain):
+        return True
     for arg in call.get("argsp") or []:
         for node in _subtree(arg) if isinstance(arg, dict) else ():
             kind = str(node.get("type", ""))
             if kind == "CONST" and _number(node) is None:
-                return True
-            if kind == "VARREF" and str(node.get("varp")) in unplain:
                 return True
             if _real(kind) or _x_operator(node) is not None:
                 return True
@@ -1049,7 +1084,8 @@ def _constant_calls(
     override whose parameter does not resolve too). `known`: the one agreed value of a
     parameter, by the `addr` of its VAR (`_Ranges`). `plain`: the `addr`s of the parameters
     whose value is a plain number in every instance in both tools; any other parameter can make
-    an argument x (`_x_argument`). See `constant_call`."""
+    an argument x (`_x_argument`), or hold a real (`_real_argument`, for a call of any function
+    outside a parameter value). See `constant_call`."""
     if not isinstance(tree, dict):
         raise TreeError("the tree is not an object")
     nodes = list(_subtree(tree))
@@ -1116,7 +1152,7 @@ def _constant_calls(
     # it ends. Round 18: judged one by one as the calls were met, a function called back (`f`
     # calls `g` calls `f`) was read as SAFE while it was still being judged, and kept that.
     for func in functions.values():
-        ranges.scan(func)  # every function first: `defined` and `in_range` read the loops
+        ranges.scan(func)  # the loops: `defined` and `in_range` read those of their own function
     level: dict[str, int] = {}
     calls: dict[str, list[tuple[str, bool]]] = {}
     for addr, func in functions.items():
@@ -1150,7 +1186,11 @@ def _constant_calls(
             arguments = [a for a in node.get("argsp") or [] if isinstance(a, dict)]
             if not any(reads_a_variable(a) for a in arguments):
                 how = level.get(str(node.get("taskp")), risky)
-                if how == risky or (how == proven and _x_argument(node, unplain)):
+                if (
+                    how == risky
+                    or (how == proven and _x_argument(node, unplain))
+                    or (owner is None and _real_argument(node, unplain))
+                ):
                     yield node, owner
         for key, value in node.items():
             items = value if isinstance(value, list) else [value]
@@ -1205,12 +1245,25 @@ def plain_values(verilator: ParamValues, simulator: ParamValues) -> frozenset[Pa
     return frozenset(key for key, mine in verilator.items() if mine and simulator.get(key))
 
 
+def built_values(verilator: ParamValues, simulator: ParamValues) -> frozenset[ParamKey]:
+    """The parameters that some tool builds: Verilator's tree has it in at least one module
+    instance or loop pass, or with a value that is not a plain number (None: counted as built,
+    fail closed), or the simulator's elaboration lists it at all. A parameter of our files that
+    neither tool builds is in code that no tool runs (a generate branch the parameters do not
+    choose, a loop with no pass, a module nothing instantiates), so a call that uses it is dead
+    code in every tool (`constant_call`)."""
+    return frozenset(key for key, mine in verilator.items() if mine is None or mine) | frozenset(
+        simulator
+    )
+
+
 def constant_call(
     tree: Any,
     meta: Any,
     ours: list[str],
     agreed: dict[ParamKey, int] | None = None,
     plain: frozenset[ParamKey] = frozenset(),
+    built: frozenset[ParamKey] | None = None,
 ) -> Unknown | None:
     """The first call (by file order, line, column) of one of the design's functions that can
     give a simulator an x for constant arguments, made with constant arguments anywhere but in
@@ -1245,13 +1298,32 @@ def constant_call(
     come in; and a real argument (`f(integer'(R))`, `f(R)` with `R = 1.0e999`) counts as one
     that can be x: a simulator converts an infinite or NaN real to an all-x integer.
 
+    Round 19: an argument that can hold a real (`_real_argument`: a real literal, a parameter
+    that is not in `plain`, a hierarchical name such as `g.R`, a node that makes a real) counts
+    for a call of ANY function outside a parameter value, also one without a computed index:
+    Yosys works such a call out itself without a warning, and the all-x integer a simulator
+    makes of an infinite real comes back out of `f = a + 1` too (a case label of x matches
+    nothing in a simulator). And a parameter of our files that neither tool builds (not in
+    `built`, from
+    `built_values`: `localparam [7:0] M` in the generate branch `if (USE_REV)` with
+    `USE_REV = 0`, a parameter of an optional sub-module that no branch instantiates) counts as
+    plain: no tool runs the call that uses it. Which branches and instances the tools build is
+    judged elsewhere (`x_condition`, the parameter values compared with the simulator's, and
+    `equiv_elab.unmatched` for what Yosys builds). None (the default): every parameter that is
+    not in `plain` can make an argument x. A hierarchical name in an argument (`f(g.R)`) always
+    can (`_x_argument`).
+
     An unresolved name (`PARSEREF`, a `VARREF` to no `VAR`) counts as a variable: only a module
     that nothing instantiates is left unlinked (in the design Verilator stops with an error)."""
     files = _file_letters(meta)
     keys = _keys(tree, files)
     agreed = agreed or {}
     known = {addr: agreed[key] for addr, key in keys.items() if key in agreed}
-    plains = frozenset(addr for addr, key in keys.items() if key in plain)
+    plains = frozenset(
+        addr
+        for addr, key in keys.items()
+        if key in plain or (built is not None and key[0] in ours and key not in built)
+    )
     found: list[tuple[int, int, int, str, str]] = []
     for node, owner in _constant_calls(tree, known, plains):
         if owner is None:
@@ -1269,11 +1341,11 @@ def constant_call(
         "outside the value of a parameter or localparam, and the function reads a vector at a "
         "computed index that the check cannot prove inside the declared range or divides by a "
         "value it cannot prove nonzero, or an argument can be x (an x or z bit, a divide, "
-        "another call, a real: a simulator converts an infinite or NaN real to an all-x "
-        "integer). A select outside the range or at an x index, and a divide by 0, are x to a "
-        "simulator, which an `if` or `!` inside the function can turn into a 0 or 1 that Yosys "
-        "does not use. The check compares such values only for parameters, so it cannot vouch "
-        "for the design. "
+        "another call, a hierarchical name, a real: a simulator converts an infinite or NaN "
+        "real to an all-x integer, which any function can give back). A select outside the "
+        "range or at an x index, a divide by 0 and such a real are x to a simulator, which an "
+        "`if`, a `!` or a case label can turn into a 0 or 1 that Yosys does not use. The check "
+        "compares such values only for parameters, so it cannot vouch for the design. "
         f"Compute it in a localparam first (`localparam integer V = {name}(...);`, inside the "
         "generate loop for a genvar argument) and use that",
     )

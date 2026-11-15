@@ -449,6 +449,12 @@ RTL_SEEDS = [
     ("ri02", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("ri04", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("ri11", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # Round 19: an infinite real that Yosys converts to an all-x integer outside a constant call
+    # (stored by a clocked block, assigned onto a wire that is a case label), and a lint_off list
+    # of codes that switches off BLKSEQ (xrefreal, realbody and realsafe are below)
+    ("realff", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("realcase", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("lolist", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
 
 
@@ -734,6 +740,9 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # Round 18: realok (the control of ri09: a proven constant call with plain integer parameters,
 # typed, untyped and set by an override) and mr4dbp (the control of mr4db: the same call cycle
 # with every select proven).
+# Round 19: realfin (the control of realcase: a finite real, the same number in both tools) and
+# deadlp, deadkid and deadcase (a localparam, a child's parameter and a generate case localparam
+# passed to a helper with a proven select in code that no tool builds: dead code everywhere).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -764,6 +773,10 @@ EQUIVALENT = [
     "aluok",
     "realok",
     "mr4dbp",
+    "realfin",
+    "deadlp",
+    "deadkid",
+    "deadcase",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
@@ -806,6 +819,11 @@ REFUSAL_ADVICE = {
     "ri09": "a real: a simulator converts an infinite or NaN real to an all-x integer",
     "mr4db": "calls the function `g` with constant arguments",
     "vc03": "gives the parameter `RR` a value with a call of a function that can give",
+    # Round 19: a real localparam read by a hierarchical name in a proven call, an infinite real
+    # converted in a function body, and a real argument of a function that has no select
+    "xrefreal": "a hierarchical name",
+    "realbody": "Use a real only to compute an integer parameter or localparam",
+    "realsafe": "a real: a simulator converts an infinite or NaN real to an all-x integer",
 }
 
 

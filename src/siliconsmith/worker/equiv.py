@@ -836,11 +836,15 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        there with the one value that both tools give it in every instance
        (`equiv_tree.agreed_values` of Verilator's and Icarus's values), so this runs after
        `_icarus_checks`. Such a call still counts when an argument can be x, a real among them
-       (an infinite or NaN real is an all-x integer to a simulator) and a parameter whose value
-       is not a plain number in both tools (`equiv_tree.plain_values`). Then `_yosys_outside`:
-       no select outside the range in Yosys's elaboration (its warning; Yosys sees one inside a
-       function it inlines, also in an arm of `?:` that a constant condition never selects).
-       Last, so that a more specific finding about the same code is named first.
+       (an infinite or NaN real is an all-x integer to a simulator), a hierarchical name and a
+       parameter whose value is not a plain number in both tools (`equiv_tree.plain_values`),
+       unless neither tool builds that parameter (`equiv_tree.built_values`: its code is dead
+       in every tool). Then `_yosys_real_x`: no real that is infinite or NaN converted to an
+       integer anywhere Yosys converts one (its warning: an assignment, also inside a function,
+       a wire, a port). Then `_yosys_outside`: no select outside the range in Yosys's
+       elaboration (its warning; Yosys sees one inside a function it inlines, also in an arm of
+       `?:` that a constant condition never selects). Last, so that a more specific finding
+       about the same code is named first.
     """
     cleaned = {fname: equiv_sv.clean(text) for fname, text in sources}
     folder = r.scratch / "func_tree"
@@ -911,7 +915,8 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     try:  # judged last; a parameter counts with the one value both tools give it
         agreed = equiv_tree.agreed_values(values, simulated)
         plain = equiv_tree.plain_values(values, simulated)
-        constant = equiv_tree.constant_call(before, meta, list(cleaned), agreed, plain)
+        built = equiv_tree.built_values(values, simulated)
+        constant = equiv_tree.constant_call(before, meta, list(cleaned), agreed, plain, built)
     except (ValueError, equiv_tree.TreeError, RecursionError) as exc:
         return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
 
@@ -928,6 +933,7 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     if failure is not None:
         return r.failed(failure, "Could not read the RTL's elaboration")
     outside = _yosys_outside(text)  # judged last
+    real = _yosys_real_x(text)
     what = "the elaboration of the RTL"
     try:
         rtlil = (elab / "elab.il").read_text("latin-1")
@@ -942,9 +948,44 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         return refuse("guard_sim_synth_differ", f"{early.sentence}.")
     if constant is not None:
         return refuse("guard_sim_synth_differ", f"{constant.sentence}.")
+    if real is not None:
+        return refuse("guard_sim_synth_differ", real)
     if outside is not None:
         return refuse("guard_sim_synth_differ", outside)
     return None
+
+
+# Yosys's warning when it turns a real into bits; an infinite or NaN real comes out all x
+# (`converting real value inf to binary 32'x.`; a finite one gives a number: `... to binary 3.`)
+_REAL_TO_X = re.compile(
+    r"^(?:([^:\s]+):(\d+): )?Warning: converting real value (\S+) to binary \d+'x", re.M
+)
+
+
+def _yosys_real_x(log_text: str) -> str | None:
+    """The sentence for a real that is infinite or not a number (NaN) and that Yosys converted
+    to an integer when it elaborated the RTL (its warning "converting real value inf to binary
+    32'x"), else None. A simulator converts such a real to an all-x integer too, and an `if`, a
+    `!` or a case label turns that x into a 0 or 1 that the gates need not give: the RTL's x is a
+    don't-care to the proof. Yosys warns for every such conversion it makes, wherever it is: an
+    assignment in an always block or a function (also one it works out with constant
+    arguments), a wire's value, an assign, a port connection (round 19: `v = R;` in a function,
+    `w <= R;`, `wire [3:0] w = 4'(integer'(R));` as a case label, `.a(R)`, all with
+    `R = 1.0e999`). It does not warn for a real that it passes as an argument to a function it
+    works out with constant arguments (`f(R)`, `f(g.R)`): `equiv_tree.constant_call` judges
+    those."""
+    found = _REAL_TO_X.search(log_text)
+    if found is None:
+        return None
+    file, line, value = found.groups()
+    where = f" ({file}, line {line})" if file else ""
+    return (
+        f"the RTL{where} converts a real that is infinite or not a number (Yosys: `{value}`) to "
+        "an integer. A simulator makes that integer all x, and an `if`, a `!` or a case label "
+        "can turn the x into a 0 or 1 that the gates need not give, so the check cannot vouch "
+        "for the design. Use a real only to compute an integer parameter or localparam, and "
+        "keep its value finite (`1.0e999` and `$sqrt(-1.0)` are not)."
+    )
 
 
 _OUT_OF_BOUNDS = re.compile(r"^(?:([^:\s]+):(\d+): )?Warning: (.*out of bounds.*)$", re.M)
