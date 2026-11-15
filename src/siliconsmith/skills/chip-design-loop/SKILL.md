@@ -145,6 +145,7 @@ Not detected: a real parameter override (Yosys keeps six decimals: `1.0e-9` beco
 ## Simulator limits
 
 Icarus 12 stops with an internal error on a parameter whose type is a typedef with two packed dimensions (`typedef logic [1:0][3:0] pair_t;` then `localparam pair_t P`; Yosys already rejects `localparam [1:0][3:0] P`); that is refused with the line quoted: declare it as a plain vector (`localparam [7:0] P`) and take the pieces with part-selects (`P[4*i +: 4]`).
+The check does not see these Icarus 12 quirks: `$bits` is unsigned there (signed in Verilator and Yosys), `$dimensions` of a parameter is 0 (1 elsewhere), and a `$signed(...)` expression connected to a wider input port is padded with zeros where the gates extend its sign. Connect a signed wire of the port's width instead.
 
 ## Too big for the tile
 

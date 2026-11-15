@@ -746,7 +746,10 @@ generate condition; a real parameter override, which Yosys passes to the instanc
 decimals, so 1.0e-9 becomes 0.0; a finite real mixed into a signal expression, ui_in == 2.5, \
 which Yosys rounds to an integer first; $bits, which is unsigned in Icarus and signed in \
 Verilator and Yosys, so $bits(x) > -1 or a generate if that mixes it with a negative number \
-differs; a select outside the range inside a constant function, \
+differs; $dimensions of a parameter or a constant, 0 in Icarus and 1 in Verilator and Yosys; \
+a $signed() expression connected to a wider input port, which Icarus pads with zeros and Yosys \
+extends by its sign (connect a signed wire of the port's width instead); a select outside \
+the range inside a constant function, \
 also in a parameter's value, which Yosys 0.62 evaluates to an undefined value: the gates \
 can differ even \
 where Icarus and Verilator agree, and the verdict can change with unrelated edits; only a \
