@@ -1019,7 +1019,9 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         built = equiv_tree.built_values(values, simulated)
         lone = equiv_tree.simulator_only_values(values, simulated)
         constant = equiv_tree.constant_call(before, meta, list(cleaned), agreed, plain, built, lone)
-        narrow = equiv_tree.narrow_argument(before, meta, list(cleaned), agreed, shapes)
+        # the values both tools list, compared instance by instance (`equiv_icarus.disagreement`)
+        listed: equiv_tree.ParamValues = {k: v for k, v in values.items() if simulated.get(k)}
+        narrow = equiv_tree.narrow_argument(before, meta, list(cleaned), agreed, shapes, listed)
         local = equiv_tree.uncompared_local(before, meta, list(cleaned), values, simulated)
     except (ValueError, equiv_tree.TreeError, RecursionError) as exc:
         return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")

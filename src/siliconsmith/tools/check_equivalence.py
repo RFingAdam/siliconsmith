@@ -716,11 +716,13 @@ Yosys; write 36'h0_0000_000F or 'hF), $countones and $countbits (a signed int in
 unsigned in Yosys 0.62, so $countones(x) > -1 differs; count with a loop), a function \
 argument narrower than the function's input, or the operand of a size or type cast (8'(x), \
 int'(x)) narrower than the cast, with a part that reads no signal (numbers, parameters, genvars, \
-a for loop's variable) whose +, -, *, <<, **, ~ or unary minus can carry past its own width \
-(Yosys 0.62 works that part out at the argument's width, a simulator at the input's: \
-clog2(LAST + 1'b1) with localparam [3:0] LAST = 4'd15 is 16 in a simulator and 0 in the gates; \
-write clog2(LAST + 1), widen an operand, {4'd0, LAST} + 8'd1, or compute it in a typed \
-localparam first, localparam integer N = LAST + 1'b1), a function \
+a for loop's variable, a function's own variables and inputs) whose +, -, *, <<, **, ~ or unary \
+minus can carry past its own width (Yosys 0.62 works that part out at the argument's width, a \
+simulator at the input's: clog2(LAST + 1'b1) with localparam [3:0] LAST = 4'd15 is 16 in a \
+simulator and 0 in the gates; write clog2(LAST + 1), widen an operand, {4'd0, LAST} + 8'd1, or \
+compute it in a typed localparam first, localparam integer N = LAST + 1'b1; a for loop's variable \
+can be only as wide as its start value in Yosys 0.62, so start a loop from an unsized number, \
+for (i = 15; ...), not from a 4-bit localparam), a function \
 argument that is not an input (output, inout, ref: \
 Icarus cannot compile one either; return the value), a function that reads anything other than its \
 arguments and any task, an always block (any keyword) or function call that Yosys elaborates and \
@@ -748,7 +750,11 @@ which Yosys rounds to an integer first; $bits, which is unsigned in Icarus and s
 Verilator and Yosys, so $bits(x) > -1 or a generate if that mixes it with a negative number \
 differs; $dimensions of a parameter or a constant, 0 in Icarus and 1 in Verilator and Yosys; \
 a $signed() expression connected to a wider input port, which Icarus pads with zeros and Yosys \
-extends by its sign (connect a signed wire of the port's width instead); a select outside \
+extends by its sign (connect a signed wire of the port's width instead); a case item with a \
+constant part that carries past its own width (case (w) LAST + 1'b1: with a 4-bit LAST, which \
+Yosys 0.62 works out at 4 bits); a for loop that starts from a sized number narrower than its \
+integer or signed variable with the top bit set (i = 4'd8, which Yosys 0.62 extends by the \
+variable's sign: start from an unsized number); a select outside \
 the range inside a constant function, \
 also in a parameter's value, which Yosys 0.62 evaluates to an undefined value: the gates \
 can differ even \

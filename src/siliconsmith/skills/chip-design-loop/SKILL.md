@@ -127,6 +127,7 @@ A call whose argument is narrower than the function's input is refused, wherever
 A simulator works the argument out at the input's width, Yosys 0.62 such a part at the argument's width first: `clog2(LAST + 1'b1)` with `localparam [3:0] LAST = 4'd15` is 16 in the simulator and 0 in the gates, and a generate `if` on it takes another branch. The operand of a size or type cast that widens it is refused the same way (`8'(LAST + 1'b1)`, `int'(LAST + 1'b1)`).
 Write `clog2(LAST + 1)` (an unsized number makes the sum 32 bits), widen an operand (`{4'd0, LAST} + 8'd1` for an 8-bit input), or compute the value in a typed localparam first (`localparam integer N = LAST + 1'b1;`, then `clog2(N)`).
 A sum that fits (`LAST + 1'b1` with `LAST = 14`) passes, and so does `f(count + 4'd1)`: only the parts without a signal are worked out first.
+Each copy of a module is judged with its own parameter values; `$clog2(...)` and enum items pass. Yosys 0.62 can make a `for` loop's variable only as wide as its start value, so start loops from an unsized number (`i = 15`), not a sized localparam.
 
 ## Indices a constant call may use
 
@@ -146,6 +147,7 @@ Not detected: a real parameter override (Yosys keeps six decimals: `1.0e-9` beco
 
 Icarus 12 stops with an internal error on a parameter whose type is a typedef with two packed dimensions (`typedef logic [1:0][3:0] pair_t;` then `localparam pair_t P`; Yosys already rejects `localparam [1:0][3:0] P`); that is refused with the line quoted: declare it as a plain vector (`localparam [7:0] P`) and take the pieces with part-selects (`P[4*i +: 4]`).
 The check does not see these Icarus 12 quirks: `$bits` is unsigned there (signed in Verilator and Yosys), `$dimensions` of a parameter is 0 (1 elsewhere), and a `$signed(...)` expression connected to a wider input port is padded with zeros where the gates extend its sign. Connect a signed wire of the port's width instead.
+Nor does it see Yosys 0.62 working a constant `case` item out at its own width (`case (w) LAST + 1'b1:` with a 4-bit `LAST` is 0 in the gates) or extending a narrow sized loop start by an integer variable's sign (`for (i = 4'd8; ...)`): write `LAST + 1` and `i = 8`.
 
 ## Too big for the tile
 

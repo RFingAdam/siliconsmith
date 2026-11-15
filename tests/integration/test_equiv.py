@@ -790,6 +790,10 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # concatenation: the control of wcat and wsum).
 # Round 25: k07c (the control of k07 and kd4: LAST + 1, a typed localparam computed first, and
 # {4'd0, LAST} + 8'd1 as function arguments, which every tool works out at the input's width).
+# Round 26 (all refused at 97f3bdb by the narrow-argument rule): clogarg (maxi(1, $clog2(DEPTH))),
+# enumarg (enum items as function arguments), multiw (a module used twice whose function's input
+# width and argument TOP - 1'b1 depend on the copy's W) and multicast (AW'(DEPTH - 1) in a module
+# used with two depths).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -835,6 +839,10 @@ EQUIVALENT = [
     "floclit",
     "wint",
     "k07c",
+    "clogarg",
+    "enumarg",
+    "multiw",
+    "multicast",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
@@ -949,6 +957,15 @@ REFUSAL_ADVICE = {
     "kd4": "(kd4.v, line 17) calls the function `f` with an argument that is 4 bits wide, "
     "narrower than the function's input (8 bits)",
     "kp1": "(kp1.v, line 22) calls the function `f` with an argument that is 4 bits wide, "
+    "narrower than the function's input (8 bits)",
+    # Round 26 (both equivalent at 97f3bdb, with Icarus RTL and gates differing): $signed(4'h8)
+    # inside a narrow argument is -8, not 8, so the 8-bit sum overflows in Yosys 0.62; a loop
+    # that starts from a 4-bit localparam gives an integer loop variable 4 bits in Yosys 0.62
+    "sgnarg": "(sgnarg.v, line 18) calls the function `g` with an argument that is 8 bits wide, "
+    "narrower than the function's input (16 bits), and a part of it that reads no signal "
+    "(numbers, parameters, genvars, a `for` loop's variable or a function's own variables) holds "
+    "`-`, whose value",
+    "loopst": "(loopst.v, line 25) calls the function `f` with an argument that is 4 bits wide, "
     "narrower than the function's input (8 bits)",
 }
 

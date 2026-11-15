@@ -2782,3 +2782,266 @@ def test_the_first_narrow_argument_by_file_order_then_line_and_only_in_our_files
     assert narrow(un("ASSIGNW", theirs)) is None
     with pytest.raises(et.TreeError):
         et.narrow_argument([], META, OURS)
+
+
+# Round 26: functions with other input widths (`f5`, `f16`, `f64`), one that returns 4 bits (`g4`)
+F_5 = fn("(NF5)", "f5", basic(4), arg("(NF5A)", "a", basic(4)))
+F_16 = fn("(NF16)", "f16", basic(15), arg("(NF16A)", "a", basic(15)))
+F_64 = fn("(NF64)", "f64", basic(63), arg("(NF64A)", "a", basic(63)))
+G_4 = fn("(NG4)", "g4", basic(3), arg("(NG4A)", "a", basic(3)))
+GV = var("(NGV)", "g", 3, varType="GENVAR")  # genvar g
+
+
+def clog2_of(operand: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "CLOG2", "lhsp": [operand]}
+
+
+def test_clog2_an_enum_item_or_an_unlinked_name_as_an_argument_passes() -> None:
+    """Round 26 (w01, o01, q01, p01c, u13, nq_q11): `maxi(1, $clog2(DEPTH))`, `is_state(state,
+    RUN)` with an enum item and `getbit(8'h39, K)` in a module nothing instantiates were refused
+    at 97f3bdb (a node the walk did not know, and a message that named `+`). `$clog2` is a
+    32-bit integer whose operand is self-determined in every tool (probe c2self: `$clog2(LAST +
+    1'b1)` with LAST = 4'd15 is 0 in Icarus, Verilator and Yosys 0.62); an enum item and a name
+    hold no operator."""
+    assert narrow(un("ASSIGNW", call_of(clog2_of(last()), to="(NC)", name="clog2"))) is None
+    assert narrow(un("ASSIGNW", call_of(ar("ADD", clog2_of(last()), num(1, "4'h"))))) is None
+    # a 64-bit input: the 32 bits of `$clog2` are narrower, its operand is its own context
+    assert narrow(F_64, un("ASSIGNW", call_of(clog2_of(carry()), to="(NF64)"))) is None
+    item = {"type": "ENUMITEMREF", "name": "RUN", "itemp": "(NEI)"}
+    unlinked = {"type": "PARSEREF", "name": "K", "lhsp": [], "ftaskrefp": []}
+    assert narrow(un("ASSIGNW", call_of(item))) is None
+    assert narrow(un("ASSIGNW", call_of(unlinked))) is None
+    # arithmetic on them still refuses: the width of an enum item is not known
+    got = narrow(un("ASSIGNW", call_of(ar("ADD", item, num(1, "2'h")))))
+    assert got is not None and "has a width that the check cannot work out" in got.sentence
+    assert "holds `+`, whose value the check cannot prove" in got.sentence
+    assert narrow(F_64, un("ASSIGNW", call_of(ar("ADD", clog2_of(last()), num(1)), to="(NF64)"))
+                  ) is not None  # fmt: skip
+
+
+def test_a_signed_operand_whose_top_bit_is_set_is_not_a_whole_number() -> None:
+    """Round 26 (n02, n02c, n03): `g(8'sd127 - $signed(4'h8))` with a 16-bit input is 127 - (-8) =
+    135 in a simulator, which overflows the 8-bit argument that Yosys 0.62 works it out at (the
+    gates read ui ^ 0xf0, Icarus ui ^ 0x00). The check read `$signed(4'h8)` as 8 and proved 119;
+    now `$signed(x)` is a whole number only when x's top bit at its own width is 0."""
+    borrow = ar("SUB", num(127, "8'sh"), un("SIGNED", num(8, "4'h")))
+    got = narrow(F_16, un("ASSIGNW", call_of(borrow, to="(NF16)", name="f16")))
+    assert got is not None and "is 8 bits wide, narrower than the function's input (16 bits)" in (
+        got.sentence
+    )
+    fits = ar("SUB", num(127, "8'sh"), un("SIGNED", num(7, "4'h")))  # 127 - 7 = 120 fits
+    assert narrow(F_16, un("ASSIGNW", call_of(fits, to="(NF16)", name="f16"))) is None
+    # a shift amount (n03): 8'd1 << ($signed(3'b100) + 4'sd1) shifts by -3 in a simulator
+    for top, refused in ((4, True), (3, False)):
+        amount = ar("ADD", un("SIGNED", num(top, "3'h")), num(1, "4'sh"))
+        cast = cast_of(ar("SHIFTL", num(1, "8'h"), amount), num(16))
+        assert (narrow(un("ASSIGNW", cast)) is not None) == refused
+
+
+def loop_over(start: dict[str, Any], kind: dict[str, Any] = INTEGER) -> list[dict[str, Any]]:
+    """`k` of type `kind` and `always @* for (k = start; ...; k = k + 1) ... f(k + 4'd1);`."""
+    k = var("(NK)", "k", 3, varType="VAR", childDTypep=[kind])
+    step = assign(nref("(NK)", "k") | {"access": "WR"}, ar("ADD", nref("(NK)", "k"), num(1)))
+    body = [{"type": "LOOPTEST", "condp": [ar("LT", nref("(NK)", "k"), num(16))]},
+            call_of(ar("ADD", nref("(NK)", "k"), num(1, "4'h"))), step]  # fmt: skip
+    first = assign(nref("(NK)", "k") | {"access": "WR"}, start)
+    return [k, {"type": "ALWAYS", "stmtsp": [first, {"type": "LOOP", "stmtsp": body}]}]
+
+
+def test_a_loop_variable_is_as_narrow_as_its_start_value() -> None:
+    """Round 26 (n06): Yosys 0.62 unrolls `for (i = FIRST; i < 16; i = i + 1)` with an integer
+    `i` and `localparam [3:0] FIRST = 4'd15` with `i` 4 bits wide in the first pass, so `f(i +
+    4'd1)` (32 bits wide in a simulator) lost its carry: RTL ui ^ 0x10, gates ui. A loop
+    variable is now no wider than its start and step values; an unsized start keeps 32 bits."""
+    got = narrow(*loop_over(last()))
+    assert got is not None and "is 4 bits wide, narrower than the function's input (8 bits)" in (
+        got.sentence
+    )
+    assert narrow(*loop_over(num(15, "4'h"))) is not None
+    assert narrow(*loop_over(num(15))) is None  # `for (i = 15; ...)`: 32 bits
+    assert narrow(*loop_over(num(0), basic(15))) is None  # reg [15:0] k from 0: 16 bits
+    assert narrow(*loop_over({"type": "WEIRD"})) is not None  # a start it cannot size
+
+
+# Round 26 (p29multiw): a saturating counter module used with W = 4 and W = 6 calls
+# clamp(c + 1'b1, TOP - 1'b1) with `input [W-1:0]` inputs and `localparam [W-1:0] TOP = {W{1'b1}}`.
+W_KEY, TOP_KEY = ("core.v", 3, "W"), ("core.v", 4, "TOP")
+P4, P6 = (*CORE_PATH, "u4"), (*CORE_PATH, "u6")
+
+
+def w_minus_1() -> dict[str, Any]:
+    return basic(ar("SUB", nref("(NWP)", "W"), num(1)))  # [W-1:0]
+
+
+def clamp_design(use: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """The module, with `use` in place of the assign that calls `clamp`."""
+    wp = lparam("(NWP)", "W", 3, INTEGER) | {"varType": "GPARAM"}
+    top = var("(NTOP)", "TOP", 4, varType="LPARAM", isParam=True, childDTypep=[w_minus_1()])
+    c = var("(NCC)", "c", 5, varType="VAR", childDTypep=[w_minus_1()])
+    ports = (arg("(NCLV)", "v", w_minus_1()), arg("(NCLL)", "lim", w_minus_1()))
+    clamp = fn("(NCL)", "clamp", w_minus_1(), *ports)
+    second = ar("SUB", nref("(NTOP)", "TOP"), num(1, "1'h"))
+    first = ar("ADD", nref("(NCC)", "c"), num(1, "1'h"))
+    call = un("ASSIGNW", call_of(first, second, to="(NCL)", name="clamp"))
+    return [wp, top, c, clamp, use if use is not None else call]
+
+
+CLAMP_SHAPES = SHAPES | {
+    W_KEY: [(P4, (32, True)), (P6, (32, True))],
+    TOP_KEY: [(P4, (4, False)), (P6, (6, False))],
+}
+CLAMP_VALUES = {W_KEY: [(P4, 4), (P6, 6)], TOP_KEY: [(P4, 15), (P6, 63)]}
+
+
+def test_a_parameter_with_several_values_is_judged_with_each_instance_s_values() -> None:
+    """Round 26 (p29multiw, t20, p06clog2sub, q06multimax): the width of `clamp`'s inputs and the
+    value of TOP depend on W, which has two values, so the check knew neither and refused
+    `TOP - 1'b1`, exactly as wide as the input. Each combination of the values and shapes the
+    call reads is judged now: TOP - 1'b1 is as wide as the input, or 14 at 4 bits."""
+
+    def judged(several: Any = CLAMP_VALUES, use: Any = None) -> et.Unknown | None:
+        tree = module(LAST, SA, AMT, NS4, NS8, F_8, F_2, CLOG2, *clamp_design(use))
+        return et.narrow_argument(tree, META, OURS, AGREED, CLAMP_SHAPES, several)
+
+    assert judged() is None
+    assert judged(None) is not None  # without the per-instance values: not known (fail closed)
+    # W read only through the declared type of a function's input: `4'(d + 1'b1)` inside a
+    # function with `input [W-1:0] d` is 4 or 6 bits wide, never narrower than the cast
+    d = arg("(NH3D)", "d", w_minus_1())
+    inside = fn("(NH3)", "h3", basic(7), d, cast_of(ar("ADD", nref("(NH3D)", "d"), num(1, "1'h")),
+                                                    num(4)))  # fmt: skip
+    assert judged(use=inside) is None
+    assert judged(None, use=inside) is not None
+    # paths that do not pair one to one are not used
+    assert judged({W_KEY: [(P4, 4), (P6, 6)], TOP_KEY: [(P6, 63), (P4, 15)]}) is not None
+
+
+def test_one_instance_that_carries_refuses_a_parameter_with_several_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 26 (q11multibad, the control): clog2(LAST + 1'b1) with LAST = 14 in one instance and
+    15 in the other carries in the second only (16 in a simulator, 0 in Yosys 0.62)."""
+    plus_one = ar("ADD", last(), num(1, "1'h"))
+    shapes = SHAPES | {NL_KEY: [(P4, (4, False)), (P6, (4, False))]}
+    agreed = {k: v for k, v in AGREED.items() if k != NL_KEY}
+    for values, refused in (((14, 15), True), ((15, 14), True), ((13, 14), False)):
+        several = {NL_KEY: [(P4, values[0]), (P6, values[1])]}
+        tree = module(LAST, SA, AMT, NS4, NS8, F_8, F_2, CLOG2,
+                      un("ASSIGNW", call_of(plus_one, to="(NC)", name="clog2")))  # fmt: skip
+        got = et.narrow_argument(tree, META, OURS, agreed, shapes, several)
+        assert (got is not None) == refused
+    # values whose paths do not pair with the shapes' are not used: 15 is 4 bits wide in u4
+    several = {NL_KEY: [(P6, 3), (P4, 15)]}
+    shapes = SHAPES | {NL_KEY: [(P4, (4, False)), (P6, (5, False))]}
+    tree = module(LAST, SA, AMT, NS4, NS8, F_8, F_2, CLOG2,
+                  un("ASSIGNW", call_of(plus_one, to="(NC)", name="clog2")))  # fmt: skip
+    assert et.narrow_argument(tree, META, OURS, agreed, shapes, several) is not None
+    # more combinations than the cap: the agreed values only (none here), refused
+    monkeypatch.setattr(et, "_MAX_CASES", 1)
+    tree = module(LAST, SA, AMT, NS4, NS8, F_8, F_2, CLOG2, *clamp_design())
+    assert et.narrow_argument(tree, META, OURS, AGREED, CLAMP_SHAPES, CLAMP_VALUES) is not None
+
+
+def test_a_cast_to_a_typedef_has_the_typedef_s_width() -> None:
+    """Round 26 (q12typedefgen, q13typedefbad): `nib_t'(i * 3 + 1)` with `typedef logic [3:0]
+    nib_t` and a genvar i is 32 bits cut to 4, the same in every tool; `byte_t'(LAST + 4'd1)`
+    widens a 4-bit sum that carries to 8 bits (16 in a simulator, 0 in Yosys 0.62)."""
+    nib = {"type": "TYPEDEF", "addr": "(NTN)", "name": "nib_t", "childDTypep": [basic(3)]}
+    byte = {"type": "TYPEDEF", "addr": "(NTB)", "name": "byte_t", "childDTypep": [basic(7)]}
+    state = {"type": "TYPEDEF", "addr": "(NTE)", "name": "st_t",
+             "childDTypep": [{"type": "ENUMDTYPE"}]}  # fmt: skip
+
+    def to(typedef: str) -> dict[str, Any]:
+        return {"type": "REFDTYPE", "typedefp": typedef}
+
+    table = ar("ADD", ar("MUL", nref("(NGV)", "g"), num(3)), num(1))
+    assert narrow(nib, GV, un("ASSIGNW", cast_of(table, to("(NTN)")))) is None
+    got = narrow(byte, un("ASSIGNW", cast_of(carry(), to("(NTB)"))))
+    assert got is not None and "narrower than the cast (8 bits)" in got.sentence
+    assert narrow(state, GV, un("ASSIGNW", cast_of(table, to("(NTE)")))) is not None  # no width
+
+
+@pytest.mark.parametrize(
+    ("expr", "text"),
+    [
+        pytest.param(un("NOT", last()), "holds `~`, whose", id="not"),
+        pytest.param(ar("SHIFTR", nref("(NSA)", "SA"), num(1)),
+                     "holds `>>` on a value that can be signed, whose", id="signed-shift"),
+        pytest.param(un("COUNTONES", last()),
+                     "holds an expression the check does not know (a `COUNTONES` node)",
+                     id="unknown"),
+        # `f(t'(LAST))` for a typedef the check cannot size: the cast passes, the call cannot
+        pytest.param(cast_of(last(), {"type": "REFDTYPE"}), "holds a cast, whose", id="cast"),
+    ],
+)  # fmt: skip
+def test_the_refusal_names_what_it_found(expr: dict[str, Any], text: str) -> None:
+    """Round 26: the message named `+`, `-`, `*`, `<<`, `**`, `~`, a unary minus or a cast
+    whatever the argument held, even an enum item or `$clog2` with no operator at all."""
+    got = narrow(un("ASSIGNW", call_of(expr)))
+    assert got is not None and text in got.sentence, got
+    assert "a unary minus or a cast" not in got.sentence
+
+
+def weird(*kids: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "WEIRD", "lhsp": list(kids[:1]), "rhsp": list(kids[1:])}
+
+
+# Each argument below is refused; the comment names the mutant of round 26 (N4) that passed it.
+@pytest.mark.parametrize(
+    ("kids", "call"),
+    [
+        # A20, a compare is 32 bits: (LAST == 4'd1) + 4'd15 is 4 bits wide
+        pytest.param((), lambda: call_of(ar("ADD", ar("EQ", last(), num(1, "4'h")),
+                                            num(15, "4'h"))), id="compare-is-one-bit"),
+        # A22, a call is 8 bits wider: g4(LAST) + 4'd1 is 4 bits wide
+        pytest.param((G_4,), lambda: call_of(ar("ADD", call_of(last(), to="(NG4)", name="g4"),
+                                                num(1, "4'h"))), id="call-width"),
+        # A28, a replication's count is ignored: {LAST} + 4'd1 is 4 bits wide
+        pytest.param((), lambda: call_of(ar("ADD", {"type": "REPLICATE", "srcp": [last()],
+                     "countp": [num(1)]}, num(1, "4'h"))), id="replication-count"),
+        # A29, a bit select is 8 bits: LAST[0] + 1'b1 is 1 bit wide
+        pytest.param((), lambda: call_of(ar("ADD", {"type": "SELBIT", "fromp": [last()],
+                     "bitp": [num(0)]}, num(1, "1'h"))), id="bit-select"),
+        # A31, an indexed part-select is a bit wider: LAST[0 +: 7] + 7'd1 is 7 bits wide
+        pytest.param((), lambda: call_of(ar("ADD", {"type": "SELPLUS", "fromp": [last()],
+                     "lsbp": [num(0)], "widthp": [num(7)]}, num(1, "7'h"))), id="part-select"),
+        # A37, a concatenation's value without its shift: {4'd15, 4'd0} + 8'd16 is 256
+        pytest.param((F_16,), lambda: call_of(ar("ADD", {"type": "REPLICATE", "srcp": [
+            ar("CONCAT", num(15, "4'h"), num(0, "4'h"))], "countp": [num(1)]}, num(16, "8'h")),
+            to="(NF16)", name="f16"), id="concatenation-value"),
+        # A43, a genvar is a signal: g[3:0] + 4'd15 reads a number in each pass
+        pytest.param((GV,), lambda: call_of(low_k("(NGV)")), id="genvar"),
+        # A21, `$bits` is 64 bits; A32, a genvar is 64 bits: both 32, narrower than 64
+        pytest.param((F_64,), lambda: call_of(ar("ADD", {"type": "ATTROF", "fromp": [s4()]},
+                     num(1)), to="(NF64)", name="f64"), id="bits-is-32"),
+        pytest.param((F_64, GV), lambda: call_of(ar("ADD", nref("(NGV)", "g"), num(1)),
+                     to="(NF64)", name="f64"), id="genvar-is-32"),
+        # A26, `$signed` is a bit wider: $signed(LAST) + 4'sd1 is 4 bits, LAST = -1 there
+        pytest.param((F_5,), lambda: call_of(ar("ADD", un("SIGNED", last()), num(1, "4'sh")),
+                     to="(NF5)", name="f5"), id="signed-width"),
+        # A42, a name that is no VAR is a signal: x + 4'd1 with an unknown x
+        pytest.param((), lambda: call_of(ar("ADD", nref("(NOPE)", "x"), num(1, "4'h"))),
+                     id="unresolved-name"),
+        # A44, a node it does not know that reads a signal is not walked into
+        pytest.param((), lambda: call_of(weird(s4(), carry())), id="unknown-node-walked"),
+    ],
+)  # fmt: skip
+def test_each_part_of_an_argument_is_sized_and_valued_exactly(
+    kids: tuple[dict[str, Any], ...], call: Any
+) -> None:
+    assert narrow(*kids, un("ASSIGNW", call())) is not None
+
+
+def test_a_signed_function_variable_and_the_port_order() -> None:
+    """Round 26 (N4: A33, A48, A47). `k >> 1` with `reg signed [3:0] k = 4'sb1000` inside a
+    function that Yosys works out is 0xfc at 8 bits and 0x04 at 4: a declared type's sign counts.
+    A positional argument goes to its own port (`g(s, LAST + 4'd1)`: the second, 4-bit input),
+    and a function's other variables are no ports."""
+    k = local("(NKS)", "k", basic(3, signed=True))
+    shift = call_of(ar("SHIFTR", nref("(NKS)", "k"), num(1)))
+    assert narrow(fn("(NH2)", "h2", basic(7), arg("(NH2D)", "d", basic(3)), k, shift)) is not None
+    assert narrow(un("ASSIGNW", call_of(s4(), carry(), to="(NG)", name="g"))) is None
+    ports = (arg("(NG3A)", "a", basic(7)), local("(NG3T)", "t", basic(7)),
+             arg("(NG3B)", "b", basic(3)))  # fmt: skip
+    g3 = fn("(NG3)", "g3", basic(7), *ports)
+    assert narrow(g3, un("ASSIGNW", call_of(s4(), carry(), to="(NG3)", name="g3"))) is None

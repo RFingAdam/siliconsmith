@@ -1538,7 +1538,10 @@ _WIDENS = frozenset({"ADD", "SUB", "MUL", "MULS", "NEGATE", "NOT", "SHIFTL", *_P
 _WIDENS_SIGNED = frozenset({"SHIFTR", "DIV", "DIVS", "MODDIV", "MODDIVS"})
 # Nodes whose operands are self-determined (their own width in every tool): one bit for a compare,
 # a logical operator or a reduction; the selects (`_is_select`), a concatenation, a replication,
-# `$bits` and the like (`ATTROF`), a call, a constant and a variable are the others.
+# `$bits` and the like (`ATTROF`), `$clog2` (round 26 probes c2self, d6, d14: `$clog2(LAST +
+# 1'b1)` with a 4-bit LAST = 15 is 0 in Icarus, Verilator and Yosys 0.62), a call, a constant, a
+# variable, an enum item and a name the tree has not linked (PARSEREF: in a module nothing
+# instantiates) are the others; the last four hold no operator.
 _ONE_BIT = frozenset(
     {
         "EQ", "NEQ", "LT", "LTE", "GT", "GTE", "EQCASE", "NEQCASE", "EQWILD", "NEQWILD", "LTS",
@@ -1546,9 +1549,21 @@ _ONE_BIT = frozenset(
         "REDXOR",
     }
 )  # fmt: skip
-_SELF_DETERMINED = _ONE_BIT | {"CONCAT", "REPLICATE", "ATTROF", "FUNCREF", "CONST", "VARREF"}
+_SELF_DETERMINED = _ONE_BIT | {
+    "CONCAT", "REPLICATE", "ATTROF", "CLOG2", "FUNCREF", "CONST", "VARREF", "ENUMITEMREF",
+    "PARSEREF",
+}  # fmt: skip
+# How a refusal names what can change at a wider width (`narrow_argument`); any other node is one
+# the check does not know.
+_WIDENS_TEXT = {
+    "ADD": "`+`", "SUB": "`-`", "MUL": "`*`", "MULS": "`*`", "SHIFTL": "`<<`", "NOT": "`~`",
+    "NEGATE": "a unary minus", "SHIFTR": "`>>`", "DIV": "`/`", "DIVS": "`/`", "MODDIV": "`%`",
+    "MODDIVS": "`%`", "CAST": "a cast", "CASTPARSE": "a cast",
+    **{power: "`**`" for power in _POWERS},
+}  # fmt: skip
 _ANY_CONST = re.compile(r"^(?:\?(\d+)\?|(\d+)')(s?)[bodhBODH]")
 _MAX_SHIFT = 4096  # a constant shift amount or exponent past this is not proven (fail closed)
+_MAX_CASES = 4096  # choices of parameter values judged per call or cast (`narrow_argument`)
 
 Shape = tuple[int, bool | None]  # (width in bits, signed: True, False or None for not known)
 
@@ -1581,7 +1596,10 @@ class _Widths:
     value of a constant one (`narrow_argument`). A parameter has the width and sign Verilator's
     elaborated tree gives it (`shapes`, the narrowest of its instances), else those of its
     declared type, and the one value both tools agree on (`known`); a genvar is a signed
-    integer; any other variable has its declared type. Anything else has no width (None)."""
+    integer; the variable of a `for` loop is no wider than its start and step values (`loops`:
+    Yosys 0.62 unrolls the loop with the start value's own width, round 26 n06); any other
+    variable has its declared type (a typedef's, `typedefs`). Anything else has no width
+    (None)."""
 
     def __init__(
         self,
@@ -1589,20 +1607,42 @@ class _Widths:
         functions: dict[str, dict[str, Any]],
         known: dict[str, int],
         shapes: dict[str, list[tuple[int, bool]]],
+        loops: dict[str, list[dict[str, Any]]] | None = None,
+        typedefs: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.variables = variables
         self.functions = functions
         self.known = known
         self.shapes = shapes
+        self.loops = loops or {}  # addr of a loop variable's VAR -> its start and step values
+        self.typedefs = typedefs or {}  # addr of a TYPEDEF -> the node
         self.ranges = _Ranges(variables, known)
+        self.busy: set[str] = set()  # the loop variables whose start or step is being sized
+
+    def resolve(self, dtype: dict[str, Any] | None) -> dict[str, Any] | None:
+        """`dtype`, or the type a typedef reference (REFDTYPE) names, followed to its end."""
+        for _ in range(16):
+            if dtype is None or dtype.get("type") != "REFDTYPE":
+                return dtype
+            typedef = self.typedefs.get(str(dtype.get("typedefp")))
+            dtype = _only(typedef, "childDTypep") if typedef is not None else None
+        return None
 
     def declared(self, var: dict[str, Any] | None) -> Shape | None:
         """The width and sign of a VAR's declared type: a plain vector or integer type."""
-        dtype = _only(var, "childDTypep") if var is not None else None
+        dtype = self.resolve(_only(var, "childDTypep") if var is not None else None)
         bounds = self.ranges._bounds(dtype) if dtype is not None else None
         if dtype is None or bounds is None:
             return None
         return abs(bounds[0] - bounds[1]) + 1, dtype.get("signed") is True
+
+    def cast_size(self, size: dict[str, Any] | None) -> int | None:
+        """The width of a size cast `size'(x)`: a constant, or a typedef of a plain type."""
+        if size is not None and size.get("type") == "REFDTYPE":
+            dtype = self.resolve(size)
+            bounds = self.ranges._bounds(dtype) if dtype is not None else None
+            return abs(bounds[0] - bounds[1]) + 1 if bounds is not None else None
+        return self.amount(size)
 
     def _variable(self, ref: dict[str, Any]) -> Shape | None:
         addr = str(ref.get("varp"))
@@ -1615,7 +1655,17 @@ class _Widths:
         if var.get("varType") in _PARAMETER_VALUES and held:
             signs = {s for _, s in held}
             return min(w for w, _ in held), signs.pop() if len(signs) == 1 else None
-        return self.declared(var)
+        mine = self.declared(var)
+        if mine is None or addr not in self.loops or addr in self.busy:
+            return mine
+        self.busy.add(addr)  # a step `i = i + 1` reads the variable at its declared width
+        try:
+            got = [self.shape(value) for value in self.loops[addr]]
+        finally:
+            self.busy.discard(addr)
+        if any(g is None for g in got):
+            return None
+        return min([mine[0], *(g[0] for g in got if g)]), mine[1]
 
     def shape(self, node: dict[str, Any] | None) -> Shape | None:
         """The self-determined width and sign of `node`, else None."""
@@ -1631,15 +1681,15 @@ class _Widths:
             return self._variable(node)
         if kind in _ONE_BIT:
             return 1, False
-        if kind == "ATTROF":
-            return 32, None  # `$bits` and the like: an integer (its sign differs between tools)
+        if kind in ("ATTROF", "CLOG2"):
+            return 32, None  # `$bits`, `$clog2` and the like: an integer (fail closed on the sign)
         if kind == "FUNCREF":
             func = self.functions.get(str(node.get("taskp")))
             return self.declared(_only(func, "fvarp")) if func is not None else None
         if kind == "CAST":  # `integer'(x)`: the type's width and sign
             return self.declared(node)
         if kind == "CASTPARSE":  # `4'(x)`: the size, and the sign of `x`
-            size, inner = self.amount(_only(node, "dtp")), self.shape(_only(node, "lhsp"))
+            size, inner = self.cast_size(_only(node, "dtp")), self.shape(_only(node, "lhsp"))
             return (size, inner[1] if inner is not None else None) if size else None
         parts = _context_children(node)
         if parts:
@@ -1706,7 +1756,12 @@ class _Widths:
                     a << b if kind == "SHIFTL" else a >> b if kind.startswith("SHIFT") else
                     (a**b if small else None)
                 )  # fmt: skip
-        elif kind in ("SIGNED", "UNSIGNED"):
+        elif kind == "SIGNED":  # `$signed(4'h8)` is -8: its top bit at its own width must be 0
+            operand = _only(node, "lhsp")
+            size = self.shape(operand)
+            if size is not None and size[0] >= 1:
+                got = self.whole(operand, 1 << (size[0] - 1))
+        elif kind == "UNSIGNED":
             got = self.whole(_only(node, "lhsp"), limit)
         elif kind == "CONCAT":  # each piece at its own width, as every tool works it out
             high, low = _only(node, "lhsp"), _only(node, "rhsp")
@@ -1772,19 +1827,56 @@ def _loop_variables(nodes: list[dict[str, Any]], variables: dict[str, Any]) -> f
     return frozenset(found)
 
 
+def _loop_values(nodes: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """The values a `for` loop gives its variable, by the `addr` of its VAR: the right side of
+    the assignment right before a LOOP (the start) and of the LOOP's last statement when that
+    writes the same variable (the step, `i = i + 1`)."""
+    found: dict[str, list[dict[str, Any]]] = {}
+    for parent in nodes:
+        for items in parent.values():
+            if not isinstance(items, list):
+                continue
+            for before, loop in itertools.pairwise(items):
+                if not (isinstance(before, dict) and isinstance(loop, dict) and _is_loop(loop)):
+                    continue
+                start = _assigned(before)
+                if start is None:
+                    continue
+                addr, value = start
+                found.setdefault(addr, []).append(value)
+                body = [s for s in loop.get("stmtsp") or [] if isinstance(s, dict)]
+                step = _assigned(body[-1]) if body else None
+                if step is not None and step[0] == addr:
+                    found[addr].append(step[1])
+    return found
+
+
+def _assigned(node: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    """`(addr of the VAR, value)` of a blocking assignment to a whole variable, else None."""
+    if node.get("type") != "ASSIGN":
+        return None
+    target, value = _only(node, "lhsp"), _only(node, "rhsp")
+    if target is None or value is None or target.get("type") != "VARREF":
+        return None
+    return str(target.get("varp")), value
+
+
 def narrow_argument(
     tree: Any,
     meta: Any,
     ours: list[str],
     agreed: dict[ParamKey, int] | None = None,
     shapes: ParamShapes | None = None,
+    several: ParamValues | None = None,
 ) -> Unknown | None:
     """The first call (by file order, line, column) of one of the design's functions with an
     argument that Yosys 0.62 can work out to another value than a simulator, or such a size or
-    type cast (`8'(x)`, `int'(x)`: its operand counts as an argument, the cast's width as the
-    input's, unknown for a typedef), else None. `tree`
+    type cast (`8'(x)`, `int'(x)`, `t'(x)` for a typedef `t` of a plain type: its operand
+    counts as an argument, the cast's width as the input's), else None. `tree`
     is Verilator's tree BEFORE V3Param (the `linkinc` stage), where every call is still there as
-    written; `agreed` are the values of `agreed_values`, `shapes` those of `parameter_shapes`.
+    written; `agreed` are the values of `agreed_values`, `shapes` those of `parameter_shapes`,
+    `several` those of `parameter_values` that the simulator lists too (`equiv_icarus.
+    disagreement` found them the same in every instance).
 
     Round 25: an argument takes the width of the function's input when that is wider (IEEE
     1800-2017 13.5, an assignment), so a simulator and Verilator work `clog2(LAST + 1'b1)` out
@@ -1808,13 +1900,26 @@ def narrow_argument(
     argument is unsigned) or a node this does not know (a cast too), unless (4) its value is
     proven the same at every width from the argument's up (`_Widths.whole`: every operand and
     result on the way a plain number of 0 or more, below 2 ** width, or 2 ** (width - 1) unless
-    the argument is unsigned, so nothing is cut and no sign bit is set).
+    the argument is unsigned, so nothing is cut and no sign bit is set; `$signed(x)` only when
+    the top bit of `x` at its own width is 0).
+
+    Round 26: a parameter with several values (a module used twice, a generate loop) is judged
+    with each of its values and shapes in turn (`several`, `shapes`, by path), and so is every
+    other one that the call or cast reads (its arguments, the function's inputs, the cast's
+    size, also through a declared type or a loop's start), in every combination (at most
+    `_MAX_CASES`, else with the one agreed value only: fail closed); the call is refused if any
+    combination refuses it. The combinations hold every instance's own values. The variable of a
+    `for` loop is no wider than its start and step values (`_loop_values`): Yosys 0.62 unrolls
+    `for (i = FIRST; ...)` with an integer `i` and `localparam [3:0] FIRST = 4'd15` with `i` 4
+    bits wide in the first pass, so `f(i + 4'd1)` lost its carry (round 26 n06).
 
     Why this is sound. Where (1) fails, the argument is at least as wide as the input, so its
-    context is its own width in every tool. A part of it that reads a signal is not worked out
+    context is its own width in every tool (the width of a loop variable is the narrowest that
+    Yosys can give it). A part of it that reads a signal is not worked out
     first, and the operators that pass the context down pass it to their operands only (a
-    select, a concatenation, a compare and a call have self-determined operands, worked out the
-    same in every tool), so only the parts of (2) can differ, and the walk stops at each one: a
+    select, a concatenation, a compare, `$clog2` and a call have self-determined operands,
+    worked out the same in every tool; a name or an enum item holds no operator), so only the
+    parts of (2) can differ, and the walk stops at each one: a
     signal inside it would keep Yosys from working it out first, which cannot make a difference
     either. Inside such a part, `&`, `|`, `^`, `>>>`, `?:` and a select keep the bits of their
     operands whatever the width and the extension, and `>>`, `/`, `%` too when the argument is
@@ -1830,14 +1935,84 @@ def narrow_argument(
     nodes = list(_subtree(tree))
     variables = {str(n["addr"]): n for n in nodes if n.get("type") == "VAR" and "addr" in n}
     functions = {str(n["addr"]): n for n in nodes if n.get("type") == "FUNC" and "addr" in n}
+    typedefs = {str(n["addr"]): n for n in nodes if n.get("type") == "TYPEDEF" and "addr" in n}
     known = {addr: agreed[key] for addr, key in keys.items() if key in agreed}
     held: dict[str, list[tuple[int, bool]]] = {}
     for addr, key in keys.items():
         values = shapes.get(key)
         if values:
             held[addr] = [s for _, s in values]
-    widths = _Widths(variables, functions, known, held)
+    loops = _loop_values(nodes)
+    widths = _Widths(variables, functions, known, held, loops, typedefs)
     constant = _function_locals(tree) | _loop_variables(nodes, variables)
+    # every (value, shape) of a parameter that has more than one: one per instance or loop pass
+    options: dict[str, list[tuple[int, tuple[int, bool]]]] = {}
+    for addr, key in keys.items():
+        numbers, sizes = (several or {}).get(key), shapes.get(key)
+        if not numbers or not sizes or [p for p, _ in numbers] != [p for p, _ in sizes]:
+            continue
+        pairs = sorted({(n, s) for (_, n), (_, s) in zip(numbers, sizes, strict=True)})
+        if len(pairs) > 1:
+            options[addr] = pairs
+
+    def ports(func: dict[str, Any] | None) -> list[dict[str, Any]]:
+        body = (func.get("stmtsp") or []) if func is not None else []
+        return [
+            n
+            for n in body
+            if isinstance(n, dict)
+            and n.get("type") == "VAR"
+            and n.get("direction") not in (None, "NONE")
+        ]
+
+    def reads(root: dict[str, Any]) -> list[str]:
+        """The parameters of `options` that a call (with its function's inputs and result) or a
+        cast reads, also through the declared type of a variable, a function or a typedef that
+        it reads and the start and step of a loop variable."""
+        found: set[str] = set()
+        seen: set[int] = set()
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            kind = node.get("type")
+            more: list[dict[str, Any] | None] = []
+            if kind == "VARREF":
+                addr = str(node.get("varp"))
+                if addr in options:
+                    found.add(addr)
+                var = variables.get(addr)
+                more = [_only(var, "childDTypep") if var is not None else None]
+                more.extend(loops.get(addr, []))
+            elif kind == "FUNCREF":
+                func = functions.get(str(node.get("taskp")))
+                more = [*ports(func), _only(func, "fvarp") if func is not None else None]
+            elif kind == "REFDTYPE":
+                more = [typedefs.get(str(node.get("typedefp")))]
+            stack.extend(n for n in more if n is not None)
+            stack.extend(_children(node))
+        return sorted(found)
+
+    def cases(node: dict[str, Any]) -> list[_Widths]:
+        """The widths to judge `node` with: one per choice of the value and shape of each
+        parameter of `options` that it reads (every instance's own values among them), or
+        `widths` alone when there is none or more than `_MAX_CASES` choices (fail closed)."""
+        chosen = reads(node) if options else []
+        count = 1
+        for addr in chosen:
+            count *= len(options[addr])
+        if not chosen or count > _MAX_CASES:
+            return [widths]
+        got = []
+        for pick in itertools.product(*(options[addr] for addr in chosen)):
+            numbers = {addr: n for addr, (n, _) in zip(chosen, pick, strict=True)}
+            sizes = {addr: [s] for addr, (_, s) in zip(chosen, pick, strict=True)}
+            got.append(
+                _Widths(variables, functions, known | numbers, held | sizes, loops, typedefs)
+            )
+        return got
 
     def folds(root: dict[str, Any]) -> bool:
         """True if `root` reads no signal: Yosys can work it out to a number first. A signal is
@@ -1858,87 +2033,97 @@ def narrow_argument(
             stack.extend(_children(node))
         return True
 
-    def widens(root: dict[str, Any], signed: bool | None) -> bool:
+    def widens(root: dict[str, Any], signed: bool | None) -> str | None:
+        """The type of the first node in `root`'s own context whose result can change at a
+        wider width (`_WIDENS`, `_WIDENS_SIGNED` unless unsigned) or that this does not know
+        (a cast too), else None."""
         stack = [root]
         while stack:
             node = stack.pop()
             kind = str(node.get("type", ""))
             if kind in _WIDENS or (kind in _WIDENS_SIGNED and signed is not False):
-                return True
+                return kind
             inner = _context_children(node)
             if inner is None:
-                return True  # a node this does not know: a cast, a `$clog2`, ...
+                return kind  # a node this does not know: a cast, `$countones`, ...
             stack.extend(inner)
-        return False
+        return None
 
-    def differs(expr: dict[str, Any], own: Shape | None) -> bool:
+    def differs(expr: dict[str, Any], own: Shape | None, sized: _Widths) -> str | None:
+        """What in a part of `expr` that reads no signal can change at a wider width and is not
+        proven the same at every width from `own`'s up (`widens`), else None."""
         signed = own[1] if own is not None else None
         stack = [expr]
         while stack:
             node = stack.pop()
             if folds(node):
-                if not widens(node, signed):
+                kind = widens(node, signed)
+                if kind is None:
                     continue
                 if own is None or own[0] < 1:
-                    return True
+                    return kind
                 limit = 1 << (own[0] - (0 if signed is False else 1))
-                if widths.whole(node, limit) is None:
-                    return True
+                if sized.whole(node, limit) is None:
+                    return kind
                 continue
             inner = _context_children(node)
             stack.extend(inner if inner is not None else _children(node))
-        return False
+        return None
 
-    def operands(node: dict[str, Any]) -> list[tuple[dict[str, Any] | None, Shape | None]]:
+    def operands(
+        node: dict[str, Any], sized: _Widths
+    ) -> list[tuple[dict[str, Any] | None, Shape | None]]:
         """Each argument of a call of the design's functions with the shape of its input, or the
         operand of a size or type cast with the cast's (its width only), else []."""
         kind = node.get("type")
         if kind == "CASTPARSE":  # `8'(x)`, `W'(x)`, `t'(x)` for a typedef `t`
-            size = widths.amount(_only(node, "dtp"))  # None for a typedef: fail closed
+            size = sized.cast_size(_only(node, "dtp"))
             return [(_only(node, "lhsp"), (size, None) if size else None)]
         if kind == "CAST":  # `int'(x)`, `logic [7:0]'(x)`
-            return [(_only(node, "fromp"), widths.declared(node))]
+            return [(_only(node, "fromp"), sized.declared(node))]
         if kind != "FUNCREF":
             return []
-        func = functions.get(str(node.get("taskp")))
-        body = (func.get("stmtsp") or []) if func is not None else []
-        ports = [
-            n
-            for n in body
-            if isinstance(n, dict)
-            and n.get("type") == "VAR"
-            and n.get("direction") not in (None, "NONE")
-        ]
+        inputs = ports(functions.get(str(node.get("taskp"))))
         got = []
         arguments = [a for a in node.get("argsp") or [] if isinstance(a, dict)]
         for index, argument in enumerate(arguments):
             label = str(argument.get("name") or "")
             if label:  # `.a(...)`
-                port = next((p for p in ports if p.get("name") == label), None)
+                port = next((p for p in inputs if p.get("name") == label), None)
             else:
-                port = ports[index] if index < len(ports) else None
-            got.append((_only(argument, "exprp"), widths.declared(port)))
+                port = inputs[index] if index < len(inputs) else None
+            got.append((_only(argument, "exprp"), sized.declared(port)))
         return got
 
-    found: list[tuple[int, int, int, str, str, int | None, int | None]] = []
-    for node in nodes:
-        for expr, need in operands(node):
-            if expr is None:
-                continue
-            own = widths.shape(expr)
-            if need is not None and own is not None and own[0] >= need[0]:
-                continue
-            if differs(expr, own):
-                file, line, col = _place(node, files)
-                if file in ours:
-                    name = str(node.get("name", "")) if node.get("type") == "FUNCREF" else ""
+    def judged(node: dict[str, Any]) -> tuple[int | None, int | None, str] | None:
+        """`(own width, input's width, what differs)` of the first argument of `node` that can
+        differ in some choice of `cases`, else None."""
+        for sized in cases(node):
+            for expr, need in operands(node, sized):
+                if expr is None:
+                    continue
+                own = sized.shape(expr)
+                if need is not None and own is not None and own[0] >= need[0]:
+                    continue
+                kind = differs(expr, own, sized)
+                if kind is not None:
                     mine = own[0] if own is not None else None
-                    theirs = need[0] if need is not None else None
-                    found.append((ours.index(file), line, col, name, file, mine, theirs))
-                break
+                    return mine, (need[0] if need is not None else None), kind
+        return None
+
+    found: list[tuple[int, int, int, str, str, int | None, int | None, str]] = []
+    for node in nodes:
+        if node.get("type") not in ("FUNCREF", "CAST", "CASTPARSE"):
+            continue
+        got = judged(node)
+        if got is not None:
+            file, line, col = _place(node, files)
+            if file in ours:
+                name = str(node.get("name", "")) if node.get("type") == "FUNCREF" else ""
+                found.append((ours.index(file), line, col, name, file, *got))
     if not found:
         return None
-    _, line, _, name, file, mine, theirs = min(found, key=lambda at: at[:4])
+    _, line, _, name, file, mine, theirs, kind = min(found, key=lambda at: at[:4])
     if name:
         what = f"calls the function `{name}` with an argument that"
         noun, target, into = "argument", "input", "the function's input"
@@ -1951,14 +2136,17 @@ def narrow_argument(
         widths_text = f"is {mine} bits wide, narrower than {into} ({theirs} bits)"
     else:
         widths_text = f"has a width that the check cannot work out or compare with the {target}'s"
+    holds = _WIDENS_TEXT.get(kind, f"an expression the check does not know (a `{kind}` node)")
+    if kind in _WIDENS_SIGNED:
+        holds = f"{holds} on a value that can be signed"
     return Unknown(
         name,
         file,
         line,
         f"the RTL ({file}, line {line}) {what} {widths_text}, and a part of it that reads no "
         "signal (numbers, parameters, genvars, a `for` loop's variable or a function's own "
-        "variables) holds `+`, `-`, `*`, `<<`, `**`, `~`, a unary minus or a cast whose value "
-        f"the check cannot prove the same at every width. A simulator works the {noun} out at "
+        f"variables) holds {holds}, whose value the check cannot prove the same at every "
+        f"width. A simulator works the {noun} out at "
         f"the {target}'s width, Yosys 0.62 works such a part out at the {noun}'s own width "
         "first, so a carry, a borrow or the high bits of `~` can be lost in the gates "
         f"({example} with `localparam [3:0] LAST = 4'd15` is 16 in a simulator and 0 in the "
