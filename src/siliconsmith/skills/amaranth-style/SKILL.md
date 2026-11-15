@@ -140,6 +140,11 @@ def top() -> wiring.Component:
 - Widths are Amaranth's job, so lint does not report width mismatches in Verilog generated from Amaranth: `left == 0` or `left > 1` on a 3-bit `left` is fine. The trap is the other way round: `.eq()` silently drops the high bits when the target is narrower (`self.uo_out.eq(count)` with a 10-bit `count` keeps only bits 0 to 7). Size registers on purpose and slice explicitly, e.g. `count[2:10]`.
 - Driving an output from a `m.d.comb` line inside `m.If`, `m.Switch` or `m.FSM` that depends only on registers that never change after reset. Icarus then leaves the output unknown (`x`) until those registers first change, while Verilator shows 0, so the two simulators disagree. Drive outputs from a register, from `fsm.ongoing("STATE")`, or from a plain `m.d.comb` line at the top level.
 
+## A Yosys bug: subtract and signed compare
+
+The pinned Yosys 0.62 (fixed in 0.68) builds wrong gates for an unsigned subtract wider than its operands together with a signed compare of the same operands: `y.eq(a - b)` into a wider `y` plus `a.as_signed() < b.as_signed()`. `check_equivalence` then says `not_equivalent` and `run_tests(gl=true)` can fail, although your design is right.
+Compare the sign bits first instead: `lt.eq(Mux(a[3] != b[3], a[3], a < b))` for 4-bit `a` and `b` (the top bit for other widths; `Mux` comes from `amaranth.hdl`). See `explain('chip-design-loop/When the verdict is not your bug')`.
+
 ## Latches
 
 Amaranth cannot infer a latch: a combinational value that you do not assign on some path takes its default (0 unless you say otherwise), so you get gates, not a memory. The latch rules in `explain('tt-rules')` matter for Verilog and MyHDL; in Amaranth the lint step will not flag them.

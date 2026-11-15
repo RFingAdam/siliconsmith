@@ -97,6 +97,15 @@ def shifter(clk, rst_n, ui_in, uo_out):
     return seq, drive
 ```
 
+## Helper functions
+
+Do not call your own Python function inside an `@always` or `@always_comb` block. MyHDL turns it into a Verilog function that ends with `disable`, which Yosys 0.62 cannot read, so `check_equivalence` and `synthesize` stop with a syntax error. Write the logic inline in the block, or work constants out in Python outside the block (a table or a threshold computed once, then used as a constant).
+
+## A Yosys bug: subtract and signed compare
+
+The pinned Yosys 0.62 (fixed in 0.68) builds wrong gates for an unsigned subtract wider than its operands together with a signed compare of the same operands: `y.next = a - b` into a wider `y` plus `a.signed() < b.signed()`. `check_equivalence` then says `not_equivalent` and `run_tests(gl=true)` can fail, although your design is right.
+Compare the sign bits first instead, as an `if`: for 4-bit `a` and `b`, `if a[3] != b[3]:` then `lt.next = a[3]`, else `lt.next = a < b` (the top bit for other widths). See `explain('chip-design-loop/When the verdict is not your bug')`.
+
 ## Common mistakes
 
 - Listing a pin you never use (or leaving an output undriven): a `ToVerilogWarning`, which is an error here.

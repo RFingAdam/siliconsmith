@@ -443,6 +443,12 @@ RTL_SEEDS = [
     ("arrelc", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("arrelf", "verilog", "not_proven", "guard_sim_synth_differ"),
     ("locsel2", "verilog", "not_proven", "guard_sim_synth_differ"),
+    # Round 18: a real that is infinite or NaN as the argument of a constant call whose select is
+    # proven: a simulator converts it to an all-x integer (a literal, a NaN localparam steering an
+    # always block, an untyped child parameter that an override sets to a real; ri09 below)
+    ("ri02", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("ri04", "verilog", "not_proven", "guard_sim_synth_differ"),
+    ("ri11", "verilog", "not_proven", "guard_sim_synth_differ"),
 ]
 
 
@@ -725,6 +731,9 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # 2-bit index into 4 elements, a parameter with one agreed value), n09 (a PWM whose search from
 # reset took 63 s step by step: the two searches now race), and aluok (the workaround form of the
 # Yosys 0.62 ALU bug in alubug: the signed compare written from the sign bits).
+# Round 18: realok (the control of ri09: a proven constant call with plain integer parameters,
+# typed, untyped and set by an override) and mr4dbp (the control of mr4db: the same call cycle
+# with every select proven).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -753,6 +762,8 @@ EQUIVALENT = [
     "fcnt",
     "n09",
     "aluok",
+    "realok",
+    "mr4dbp",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
@@ -790,6 +801,11 @@ REFUSAL_ADVICE = {
     "widegen": "the value 3 in a simulator (Icarus) but 1 in Verilator's elaboration",
     "arrpick": "(in `tt_um_arrpick.core.u[0]`)",
     "ovfmask": "give a localparam that can overflow a type or a size",
+    # Round 18: an infinite real cast to an integer as an argument; a call cycle that hid a
+    # select (inline, and in a real localparam whose value is not compared)
+    "ri09": "a real: a simulator converts an infinite or NaN real to an all-x integer",
+    "mr4db": "calls the function `g` with constant arguments",
+    "vc03": "gives the parameter `RR` a value with a call of a function that can give",
 }
 
 

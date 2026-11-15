@@ -67,11 +67,12 @@ It does not catch bugs in the RTL itself, including a wrong reset in the RTL: bo
 
 ## When the verdict is not your bug
 
-A `not_equivalent` on a design whose RTL tests pass can be a bug in the synthesis program, not in your RTL: `run_tests` with `gl=true` runs your tests on the gates and shows the same failure there.
+A `not_equivalent` on a design whose RTL tests pass can be a bug in the synthesis program, not in your RTL: `run_tests` with `gl=true` runs your tests on the gates and, when they reach the inputs that differ, fails there too.
 A known one: Yosys 0.62 (fixed in 0.68; LibreLane 3.0.14 and Tiny Tapeout pin 0.62) builds wrong gates when a design holds an unsigned subtract wider than its operands (`a - b` into a wider result) and a signed compare of the same operands (`$signed(a) < $signed(b)`), in one `case`, an `if` chain, a `?:` or separate assigns alike.
 Amaranth (`a.as_signed() < b.as_signed()`) and MyHDL (`a.signed() < b.signed()`) designs hit it too. Write the compare from the sign bits instead: `lt = (a[3] != b[3]) ? a[3] : (a < b);` for 4-bit `a` and `b`.
 
 A state machine that synthesis re-encodes can end as not proven (`unproven_points`): a limit of the proof, not a bug in the design.
+So can a proof that runs out of time (`time_limit`), and it is NOT a pass: arithmetic such as multipliers, multiply-accumulate, or CRC/XOR chains mixed with adders is hard for the solver; a smaller width or splitting the logic can help.
 
 ## What equivalence does not see
 
@@ -105,8 +106,9 @@ A select outside the range that Yosys finds once it inlines a function or unroll
 
 ## Indices a constant call may use
 
-Proven: an index from a simple `for` loop inside the range (`for (i = 0; i < 8; i++)` on 8 bits), one whose declared width fits (a 2-bit index into 4 bits) and constants or parameters with one value, also through `+ - *`, so a bit-reverse helper `rev(8'h81)` is fine. A constant select of one of these (`k[1:0]`) counts too.
-Not proven: a 3-bit index into 4 bits, a loop to `i <= 8` over 8 bits, `v[i - 1]` from `i = 0`, a `signed` argument as index, a loop step other than 1, a `$bits` bound, a shift (`v[i << 1]`), a call as an argument (`f(g(8'd1))`), another local or an element of an array as index, even through a select (`v[m[0]]`, `v[loc[1:0]]`).
+Proven: an index from a simple `for` loop inside the range (`for (i = 0; i < 8; i++)` on 8 bits), one whose declared width fits (a 2-bit index into 4 bits) and constants or parameters with one value, also through `+ - *`, so a bit-reverse helper `rev(8'h81)` is fine. A constant select of one of these (`k[1:0]`) counts too, with the range of its width only, not its loop's (the divisor `i[7:0] + 8'd1` of an 8-bit divide is not proven nonzero).
+Not proven: a 3-bit index into 4 bits, a loop to `i <= 8` over 8 bits, `v[i - 1]` from `i = 0`, a `signed` argument as index, a loop step other than 1, a `while` loop (write it as a `for` loop), a `$bits` bound, any operator other than `+ - *` (a shift `v[i << 1]`, `^`, `&`, `|`: write `v[7 - i]`, not `v[i ^ 7]`), a call as an argument (`f(g(8'd1))`), another local or an element of an array as index, even through a select (`v[m[0]]`, `v[loc[1:0]]`).
+An argument that can be x refuses even a proven call: an x or z bit, a divide, another call, or a real (`1.0e999`, a `real` or untyped parameter that holds one, `$sqrt(-1)`, a cast such as `integer'(R)`), because a simulator turns an infinite or NaN real into an all-x integer, which reads x at the index. Pass plain integers.
 
 ## Simulator limits
 

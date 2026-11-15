@@ -1562,3 +1562,315 @@ def test_the_agreed_values_are_one_value_that_both_tools_give_in_every_instance(
     simulator = {a: [(("t",), 8)], b: [(("t",), 1)], c: [(("t",), 4)], d: [(("t",), 1)]}
     assert et.agreed_values(verilator, simulator) == {a: 8}
     assert et.agreed_values(verilator, {}) == {}
+
+
+# -- round 18: a call cycle is judged whatever order the calls come in -------------------------
+# mr4db: f(v, k, d) reads v[k] (k 3 bits) and, inside `if (d) $display(...)`, calls g(v, k);
+# g(v, k) = f(v, k, 1'b0). With a 6-bit v the select can leave the range (k = 6 or 7), with an
+# 8-bit v it cannot. The walk meets the last module item first: a localparam that calls f placed
+# after the inline call of g used to judge f first, read g while f was still being judged (as
+# safe), and keep g as safe.
+
+
+def cycle(width: int) -> list[dict[str, Any]]:
+    """f and g calling each other, with a `width`-bit v."""
+
+    def args(*exprs: dict[str, Any]) -> list[dict[str, Any]]:
+        return [{"type": "ARG", "exprp": [e]} for e in exprs]
+
+    to_g = call(f"({next(_N)})", "(CG)", "g", 6) | {"argsp": args(rd("(CV)", "v"), rd("(CK)", "k"))}
+    f = func("(CF)", "f", 5, local("(CR)", "f", basic(7), isFuncReturn=True),
+             arg("(CV)", "v", basic(width - 1)), arg("(CK)", "k", basic(2)),
+             arg("(CD)", "d", basic(0)), {"type": "BEGIN", "stmtsp": [
+                 if_(rd("(CD)", "d"), [{"type": "DISPLAY", "fmtp": [to_g]}]),
+                 if_({"type": "LOGNOT", "lhsp": [read_bit(rd("(CV)", "v"), rd("(CK)", "k"))]},
+                     [assign(wr("(CR)", "f"), num(1, "8'h"))],
+                     [assign(wr("(CR)", "f"), num(2, "8'h"))])]})  # fmt: skip
+    to_f = call(f"({next(_N)})", "(CF)", "f", 7) | {
+        "argsp": args(rd("(GVC)", "v"), rd("(GKC)", "k"), num(0, "1'h"))
+    }
+    g = func("(CG)", "g", 7, local("(GRC)", "g", basic(7), isFuncReturn=True),
+             arg("(GVC)", "v", basic(width - 1)), arg("(GKC)", "k", basic(2)),
+             {"type": "BEGIN", "stmtsp": [assign(wr("(GRC)", "g"), to_f)]})  # fmt: skip
+    return [f, g]
+
+
+def cycle_calls(width: int, real: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`g(6'h3F, 3'd6)` inline at line 9 (or `localparam real RR = g(...)` at line 8 with
+    `real`), and `localparam [7:0] P0 = f(6'h3F, 3'd1, 1'b0);` at line 10."""
+    vec = num(0x3F, f"{width}'h")
+    g_args = [{"type": "ARG", "exprp": [e]} for e in (vec, num(6, "3'h"))]
+    f_args = [{"type": "ARG", "exprp": [e]} for e in (vec, num(1, "3'h"), num(0, "1'h"))]
+    of_g = call(f"({next(_N)})", "(CG)", "g", 8 if real else 9) | {"argsp": g_args}
+    first = var("(RR)", "RR", 8, varType="LPARAM", isParam=True, valuep=[of_g]) if real else of_g
+    of_f = call(f"({next(_N)})", "(CF)", "f", 10) | {"argsp": f_args}
+    return first, var("(P0)", "P0", 10, varType="LPARAM", isParam=True, valuep=[of_f])
+
+
+@pytest.mark.parametrize("p0_last", [True, False], ids=["p0-after", "p0-before"])
+def test_a_call_cycle_cannot_hide_a_select_whatever_order_the_calls_come_in(p0_last: bool) -> None:
+    inline, p0 = cycle_calls(6)
+    order = [inline, p0] if p0_last else [p0, inline]
+    got = et.constant_call(module(*NAMED, *cycle(6), *order), META, OURS)
+    assert got is not None and (got.name, got.line) == ("g", 9)
+    # the same cycle with an 8-bit v: every select is proven, and so is g's call of f
+    inline, p0 = cycle_calls(8)
+    order = [inline, p0] if p0_last else [p0, inline]
+    assert et.constant_call(module(*NAMED, *cycle(8), *order), META, OURS) is None
+
+
+@pytest.mark.parametrize("p0_last", [True, False], ids=["p0-after", "p0-before"])
+def test_a_call_cycle_cannot_hide_a_risky_call_in_a_parameter_value(p0_last: bool) -> None:
+    """vc03: `localparam real RR = g(6'h3F, 3'd6);`, whose value is not compared, must be named
+    by `valued_calls` (so `equiv_icarus.uncompared` refuses it) in either order."""
+    rr, p0 = cycle_calls(6, real=True)
+    tree = module(*NAMED, *cycle(6), *([rr, p0] if p0_last else [p0, rr]))
+    assert et.valued_calls(tree, META, OURS) == {("core.v", 8, "RR"), ("core.v", 10, "P0")}
+    rr, p0 = cycle_calls(8, real=True)
+    tree = module(*NAMED, *cycle(8), *([rr, p0] if p0_last else [p0, rr]))
+    assert et.valued_calls(tree, META, OURS) == set()
+
+
+def with_k(addr: str, name: str, line: int, body: dict[str, Any]) -> dict[str, Any]:
+    """`function name(input integer k)` with `body`; its argument VAR is `addr` + "k"."""
+    k = var(f"({addr}k)", "k", line, varType="PORT", isFuncLocal=True, direction="INPUT")
+    return func(f"({addr})", name, line, k, body)
+
+
+def k_of(addr: str, line: int, to: str, name: str) -> dict[str, Any]:
+    """`name(k)` with the argument k of the function `addr` (not a constant call)."""
+    arg_ = {"type": "ARG", "exprp": [ref(f"({next(_N)})", f"({addr}k)", "k", line)]}
+    return call(f"({next(_N)})", to, name, line) | {"argsp": [arg_]}
+
+
+@pytest.mark.parametrize("caller_first", [True, False])
+def test_a_chain_of_calls_is_followed_to_its_end_in_either_order(caller_first: bool) -> None:
+    """h(k) calls g(k), which calls pick(4'b1010, k) (pick reads at a computed index): a
+    constant call of h is as risky as pick. One pass over the functions in one order would
+    judge h before g's level rose."""
+    g = with_k("GG", "g", 6, set_return(pick_call(const("4'ha"), ref("(gk)", "(GGk)", "k", 6),
+                                                  line=6), "(RG2)", "g"))  # fmt: skip
+    h = with_k("HH", "h", 7, set_return(k_of("HH", 7, "(GG)", "g"), "(RH)", "h"))
+    chain = [h, g, READS_AT_K] if caller_first else [READS_AT_K, g, h]
+    got = constant(*chain, call("(c7)", "(HH)", "h", 11) | {"argsp": [{"type": "ARG", "exprp": [
+        const("32'h6")]}]})  # fmt: skip
+    assert got is not None and (got.name, got.line) == ("h", 11)
+
+
+def test_a_call_inside_a_function_of_no_function_the_tree_holds_counts() -> None:
+    outer = with_k("OO", "outer", 7, set_return(k_of("OO", 8, "(nowhere)", "pick"), "(RO)", "o"))
+    top = call("(c)", "(OO)", "outer", 11) | {"argsp": [{"type": "ARG", "exprp": [const("32'h6")]}]}
+    got = constant(outer, top)
+    assert got is not None and (got.name, got.line) == ("outer", 11)
+    # the same function calling a function without a computed index is fine
+    safe = with_k("SS", "safe", 7, set_return(rd("(SSk)", "k"), "(RS)", "safe"))
+    calls_safe = with_k("OO", "outer", 7, set_return(k_of("OO", 8, "(SS)", "safe"), "(RO)", "o"))
+    assert constant(safe, calls_safe, top) is None
+
+
+# -- round 18: a real argument can be x ---------------------------------------------------------
+# ri09: `f(integer'(R))` with `localparam real R = 1.0e999` (infinite): a simulator converts an
+# infinite or NaN real to an all-x integer, so f's proven select `v[k]` reads x. The same with a
+# real literal, a real or untyped parameter that holds a real (also one an override sets: its
+# value is not a plain number in both tools, see `plain_values`), and a real system function.
+
+PROVEN_K = f8(v_at(rd("(K3)", "k")), extra=(K3,))  # v[k], k 3 bits into 8: proven
+REAL_R = var(
+    "(RL)",
+    "R",
+    4,
+    varType="LPARAM",
+    isParam=True,
+    childDTypep=[{"type": "BASICDTYPE", "keyword": "real"}],
+    valuep=[const("inf.0")],
+)
+PLAIN = frozenset({("core.v", 2, "P"), ("core.v", 2, "W")})  # P and W: plain in both tools
+
+
+def unary(kind: str, operand: dict[str, Any], **more: Any) -> dict[str, Any]:
+    return {"type": kind, "lhsp": [operand], **more}
+
+
+@pytest.mark.parametrize(
+    ("value", "plain"),
+    [
+        pytest.param(const("inf.0"), PLAIN, id="literal-inf"),  # f(1.0e999)
+        pytest.param(const("3.0"), PLAIN, id="literal-finite"),  # any real literal (fail closed)
+        pytest.param(const('"AB"'), PLAIN, id="string"),
+        pytest.param(named("(RL)", "R"), PLAIN, id="real-parameter"),  # f(R)
+        pytest.param(named("(LP)", "P"), frozenset(), id="parameter-not-plain"),
+        pytest.param(ar("ADD", named("(LP)", "P"), num(1)), frozenset({("core.v", 2, "W")}),
+                     id="parameter-not-plain-in-a-sum"),
+        pytest.param(unary("CAST", named("(LP)", "P"), childDTypep=[INTEGER]), PLAIN,
+                     id="cast"),  # integer'(P): a cast counts even of a plain parameter
+        pytest.param(unary("CASTPARSE", num(3)), PLAIN, id="size-cast"),  # 8'(3)
+        pytest.param(unary("SQRTD", unary("NEGATE", num(1))), PLAIN, id="sqrt"),  # $sqrt(-1)
+        pytest.param(unary("RTOIS", unary("BITSTOREALD", num(0x7FF0000000000000, "64'h"))),
+                     PLAIN, id="bitstoreal"),  # $rtoi($bitstoreal(64'h7ff0...))
+        pytest.param(unary("LOGD", num(0)), PLAIN, id="ln"),  # $ln(0)
+        pytest.param(unary("REALTOBITS", num(1)), PLAIN, id="realtobits"),
+        pytest.param(unary("SOMENEWD", num(1)), PLAIN, id="unknown-d"),  # fail closed
+    ],
+)  # fmt: skip
+def test_a_real_argument_can_be_x_and_refuses_a_proven_constant_call(
+    value: dict[str, Any], plain: frozenset[et.ParamKey]
+) -> None:
+    got = judged(PROVEN_K, REAL_R, args=(num(0x81, "8'h"), value), plain=plain)
+    assert got is not None and (got.name, got.line) == ("f", 9)
+    assert "a real: a simulator converts an infinite or NaN real to an all-x integer" in (
+        got.sentence
+    )
+    assert judged(PROVEN_K, REAL_R, args=(num(0x81, "8'h"), num(3)), plain=plain) is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(named("(LP)", "P"), id="localparam"),
+        pytest.param(named("(GP)", "W"), id="parameter"),
+        pytest.param(named("(GV)", "g"), id="genvar"),  # always a number
+        pytest.param(ar("ADD", named("(LP)", "P"), num(1)), id="add"),
+        pytest.param(ar("AND", named("(LP)", "P"), num(3)), id="and"),
+        pytest.param({"type": "COND", "condp": [ar("LOGAND", num(1), num(1))],
+                      "thenp": [num(1)], "elsep": [unary("REDAND", num(3))]}, id="cond"),
+        pytest.param(unary("SIGNED", named("(LP)", "P")), id="signed"),
+        pytest.param(unary("UNSIGNED", named("(GP)", "W")), id="unsigned"),
+        pytest.param(ar("NEQWILD", num(1), num(2)), id="wildcard-compare"),
+        pytest.param({"type": "ATTROF", "fromp": [named("(WS)", "w")]}, id="bits"),
+    ],
+)  # fmt: skip
+def test_a_plain_argument_lets_a_proven_constant_call_through(value: dict[str, Any]) -> None:
+    assert judged(PROVEN_K, REAL_R, args=(num(0x81, "8'h"), value), plain=PLAIN) is None
+
+
+def test_the_plain_values_are_numbers_in_both_tools() -> None:
+    a, b, c = ("core.v", 2, "W"), ("core.v", 3, "R"), ("core.v", 4, "S")
+    d, e = ("core.v", 5, "E"), ("core.v", 6, "U")
+    verilator = {a: [(("t",), 8), (("u",), 9)], b: None, c: [(("t",), 1)], d: [], e: [(("t",), 1)]}
+    simulator = {a: [(("t",), 8), (("u",), 9)], b: [(("t",), 1)], c: None, d: []}
+    assert et.plain_values(verilator, simulator) == {a}  # several values are fine
+    assert et.plain_values(verilator, {}) == set()
+
+
+# -- round 18: guards of `_Ranges` that only a test of their own can pin --------------------------
+
+V16 = arg("(V16)", "u", basic(15))  # a 16-bit argument
+U2 = arg("(U2)", "q", basic(1))  # a 2-bit argument
+H2 = arg("(H2)", "h", basic(1, signed=True))  # a signed 2-bit argument
+S4L = local("(S4L)", "s", basic(3, signed=True))  # a signed 4-bit local
+B8 = local("(B8)", "i", {"type": "BASICDTYPE", "keyword": "byte", "range": "7:0", "signed": True})
+REALARG = arg("(RA)", "r", {"type": "BASICDTYPE", "keyword": "real"})
+# `logic [7:-4]`: a range with a negative bound (as a signed constant)
+NEGV = arg("(NV)", "n", {"type": "BASICDTYPE", "keyword": "logic", "rangep": [{
+    "type": "RANGE", "leftp": [num(7)], "rightp": [num(0xFFFFFFFC)]}]})  # fmt: skip
+WIDE = local("(WD)", "t", basic(255))  # a 256-bit local
+
+
+def u_at(index: dict[str, Any]) -> dict[str, Any]:
+    """`f = u[index]`, u 16 bits."""
+    return to_f(read_bit(rd("(V16)", "u"), index))
+
+
+@pytest.mark.parametrize(
+    ("fn", "known"),
+    [
+        # tg68 (G68): t[k][0] with `reg [7:0] t [0:3]` and a 3-bit k: the array has 4 elements,
+        # not 8 (its element's packed range is not the array's)
+        pytest.param(f8(MEM, to_f(read_bit(read_bit(rd("(MEM)", "mem"), rd("(K3)", "k")),
+                                           num(0))), extra=(K3,)), None, id="array-index"),
+        # tg21 (G21): v[i - q] for i = 0 to 7, q 2 bits: i - q reaches -3
+        pytest.param(f8(*for_loop("(I)", num(0), lt(rd("(I)", "i"), num(8)),
+                                  [v_at(ar("SUB", rd("(I)", "i"), rd("(U2)", "q")))]),
+                        extra=(U2,)), None, id="loop-minus-argument"),
+        # tg1 (G1): u[s - 4'sb1000], s signed 4 bits: 7 + 8 wraps to -1 in 4-bit arithmetic
+        pytest.param(f8(u_at(ar("SUB", rd("(S4)", "s"), num(8, "4'sh"))), extra=(V16, S4)),
+                     None, id="signed-wraps"),
+        # G22: t[s * h + 8'sd0], s signed 4 bits and h signed 2 bits: -8 * 1 is -8 (a corner
+        # of the low and the high end), outside the 256-bit t
+        pytest.param(f8(WIDE, to_f(read_bit(rd("(WD)", "t"), ar("ADD", ar(
+            "MUL", rd("(S4)", "s"), rd("(H2)", "h")), num(0, "8'sh")))), extra=(S4, H2)),
+                     None, id="multiply-corners"),
+        # G2: n[k[1:0] - 1] with `logic [7:-4] n`: an unsigned context reads 0 - 1 as a large
+        # number, not -1, even though -1 lies inside n's range
+        pytest.param(f8(to_f(read_bit(rd("(NV)", "n"), ar("SUB", part(rd("(K3)", "k"), 1, 0),
+                                                          num(1)))), extra=(NEGV, K3)),
+                     None, id="unsigned-negative"),
+        # G24: t[i * W] for a byte i = 0 to 39 and W = 5 of unknown sign: 0 to 195 fits 8 bits
+        # unsigned but not signed (a signed W makes the product signed: 195 is -61)
+        pytest.param(f8(WIDE, B8, *for_loop("(B8)", num(0), lt(rd("(B8)", "i"), num(40)),
+                                            [to_f(read_bit(rd("(WD)", "t"), ar(
+                                                "MUL", rd("(B8)", "i"), rd("(WP)", "W"))))])),
+                     {("core.v", 2, "W"): 5}, id="unknown-sign-signed"),
+        # G25: n[W - i] for a byte i = 0 to 7 and W = 5 of unknown sign: -2 to 5 fits signed,
+        # but an unsigned W makes it unsigned (5 - 7 is 254)
+        pytest.param(f8(B8, *for_loop("(B8)", num(0), lt(rd("(B8)", "i"), num(8)),
+                                      [to_f(read_bit(rd("(NV)", "n"), ar(
+                                          "SUB", rd("(WP)", "W"), rd("(B8)", "i"))))]),
+                        extra=(NEGV,)), {("core.v", 2, "W"): 5}, id="unknown-sign-unsigned"),
+        # G8: v[r] with a real argument r: only a vector or integer type has a range
+        pytest.param(f8(v_at(rd("(RA)", "r")), extra=(REALARG,)), None, id="real-index"),
+        # G10: v[2][k]: a select of one bit of a plain vector has no range of its own
+        pytest.param(f8(to_f(read_bit(read_bit(rd("(V8)", "v"), num(2)), rd("(K3)", "k"))),
+                        extra=(K3,)), None, id="bit-of-a-bit"),
+    ],
+)  # fmt: skip
+def test_a_range_guard_refuses_what_its_operands_cannot_bound(
+    fn: dict[str, Any], known: dict[et.ParamKey, int] | None
+) -> None:
+    got = judged(fn, SEGS, WPAR, G, agreed=known)
+    assert got is not None and got.name == "f" and got.line == 9
+
+
+def test_the_range_guard_cases_have_proven_twins() -> None:
+    """The same shapes inside the range are proven, so each case above fails on its guard."""
+    twins = [
+        # t[k[1:0]][0]: 4 elements
+        f8(MEM, to_f(read_bit(read_bit(rd("(MEM)", "mem"), part(rd("(K3)", "k"), 1, 0)),
+                              num(0))), extra=(K3,)),
+        # v[i - q] for i = 3 to 7: 0 to 7
+        f8(*for_loop("(I)", num(3), lt(rd("(I)", "i"), num(8)),
+                     [v_at(ar("SUB", rd("(I)", "i"), rd("(U2)", "q")))]), extra=(U2,)),
+        # u[k + 8], k 3 bits: 8 to 15 (the 16-bit vector of the cases above)
+        f8(u_at(ar("ADD", rd("(K3)", "k"), num(8))), extra=(V16, K3)),
+        # t[s * h + 8'sd16]: -14 + 16 to 16 + 16
+        f8(WIDE, to_f(read_bit(rd("(WD)", "t"), ar("ADD", ar(
+            "MUL", rd("(S4)", "s"), rd("(H2)", "h")), num(16, "8'sh")))), extra=(S4, H2)),
+    ]  # fmt: skip
+    for fn in twins:
+        assert judged(fn, SEGS, WPAR, G) is None
+    # t[i * W] for a byte i = 0 to 24 and W = 5: 0 to 120 fits 8 bits signed and unsigned
+    wide = f8(WIDE, B8, *for_loop("(B8)", num(0), lt(rd("(B8)", "i"), num(25)), [to_f(read_bit(
+        rd("(WD)", "t"), ar("MUL", rd("(B8)", "i"), rd("(WP)", "W"))))]))  # fmt: skip
+    assert judged(wide, SEGS, WPAR, G, agreed={("core.v", 2, "W"): 5}) is None
+
+
+@pytest.mark.parametrize(
+    "stmts",
+    [
+        # G39: an unsigned 4-bit u counting up while u < 16 never stops (u wraps to 0)
+        pytest.param(for_loop("(U4)", num(0), lt(rd("(U4)", "u"), num(16)),
+                              [u_at(rd("(U4)", "u"))]), id="up-past-the-type"),
+        # G42: a signed 4-bit s counting down while s >= -8 never stops (s wraps to 7)
+        pytest.param(for_loop("(S4L)", num(7, "4'sh"), lt(rd("(S4L)", "s"), num(8, "4'sh"),
+                                                          "GTES"),
+                              [u_at(ar("ADD", rd("(S4L)", "s"), num(8)))], step=-1),
+                     id="down-past-the-type"),
+        # G40, G45: an integer i from -2 while i < 4'd8: an unsigned compare reads -2 as large
+        pytest.param(for_loop("(I)", num(0xFFFFFFFE), lt(rd("(I)", "i"), num(8, "4'h")),
+                              [u_at(ar("ADD", rd("(I)", "i"), num(2)))]), id="up-mixed-sign"),
+        # G43, G45: an integer i from 7 while i >= 4'd0: unsigned, never false, i goes below 0
+        pytest.param(for_loop("(I)", num(7), lt(rd("(I)", "i"), num(0, "4'h"), "GTE"),
+                              [u_at(rd("(I)", "i"))], step=-1), id="down-mixed-sign"),
+        # G44: counting up while i > -8: the test does not bound i from above
+        pytest.param(for_loop("(I)", num(0), lt(rd("(I)", "i"), num(0xFFFFFFF8), "GTS"),
+                              [u_at(ar("ADD", rd("(I)", "i"), num(7)))]), id="up-with-greater"),
+    ],
+)  # fmt: skip
+def test_a_loop_guard_alone_refuses_a_loop_over_a_vector_wide_enough(
+    stmts: list[dict[str, Any]],
+) -> None:
+    """Each loop indexes a 16-bit vector that every value the loop would claim fits, so only the
+    loop's own guard can refuse it (the loops of `test_a_loop_that_is_not_simple_...` read an
+    8-bit vector, which refuses them anyway)."""
+    got = judged(f8(*stmts, extra=(V16, U4, S4L)), SEGS, WPAR)
+    assert got is not None and got.name == "f"

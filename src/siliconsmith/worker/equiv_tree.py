@@ -993,27 +993,63 @@ class _Ranges:
         return got is not None and got.plain and got.lo >= 1
 
 
-def _x_argument(call: dict[str, Any]) -> bool:
+# Integer expression nodes whose type ends in D, which otherwise marks a real operator (`_real`):
+# `+`, `&`, `?:`, `&&`, `&x`, `$signed`, `$unsigned`, a width extension, `==?`, `!=?`,
+# `$isunbounded` and an unpacked-to-packed conversion. Any other type ending in D counts as real
+# (fail closed: a constant call with it is refused when its function's selects were proven).
+_INTEGER_D = frozenset(
+    {
+        "ADD", "AND", "COND", "LOGAND", "REDAND", "SIGNED", "UNSIGNED", "EXTEND", "EQWILD",
+        "NEQWILD", "ISUNBOUNDED", "CVTARRAYTOPACKED",
+    }
+)  # fmt: skip
+
+
+def _real(kind: str) -> bool:
+    """True if a node of this type makes or converts a real (Verilator 5.046): its real
+    operators end in D (`$sqrt` is SQRTD, `$ln` LOGD, `$bitstoreal` BITSTOREALD, `$itor` ITORD,
+    `$realtime` TIMED; any type ending in D that is not one of `_INTEGER_D` counts, fail
+    closed), `$rtoi` is RTOIS, `$realtobits` REALTOBITS, and every cast is a CAST... node
+    (`integer'(R)`, `8'(R)`)."""
+    return (
+        kind.startswith(("CAST", "RTOI"))
+        or "REAL" in kind
+        or (kind.endswith("D") and kind not in _INTEGER_D)
+    )
+
+
+def _x_argument(call: dict[str, Any], unplain: frozenset[str]) -> bool:
     """True if an argument of a call can be x for a simulator although it reads no variable: a
-    constant with an x or z bit, or an operator that can give x (`_x_operator`: a divide, a
-    `**`, another call)."""
+    constant that is not a plain number (an x or z bit; a real such as `inf.0` or `3.0`; a
+    string), a parameter or localparam whose `addr` is in `unplain` (its value is not a plain
+    number in every instance in both tools: a real, typed or untyped, also one an override
+    sets; a string), a node that makes or converts a real (`_real`: `$sqrt(-1)`, `$ln(0)`,
+    `$bitstoreal(...)`, a cast), or an operator that can give x (`_x_operator`: a divide, a
+    `**`, another call). A real that is infinite or NaN (`1.0e999`, `1.0e999 - 1.0e999`,
+    `$sqrt(-1)`) becomes an all-x integer in a simulator when it is converted to an integer
+    (round 18: `f(integer'(R))` with `R = 1.0e999`), so a real counts whatever its value."""
     for arg in call.get("argsp") or []:
         for node in _subtree(arg) if isinstance(arg, dict) else ():
-            if node.get("type") == "CONST" and _XZ_CONST.search(str(node.get("name", ""))):
+            kind = str(node.get("type", ""))
+            if kind == "CONST" and _number(node) is None:
                 return True
-            if _x_operator(node) is not None:
+            if kind == "VARREF" and str(node.get("varp")) in unplain:
+                return True
+            if _real(kind) or _x_operator(node) is not None:
                 return True
     return False
 
 
 def _constant_calls(
-    tree: Any, known: dict[str, int] | None = None
+    tree: Any, known: dict[str, int] | None = None, plain: frozenset[str] = frozenset()
 ) -> Iterator[tuple[dict[str, Any], dict[str, Any] | None]]:
     """Every call of one of the design's functions that can give a simulator an x for constant
     arguments, made with constant arguments, with the parameter VAR whose value holds it (for
     an override, the child's parameter, the PIN's `modVarp`), or None anywhere else (an
     override whose parameter does not resolve too). `known`: the one agreed value of a
-    parameter, by the `addr` of its VAR (`_Ranges`). See `constant_call`."""
+    parameter, by the `addr` of its VAR (`_Ranges`). `plain`: the `addr`s of the parameters
+    whose value is a plain number in every instance in both tools; any other parameter can make
+    an argument x (`_x_argument`). See `constant_call`."""
     if not isinstance(tree, dict):
         raise TreeError("the tree is not an object")
     nodes = list(_subtree(tree))
@@ -1021,6 +1057,7 @@ def _constant_calls(
     kinds = {addr: str(n.get("varType", "")) for addr, n in variables.items()}
     functions = {str(n["addr"]): n for n in nodes if n.get("type") == "FUNC" and "addr" in n}
     ranges = _Ranges(variables, known or {})
+    unplain = frozenset(a for a, k in kinds.items() if k in _PARAMETER_VALUES and a not in plain)
 
     def reads_a_variable(root: dict[str, Any]) -> bool:
         stack = [root]
@@ -1046,18 +1083,6 @@ def _constant_calls(
     # How a function can give x: SAFE never (for arguments without x), PROVEN only if an
     # argument is x (its every computed select and divide is proven by `ranges`), RISKY else.
     safe, proven, risky = 0, 1, 2
-    level: dict[str, int] = {}
-
-    def x_function(addr: str) -> int:
-        if addr not in level:
-            level[addr] = safe  # a recursive call adds nothing new
-            func = functions.get(addr)
-            if func is None:
-                level[addr] = risky
-            else:
-                ranges.scan(func)
-                level[addr] = max((x_source(n) for n in _subtree(func)), default=safe)
-        return level[addr]
 
     def defined(call: dict[str, Any]) -> bool:
         """True if every argument of a call inside a function has a proven range, so is never
@@ -1068,10 +1093,8 @@ def _constant_calls(
         return all(e is not None and ranges.value(e) is not None for e in exprs)
 
     def x_source(node: dict[str, Any]) -> int:
+        """How a node other than a call can give x (a call: `through`)."""
         kind = str(node.get("type", ""))
-        if kind == "FUNCREF":  # PROVEN in the callee holds only for arguments that are not x
-            how = x_function(str(node.get("taskp")))
-            return risky if how == proven and not defined(node) else how
         if _x_operator(node) is not None:
             return proven if kind in _DIVIDES and ranges.nonzero(node) else risky
         if _is_select(kind) and not written(node):
@@ -1087,6 +1110,34 @@ def _constant_calls(
             return proven if ranges.in_range(node) else risky
         return safe
 
+    # Every function's level at once, the least fixpoint over the calls between them (a call
+    # adds its callee's level, RISKY for a PROVEN callee unless `defined`): from each function's
+    # own nodes, raised until no call raises one more. Levels only rise and there are three, so
+    # it ends. Round 18: judged one by one as the calls were met, a function called back (`f`
+    # calls `g` calls `f`) was read as SAFE while it was still being judged, and kept that.
+    for func in functions.values():
+        ranges.scan(func)  # every function first: `defined` and `in_range` read the loops
+    level: dict[str, int] = {}
+    calls: dict[str, list[tuple[str, bool]]] = {}
+    for addr, func in functions.items():
+        inside = list(_subtree(func))
+        level[addr] = max((x_source(n) for n in inside if n.get("type") != "FUNCREF"), default=safe)
+        calls[addr] = [
+            (str(n.get("taskp")), defined(n)) for n in inside if n.get("type") == "FUNCREF"
+        ]
+
+    def through(callee: str, ok: bool) -> int:
+        how = level.get(callee, risky)  # a call of no FUNC the tree holds: RISKY
+        return risky if how == proven and not ok else how
+
+    rising = True
+    while rising:
+        rising = False
+        for addr, made in calls.items():
+            got = max([level[addr], *(through(callee, ok) for callee, ok in made)])
+            if got > level[addr]:
+                level[addr], rising = got, True
+
     def parameter(addr: Any) -> dict[str, Any] | None:
         var = variables.get(str(addr))
         return var if var is not None and kinds[str(addr)] in _PARAMETER_VALUES else None
@@ -1098,8 +1149,8 @@ def _constant_calls(
         if kind == "FUNCREF":
             arguments = [a for a in node.get("argsp") or [] if isinstance(a, dict)]
             if not any(reads_a_variable(a) for a in arguments):
-                how = x_function(str(node.get("taskp")))
-                if how == risky or (how == proven and _x_argument(node)):
+                how = level.get(str(node.get("taskp")), risky)
+                if how == risky or (how == proven and _x_argument(node, unplain)):
                     yield node, owner
         for key, value in node.items():
             items = value if isinstance(value, list) else [value]
@@ -1112,19 +1163,21 @@ def _constant_calls(
                 stack.append((item, under))
 
 
-def _known(tree: Any, files: dict[str, str], agreed: dict[ParamKey, int]) -> dict[str, int]:
-    """The agreed values (`agreed`, keyed as `parameter_values` keys them) by the `addr` of each
-    parameter's VAR in `tree`."""
-    found: dict[str, int] = {}
+def _keys(tree: Any, files: dict[str, str]) -> dict[str, ParamKey]:
+    """The key of each parameter's VAR in `tree` (as `parameter_values` keys them), by its
+    `addr`."""
+    found: dict[str, ParamKey] = {}
     for node in _subtree(tree) if isinstance(tree, dict) else ():
         if node.get("type") != "VAR" or node.get("varType") not in _PARAMETER_VALUES:
             continue
         match = _LOC.match(str(node.get("loc", "")))
         if match is None or match.group(1) not in files or "addr" not in node:
             continue
-        key = (files[match.group(1)], int(match.group(2)), str(node.get("name", "?")))
-        if key in agreed:
-            found[str(node["addr"])] = agreed[key]
+        found[str(node["addr"])] = (
+            files[match.group(1)],
+            int(match.group(2)),
+            str(node.get("name", "?")),
+        )
     return found
 
 
@@ -1143,8 +1196,21 @@ def agreed_values(verilator: ParamValues, simulator: ParamValues) -> dict[ParamK
     return found
 
 
+def plain_values(verilator: ParamValues, simulator: ParamValues) -> frozenset[ParamKey]:
+    """The parameters whose value is a plain number (no real, string, x or z) in every instance
+    and loop pass, both in Verilator's tree (`parameter_values`) and in the simulator's
+    elaboration (`equiv_icarus.parameter_values`), and that both list with at least one value.
+    Any other parameter can make an argument of a constant call x (`_x_argument`): a real that
+    is infinite or NaN, typed or untyped, also one that an override sets."""
+    return frozenset(key for key, mine in verilator.items() if mine and simulator.get(key))
+
+
 def constant_call(
-    tree: Any, meta: Any, ours: list[str], agreed: dict[ParamKey, int] | None = None
+    tree: Any,
+    meta: Any,
+    ours: list[str],
+    agreed: dict[ParamKey, int] | None = None,
+    plain: frozenset[ParamKey] = frozenset(),
 ) -> Unknown | None:
     """The first call (by file order, line, column) of one of the design's functions that can
     give a simulator an x for constant arguments, made with constant arguments anywhere but in
@@ -1154,16 +1220,16 @@ def constant_call(
 
     Constant arguments read no variable: literals, parameters, localparams and genvars only (a
     variable read only for its size, `$bits(x)`, an `ATTROF`, counts as constant), or none. A
-    function can give x for them (`_x_function`) when its body, or a function it calls, reads a
-    select whose index reads a variable (`v[k]`, `v[k +: 2]`, `m[k]`: outside the range it is x
-    to a simulator) or has an operator that can give x (`a / b`, `a % b`, a `**`, as in
-    `x_condition`). A simulator works such a call out itself, and an `if` or `!` turns that x
-    into a defined 0 or 1 that Yosys and Verilator need not use (round 15: `pick(4'b1010, 6)`
-    with `if (!v[k])` in an always block, a case label, a part-select bound, a declaration range
-    (also a parameter's: only its value is compared), an `if` of a clocked block, another
-    function); only a parameter's value is compared with the simulator's, so that is where such
-    a call belongs. A function without such a select or operator (a mask, a shift, a sum:
-    `low_mask(3'd5)`, `rot(8'h81, 3'd2)`) is fine anywhere.
+    function can give x for them (its level in `_constant_calls`) when its body, or a function
+    it calls, reads a select whose index reads a variable (`v[k]`, `v[k +: 2]`, `m[k]`: outside
+    the range it is x to a simulator) or has an operator that can give x (`a / b`, `a % b`, a
+    `**`, as in `x_condition`). A simulator works such a call out itself, and an `if` or `!`
+    turns that x into a defined 0 or 1 that Yosys and Verilator need not use (round 15:
+    `pick(4'b1010, 6)` with `if (!v[k])` in an always block, a case label, a part-select bound,
+    a declaration range (also a parameter's: only its value is compared), an `if` of a clocked
+    block, another function); only a parameter's value is compared with the simulator's, so that
+    is where such a call belongs. A function without such a select or operator (a mask, a
+    shift, a sum: `low_mask(3'd5)`, `rot(8'h81, 3'd2)`) is fine anywhere.
 
     Round 16 narrows this: a select whose index `_Ranges` proves inside the declared range for
     every value its operands can take, and a division whose divisor it proves nonzero, are no
@@ -1171,14 +1237,23 @@ def constant_call(
     4 bits). Parameters count there with the one value in `agreed` (`agreed_values`: the same
     value in every instance in Verilator and in the simulator), never with a guess. Such a call
     still counts when one of its arguments can itself be x (`_x_argument`: an x or z literal, an
-    operator that can give x), since the proof bounds only the defined values. The soundness
-    argument is in `_Ranges`.
+    operator that can give x, a real, a parameter that is not in `plain`, from `plain_values`),
+    since the proof bounds only the defined values. The soundness argument is in `_Ranges`.
+
+    Round 18: the level of each function is the least fixpoint over the calls between them, so
+    that a call cycle (`f` calls `g` calls `f`) cannot hide a select, whatever order the calls
+    come in; and a real argument (`f(integer'(R))`, `f(R)` with `R = 1.0e999`) counts as one
+    that can be x: a simulator converts an infinite or NaN real to an all-x integer.
 
     An unresolved name (`PARSEREF`, a `VARREF` to no `VAR`) counts as a variable: only a module
     that nothing instantiates is left unlinked (in the design Verilator stops with an error)."""
     files = _file_letters(meta)
+    keys = _keys(tree, files)
+    agreed = agreed or {}
+    known = {addr: agreed[key] for addr, key in keys.items() if key in agreed}
+    plains = frozenset(addr for addr, key in keys.items() if key in plain)
     found: list[tuple[int, int, int, str, str]] = []
-    for node, owner in _constant_calls(tree, _known(tree, files, agreed or {})):
+    for node, owner in _constant_calls(tree, known, plains):
         if owner is None:
             file, line, col = _place(node, files)
             if file in ours:
@@ -1192,11 +1267,13 @@ def constant_call(
         line,
         f"the RTL ({file}, line {line}) calls the function `{name}` with constant arguments "
         "outside the value of a parameter or localparam, and the function reads a vector at a "
-        "computed index that the check cannot prove inside the declared range, or divides by a "
-        "value it cannot prove nonzero: outside the range (or by 0) that is x to a simulator, "
-        "which an `if` or `!` inside the function can turn into a 0 or 1 that Yosys does not "
-        "use. The "
-        "check compares such values only for parameters, so it cannot vouch for the design. "
+        "computed index that the check cannot prove inside the declared range or divides by a "
+        "value it cannot prove nonzero, or an argument can be x (an x or z bit, a divide, "
+        "another call, a real: a simulator converts an infinite or NaN real to an all-x "
+        "integer). A select outside the range or at an x index, and a divide by 0, are x to a "
+        "simulator, which an `if` or `!` inside the function can turn into a 0 or 1 that Yosys "
+        "does not use. The check compares such values only for parameters, so it cannot vouch "
+        "for the design. "
         f"Compute it in a localparam first (`localparam integer V = {name}(...);`, inside the "
         "generate loop for a genvar argument) and use that",
     )

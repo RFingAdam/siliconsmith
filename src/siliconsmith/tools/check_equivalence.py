@@ -649,14 +649,19 @@ of 0 or more, or a call of one of your functions in the condition of a generate 
 (compute the value in a localparam first), a call of one of your functions with constant \
 arguments anywhere but in the value of a parameter or localparam (its range or type is not its \
 value) when the function reads a vector at a computed index that the check cannot prove inside \
-the declared range, or divides by a value it cannot prove nonzero (proven: an index from a simple \
+the declared range, or divides by a value it cannot prove nonzero, or when such a proven function \
+gets an argument that can be x (an x or z bit, a divide, another call, or a real: a literal such \
+as 1.0e999, a real or untyped parameter holding one, $sqrt(-1), a cast such as integer'(R); a \
+simulator converts an infinite or NaN real to an all-x integer) (proven: an index from a simple \
 for loop inside the range, an input argument whose declared width fits, constants and parameters \
 with one value and constant selects of these (k[1:0]), also through + - *, so rev(8'h81) with \
 for (i = 0; i < 8; i++) is fine; not proven: a 3-bit index into 4 bits, a loop to i <= 8 over 8 \
-bits, v[i - 1] from i = 0, a signed argument as index, a loop step other than 1, a $bits bound, \
-a shift, a call as an argument, another local or an array element as index, even through a \
-select (v[m[0]], v[loc[1:0]]); a simulator works the call out itself: compute it in an integer \
-localparam first; such a call in a real or string parameter is refused too), a select outside the \
+bits, v[i - 1] from i = 0, a signed argument as index, a loop step other than 1, a while loop \
+(write a for loop), a $bits bound, any operator other than + - * (a shift, ^, &, |: write \
+v[7 - i], not v[i ^ 7]), a call as an argument, another local or an array element as index, \
+even through a select (v[m[0]], v[loc[1:0]]); a simulator works the call out itself: compute it \
+in an integer localparam first; such a call in a real or string parameter is refused too), a \
+select outside the \
 range that Yosys finds once it inlines a function or unrolls a loop (pick(ui_in[3:0], 6) reading \
 bit 6 of a 4-bit argument), also one in an arm of ?: that a constant condition never selects \
 (guard it with an if instead), RTL that Icarus (iverilog -g2012) \

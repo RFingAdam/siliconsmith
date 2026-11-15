@@ -501,6 +501,7 @@ def test_both_searches_out_of_time_is_not_proven(tmp_path: Path) -> None:
     got = go(tmp_path, fake)
     assert got["verdict"] == "not_proven" and got["reason"] == "time_limit"
     assert got["cycles_covered"] == 18 and "after 18 of 32 cycles" in got["message"]
+    assert f"cycles ({equiv.SOLVER_HINT}). {NOT_A_PASS}" in got["message"]
 
 
 def without(scenario: str, name: str, line: str) -> str:
@@ -713,7 +714,8 @@ def test_a_one_shot_difference_waits_for_the_first_differing_cycle(tmp_path: Pat
 # the scratch folder. The plan says, per tag, what to write to `<tag>.log`, how long to sleep
 # first, whether to start a child that sleeps (to see that the whole group is killed), whether
 # to kill itself (as the OOM killer would), and its exit code. It writes its pid (and its
-# child's) to `<tag>.pid`.
+# child's) to `<tag>.pid`, all at once. With `"after": [file, n]` it first waits (up to 20 s)
+# until `file` holds n pids, so that it ends only after another helper has started.
 HELPER = """
 import json, os, signal, subprocess, sys, time
 plan = json.load(open(sys.argv[1]))[sys.argv[2]]
@@ -721,7 +723,14 @@ tag = sys.argv[2]
 pids = [os.getpid()]
 if plan.get("child"):
     pids.append(subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"]).pid)
-open(f"{tag}.pid", "w").write(" ".join(map(str, pids)))
+open(f"{tag}.tmp", "w").write(" ".join(map(str, pids)))
+os.replace(f"{tag}.tmp", f"{tag}.pid")
+if plan.get("after"):
+    name, count = plan["after"]
+    for _ in range(400):
+        if os.path.exists(name) and len(open(name).read().split()) >= count:
+            break
+        time.sleep(0.05)
 time.sleep(plan.get("sleep", 0))
 open(f"{tag}.log", "w").write(plan.get("log", ""))
 sys.stderr.write(plan.get("stderr", ""))
@@ -792,6 +801,9 @@ def test_closing_the_race_kills_the_other_search_and_its_children(
         time.sleep(0.05)
     pids = [int(x) for x in (tmp_path / "slow.pid").read_text().split()]
     race.close()
+    # the script itself is reaped by the time close() returns: this process started it, so
+    # without a wait it would stay a zombie (which `gone` counts as ended)
+    assert not Path(f"/proc/{pids[0]}").exists(), pids
     assert all(gone(pid) for pid in pids), pids  # the script and the child it started
     assert time.monotonic() - started < 20.0
 
@@ -803,6 +815,27 @@ def test_a_script_at_the_time_limit_is_killed_and_reported_as_stopped(
     got = list(equiv.race_yosys(tmp_path, [("", "slow")], 1.0))
     assert got == [("slow", None, "")]
     assert all(gone(int(pid)) for pid in (tmp_path / "slow.pid").read_text().split())
+
+
+def test_one_yosys_at_its_time_limit_is_killed_with_its_children_and_nothing_else(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`run_yosys` stops a script at the limit with its whole process group (the real `yosys`
+    is a wrapper that starts the solver), so no container-wide reap is needed; a script that
+    ends in time is read as before."""
+    monkeypatch.setattr(equiv.emit, "_reap_processes", lambda: pytest.fail("reaped the container"))
+    helper_race(
+        monkeypatch,
+        tmp_path,
+        {"slow": {"sleep": 60, "child": True}, "fast": {"log": "ok\n", "stderr": "w\n"}},
+    )
+    started = time.monotonic()
+    assert equiv.run_yosys(tmp_path, "script", "slow", 1.0) == (None, "")
+    assert time.monotonic() - started < 20.0
+    assert all(gone(int(pid)) for pid in (tmp_path / "slow.pid").read_text().split())
+    assert equiv.run_yosys(tmp_path, "script", "fast", 30.0) == (0, "ok\nw\n")
+    assert (tmp_path / "fast.ys").read_text() == "script"
+    assert equiv.run_yosys(tmp_path, "script", "none", 0.0) == (None, "")
 
 
 def test_a_log_left_by_an_earlier_run_is_never_read_as_this_one(
@@ -852,7 +885,10 @@ def test_the_real_race_ends_with_a_one_shot_proof_and_kills_the_slow_search(
     got = real_race_check(
         monkeypatch,
         tmp_path,
-        {"bmc_once": {"log": ONCE_PROOF_LOG}, "bmc": {"sleep": 60, "child": True}},
+        {  # the one-shot ends only once the slow search has started its child
+            "bmc_once": {"log": ONCE_PROOF_LOG, "after": ["bmc.pid", 2]},
+            "bmc": {"sleep": 60, "child": True},
+        },
     )
     assert got["verdict"] == "equivalent" and got["cycles_covered"] == 32
     assert time.monotonic() - started < 20.0
@@ -1066,6 +1102,27 @@ def test_the_independent_check_from_reset_running_out_of_time_is_not_proven(
     got = go(tmp_path, fake)
     assert got["verdict"] == "not_proven" and got["reason"] == "time_limit"
     assert got["time_limit_hit"] is True and got["ok"] is False
+    assert got["message"] == (
+        "Could not prove equivalence: the induction proof closed, but the independent check "
+        "from reset ran out of time after 0 of 32 cycles (arithmetic such as multipliers, "
+        "multiply-accumulate, or CRC/XOR chains mixed with adders is hard for the solver; a "
+        "smaller width or splitting the logic can help). This is NOT a pass."
+    )
+
+
+def test_a_base_case_that_runs_out_of_time_is_not_proven_and_says_why(tmp_path: Path) -> None:
+    fake = FakeYosys(
+        "counter_good", equiv=(0, "counter_good", "equiv.log"), base=(None, "inline", "")
+    )
+    got = go(tmp_path, fake)
+    assert got["verdict"] == "not_proven" and got["reason"] == "time_limit"
+    assert got["time_limit_hit"] is True and got["ok"] is False
+    assert fake.tags == ["equiv", "base"]  # no check from reset after it
+    assert got["message"] == (
+        "Could not check the base case: a Yosys step ran out of time (arithmetic such as "
+        "multipliers, multiply-accumulate, or CRC/XOR chains mixed with adders is hard for the "
+        "solver; a smaller width or splitting the logic can help). This is NOT a pass."
+    )
 
 
 @pytest.mark.parametrize("bmc_log", ["", "SAT temporal induction proof finished\n", "Reached"])

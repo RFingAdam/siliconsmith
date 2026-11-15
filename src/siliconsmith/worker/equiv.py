@@ -134,6 +134,11 @@ DEADLINE_S = 300.0  # the whole check
 POLL_S = 0.05
 NETLIST_MAX_BYTES = 16 * 1024 * 1024
 NOT_A_PASS = "This is NOT a pass."
+# Why a base case or a check from reset runs out of time, and what helps (in the message).
+SOLVER_HINT = (
+    "arithmetic such as multipliers, multiply-accumulate, or CRC/XOR chains mixed with adders is "
+    "hard for the solver; a smaller width or splitting the logic can help"
+)
 EQUIV_DIR = "equiv"
 
 # A Yosys runner: (folder, script text, tag, time limit in seconds) -> (exit code, log text).
@@ -153,29 +158,16 @@ def _yosys_argv(tag: str) -> list[str]:
 
 
 def run_yosys(cwd: Path, script: str, tag: str, timeout: float) -> tuple[int | None, str]:
-    """Run one Yosys script in `cwd`; the log is `<tag>.log` next to it. Stops at `timeout`."""
-    (cwd / f"{tag}.ys").write_text(script, encoding="utf-8")
-    log = cwd / f"{tag}.log"
-    log.unlink(missing_ok=True)
-    if timeout <= 0:
-        return None, ""
-    try:
-        proc = subprocess.run(
-            _yosys_argv(tag),
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=timeout,
-            check=False,
-        )
-        code: int | None = proc.returncode
-        err = proc.stderr
-    except subprocess.TimeoutExpired:
-        emit._reap_processes()
-        code, err = None, ""
-    text = log.read_text(errors="replace") if log.exists() else ""
-    return code, text + err
+    """Run one Yosys script in `cwd`; the log is `<tag>.log` next to it. Stops at `timeout`.
+    It is a race of one (`race_yosys`): the Yosys runs in a session and process group of its
+    own, and at the limit that whole group is killed and reaped (the `yosys` command is a
+    wrapper that starts the real one, so killing only the process it starts would leave the
+    solver running); nothing else in the container is touched."""
+    runs = race_yosys(cwd, [(script, tag)], timeout)
+    with contextlib.closing(runs):
+        for _, code, log in runs:
+            return code, log
+    return None, ""  # unreachable: a race reports every script
 
 
 def _stop(proc: subprocess.Popen[bytes]) -> None:
@@ -489,6 +481,8 @@ def _base(r: _Run, points: list[equiv_script.Point], steps: int) -> dict[str, An
             "message": "the base-case proof failed",
             "detail": [],
         }
+        if failure["reason"] == "time_limit":
+            failure = {**failure, "message": f"{failure['message']} ({SOLVER_HINT})"}
         return {"status": "fail", "failure": failure}
     found = equiv_parse.parse_base(log, points)
     if found["status"] == "unreadable":
@@ -841,10 +835,12 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        provably nonzero, are no x source (round 16, `equiv_tree._Ranges`); a parameter counts
        there with the one value that both tools give it in every instance
        (`equiv_tree.agreed_values` of Verilator's and Icarus's values), so this runs after
-       `_icarus_checks`. Then `_yosys_outside`: no select outside the range in Yosys's
-       elaboration (its warning; Yosys sees one inside a function it inlines, also in an arm of
-       `?:` that a constant condition never selects). Last, so that a more specific finding
-       about the same code is named first.
+       `_icarus_checks`. Such a call still counts when an argument can be x, a real among them
+       (an infinite or NaN real is an all-x integer to a simulator) and a parameter whose value
+       is not a plain number in both tools (`equiv_tree.plain_values`). Then `_yosys_outside`:
+       no select outside the range in Yosys's elaboration (its warning; Yosys sees one inside a
+       function it inlines, also in an arm of `?:` that a constant condition never selects).
+       Last, so that a more specific finding about the same code is named first.
     """
     cleaned = {fname: equiv_sv.clean(text) for fname, text in sources}
     folder = r.scratch / "func_tree"
@@ -914,7 +910,8 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         return simulator
     try:  # judged last; a parameter counts with the one value both tools give it
         agreed = equiv_tree.agreed_values(values, simulated)
-        constant = equiv_tree.constant_call(before, meta, list(cleaned), agreed)
+        plain = equiv_tree.plain_values(values, simulated)
+        constant = equiv_tree.constant_call(before, meta, list(cleaned), agreed, plain)
     except (ValueError, equiv_tree.TreeError, RecursionError) as exc:
         return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
 
@@ -1437,7 +1434,8 @@ def _proven_path(
             "not_proven",
             "time_limit",
             "Could not prove equivalence: the induction proof closed, but the independent check "
-            f"from reset ran out of time after {ref['covered']} of {cycles} cycles.",
+            f"from reset ran out of time after {ref['covered']} of {cycles} cycles "
+            f"({SOLVER_HINT}).",
         )
     cov = f"{ref['covered']} cycles"
     return r.verdict(
