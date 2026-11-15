@@ -844,6 +844,48 @@ def test_a_value_is_negative_when_its_type_is_signed() -> None:
     }
 
 
+def test_each_value_has_the_width_of_its_constant_and_the_sign_of_its_type() -> None:
+    """Round 23 wcat: an untyped `8'hff + 8'h00` is `8'hff` in Verilator's final tree (8 bits,
+    which Yosys and the gates keep; Icarus makes it 9). `parameter_shapes` gives every value
+    that `parameter_values` gives, with the same paths, and None where it gives None."""
+    types = [
+        {"type": "BASICDTYPE", "addr": "(i32)", "keyword": "integer", "signed": True},
+        {"type": "BASICDTYPE", "addr": "(u8)", "keyword": "logic"},
+        {"type": "REFDTYPE", "addr": "(ref)", "refDTypep": "(i32)"},
+    ]
+    tree = {
+        "type": "NETLIST",
+        "modulesp": [
+            mod(
+                "(T)", "tt_um_core", 1,
+                elab_param("(A)", "A", 2, "32'hfffffffe", dtypep="(i32)"),
+                elab_param("(B)", "B", 3, "8'hff", dtypep="(u8)"),
+                elab_param("(D)", "D", 4, "33'h1_0000_0000", dtypep="(ref)"),
+                elab_param("(E)", "E", 5, "8'shfe"),  # no data type: not signed
+                elab_param("(R)", "R", 6, "1.5"),
+                {**elab_param("(X)", "X", 7, "4'hx"), "dtypep": "(u8)"},
+            ),
+        ],
+        "typeTablep": [{"type": "TYPETABLE", "typesp": types}],
+    }  # fmt: skip
+    assert et.parameter_shapes(tree, META, OURS) == {
+        ("core.v", 2, "A"): [(TOP, (32, True))],
+        ("core.v", 3, "B"): [(TOP, (8, False))],
+        ("core.v", 4, "D"): [(TOP, (33, True))],
+        ("core.v", 5, "E"): [(TOP, (8, False))],
+        ("core.v", 6, "R"): None,
+        ("core.v", 7, "X"): None,
+    }
+    values = et.parameter_values(PARAM_TREE, META, OURS)
+    shapes = et.parameter_shapes(PARAM_TREE, META, OURS)
+    assert shapes.keys() == values.keys()
+    for key, got in values.items():
+        assert (got is None) == (shapes[key] is None), key
+        assert [p for p, _ in got or []] == [p for p, _ in shapes[key] or []], key
+    assert shapes[("core.v", 33, "Q")] == [(GEN, (8, False))]
+    assert shapes[("core.v", 40, "UK")] == []  # nothing instantiates it
+
+
 @pytest.mark.parametrize(
     ("bounds", "names"),
     [
@@ -2110,6 +2152,132 @@ def test_the_simulator_only_values_are_plain_numbers_verilator_does_not_list() -
     assert et.simulator_only_values(verilator, {}) == set()
 
 
+# Round 23 (a01, a04, e02, e03, e06, e08, e10): a localparam inside a function that Verilator only
+# works out as a constant (in a range or a replication count) is listed by the simulator alone,
+# so its value was never compared, and `1 << 32`, `8'hff + 8'h01` or `$bits(a)` there differ
+# between Icarus and Verilator/Yosys. `uncompared_local` refuses such a local unless it is one
+# number as written.
+M_KEY = ("core.v", 6, "M")
+LISTED = {M_KEY: [(("tt_um_x", "core", "h"), 2)]}
+
+
+def m_local(value: dict[str, Any], dtype: dict[str, Any] = UNTYPED) -> dict[str, Any]:
+    return var("(ML)", "M", 6, varType="LPARAM", isParam=True, isFuncLocal=True,
+               childDTypep=[dtype], valuep=[value])  # fmt: skip
+
+
+def h_with(*kids: dict[str, Any], kind: str = "FUNC") -> dict[str, Any]:
+    """`function integer h(input integer a); kids...; endfunction`."""
+    return func("(H)", "h", 5, local("(RH)", "h", INTEGER, isFuncReturn=True),
+                arg("(AH)", "a", INTEGER), *kids, kind=kind)  # fmt: skip
+
+
+def lone_local(
+    *kids: dict[str, Any],
+    verilator: et.ParamValues | None = None,
+    simulator: et.ParamValues | None = None,
+) -> et.Unknown | None:
+    tree = module(*NAMED, *kids)
+    return et.uncompared_local(
+        tree, META, OURS, {} if verilator is None else verilator,
+        LISTED if simulator is None else simulator,
+    )  # fmt: skip
+
+
+ATTR_BITS = {"type": "ATTROF", "attrType": "DIM_BITS", "fromp": [rd("(AH)", "a")]}
+
+
+@pytest.mark.parametrize(
+    ("value", "dtype"),
+    [
+        pytest.param(ar("SHIFTL", num(1), num(32)), UNTYPED, id="shift-1<<32"),
+        pytest.param(ar("ADD", num(0xFF, "8'h"), num(1, "8'h")), UNTYPED, id="add-overflow"),
+        pytest.param(ATTR_BITS, UNTYPED, id="bits-of-argument"),
+        pytest.param({"type": "NEGATE", "lhsp": [num(1)]}, UNTYPED, id="negative"),
+        pytest.param(f8_call(num(3)), UNTYPED, id="a-call"),
+        pytest.param(num(0x100000000, "?36?h"), UNTYPED, id="unsized-wider-than-32"),
+        pytest.param(num(0x100000000, "?33?sh"), UNTYPED, id="unsized-decimal-2**32"),
+        pytest.param(const("4'b1x00"), UNTYPED, id="x-bit"),
+        pytest.param(const("1.0e999"), UNTYPED, id="real-literal"),
+        pytest.param(num(2), {"type": "BASICDTYPE", "keyword": "real"}, id="real-type"),
+        pytest.param(num(2), {"type": "REFDTYPE", "name": "t"}, id="typedef"),
+        pytest.param(num(5), basic(ar("SUB", ATTR_BITS, num(1))), id="range-from-bits"),
+        pytest.param(num(5), basic(num(0x100000000, "?36?h")), id="range-bound-unsized-wide"),
+    ],
+)
+def test_a_function_local_that_only_the_simulator_lists_must_be_a_number_as_written(
+    value: dict[str, Any], dtype: dict[str, Any]
+) -> None:
+    got = lone_local(h_with(m_local(value, dtype)))
+    assert got is not None and (got.name, got.file, got.line) == ("M", "core.v", 6), got
+    assert "declares the localparam `M` inside the function `h`" in got.sentence
+    assert "Move the localparam out of the function" in got.sentence
+
+
+@pytest.mark.parametrize(
+    ("value", "dtype"),
+    [
+        pytest.param(num(2), UNTYPED, id="untyped-decimal"),  # flocal: MIN_DEPTH = 2
+        pytest.param(num(0xFF, "8'h"), UNTYPED, id="sized"),
+        pytest.param(num(0x80, "8'sh"), basic(7), id="signed-sized-with-range"),
+        pytest.param(num(0x100000000, "33'h"), basic(32), id="sized-wider-than-32"),
+        pytest.param(num(7), INTEGER, id="integer"),
+        pytest.param(num(0x7FFFFFFF, "?32?h"), UNTYPED, id="unsized-32-bits"),
+    ],
+)
+def test_a_function_local_written_as_a_number_needs_no_comparison(
+    value: dict[str, Any], dtype: dict[str, Any]
+) -> None:
+    assert lone_local(h_with(m_local(value, dtype))) is None
+
+
+def test_a_function_local_with_a_value_of_two_nodes_is_no_number_as_written() -> None:
+    two = m_local(num(2)) | {"valuep": [num(2), num(3)]}
+    assert lone_local(h_with(two)) is not None
+    assert lone_local(h_with(m_local(num(2)) | {"valuep": []})) is not None
+
+
+def test_a_function_local_is_judged_unless_both_tools_list_it_with_plain_numbers() -> None:
+    shifted = h_with(m_local(ar("SHIFTL", num(1), num(32))))
+    # compared by `equiv_icarus.disagreement`: fine here
+    assert lone_local(shifted, verilator=LISTED) is None
+    # listed by one tool only, by none, or not as a plain number: refused
+    assert lone_local(shifted, verilator=LISTED, simulator={}) is not None
+    assert lone_local(shifted, simulator={}) is not None
+    assert lone_local(shifted, verilator={M_KEY: None}, simulator=LISTED) is not None
+    assert lone_local(shifted, verilator=LISTED, simulator={M_KEY: None}) is not None
+    # a number as written that the simulator lists as a string or real is refused too, while one
+    # that no tool lists (a dead function) or that only the simulator lists is fine
+    plain = h_with(m_local(num(0x4142, "16'h")))
+    assert lone_local(plain, simulator={M_KEY: None}) is not None
+    assert lone_local(plain, simulator={}) is None
+    assert lone_local(plain) is None
+    # another key does not stand for it
+    other = {("core.v", 7, "M"): LISTED[M_KEY]}
+    assert lone_local(shifted, verilator=other, simulator=other) is not None
+
+
+def test_only_a_local_of_a_function_or_task_of_our_files_is_judged() -> None:
+    shifted = ar("SHIFTL", num(1), num(32))
+    # a module-level localparam is compared by `equiv_icarus.disagreement` (or is a genvar)
+    assert lone_local(m_local(shifted)) is None
+    assert lone_local(h_with(m_local(shifted), kind="TASK")) is not None
+    # in a `begin ... end` of the function
+    assert lone_local(h_with({"type": "BEGIN", "stmtsp": [m_local(shifted)]})) is not None
+    # a function of a file that is not ours
+    theirs = func("(H)", "h", 5, m_local(shifted) | {"loc": "d,6:1,6:4"}, file="d")
+    assert lone_local(theirs) is None
+
+
+def test_the_first_local_that_is_not_compared_is_named() -> None:
+    first = var("(MA)", "A", 3, varType="LPARAM", isParam=True, isFuncLocal=True,
+                childDTypep=[UNTYPED], valuep=[ar("ADD", num(1), num(1))])  # fmt: skip
+    g = func("(G)", "g", 2, first)
+    got = lone_local(h_with(m_local(ar("SHIFTL", num(1), num(32)))), g)
+    assert got is not None and (got.name, got.line) == ("A", 3)
+    assert "inside the function `g`" in got.sentence
+
+
 @pytest.mark.parametrize(
     "name",
     [
@@ -2127,6 +2295,7 @@ def test_a_parameter_name_that_verilator_hashed_fails_closed(name: str) -> None:
     with pytest.raises(et.TreeError, match=r"core\.v, line 8: Verilator shortens") as raised:
         et.parameter_values(tree, META, OURS)
     assert len(f"no usable syntax tree (TreeError: {raised.value})") <= 200  # `clip` in equiv
+    assert "shorter name (`__`, `$` and an escaped name's symbols count as" in str(raised.value)
     hashed = MIN_DEPTH | {"name": name}
     linked = module(*NAMED, SAFE_F, helper(rd("(VG5)", "v"), kid=hashed))
     with pytest.raises(et.TreeError, match="use a shorter name"):

@@ -783,6 +783,11 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # Round 22: lonote and lohdr (a taught-style counter and a registered adder whose prose block
 # comment only mentions a lint_off, then a latch or BLKSEQ: Verilator reads a comment as a
 # meta-comment only when it starts with `verilator`; both were refused at 70f0f4e).
+# Round 23: floclit (a localparam inside a function, whose call sets a wire's range, written as
+# one sized number: every tool reads it the same, so it needs no comparison) and wint (untyped
+# localparams computed with an unsized number, W - 1 and W * 2, which Icarus makes wider than
+# 32 bits, used as a counter limit and a range, and 8'hff + 8'h00 with a size in a
+# concatenation: the control of wcat and wsum).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -825,6 +830,8 @@ EQUIVALENT = [
     "flocalu",
     "lonote",
     "lohdr",
+    "floclit",
+    "wint",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
@@ -855,7 +862,10 @@ REFUSAL_ADVICE = {
     "inlsig": "Keep every select inside the declared range",
     "icapack": "declare it as a plain vector",
     "realcall": "Compute the call in an integer localparam first",
-    "rangecall": "outside the value of a parameter or localparam",
+    # round 23: the call in the range gives the localparam another width in each tool (refused
+    # since then by the width comparison, before the call itself is named)
+    "rangecall": "(rangecall.v, line 16) gives the parameter `Q` the same value but 2 unsigned "
+    "bits in a simulator (Icarus) and 1 unsigned bit in Verilator's elaboration",
     "swaploop": "the value 1 in a simulator (Icarus) but 0 in Verilator's elaboration (in "
     "`tt_um_swaploop.core.b[0]`)",
     "swapinst": "(in `tt_um_swapinst.core.u0`)",
@@ -888,12 +898,29 @@ REFUSAL_ADVICE = {
     # that Verilator hashes (their values were never compared), and an infinite real declared
     # inside a function, which still counts as a real (the control of flocal)
     "lofold": "(lofold.v, line 14) uses `verilator lint_off BLKSEQ`",
-    "locut": "(locut.v, line 16) uses a `// verilator lint_off` (or lint_on) comment that goes "
-    "on after a single `/`",
+    "locut": "(locut.v, line 16) uses a `// verilator lint_off` (or lint_on, lint_save, "
+    "lint_restore) comment that goes on after a single `/`",
     "longname": "longname.v, line 14: Verilator shortens a parameter name of 128 characters",
     "longesc": "longesc.v, line 12: Verilator shortens a parameter name of 128 characters",
     "flocalreal": "(flocalreal.v, line 21) calls the function `f` with an argument that can hold "
     "a real",
+    # Round 23: a localparam inside a function that Verilator only works out as a constant (the
+    # call sets a wire's range), so only the simulator lists it and its value was never
+    # compared: an overflowing shift, the PLAN.md overflow 8'hff + 8'h01 and $bits of the
+    # argument gave the wire another width in Icarus than in the gates (all three equivalent at
+    # 7127c03); and the control, the same shift at module level, compared and refused as before
+    "flocshift": "(flocshift.v, line 17) declares the localparam `M` inside the function `h`",
+    "flocovf": "(flocovf.v, line 16) declares the localparam `M` inside the function `h`",
+    "flocbits": "(flocbits.v, line 16) declares the localparam `W` inside the function `h`",
+    "flocmod": "(flocmod.v, line 12) gives the parameter `M` the value 4294967296 in a simulator "
+    "(Icarus) but 0 in Verilator's elaboration",
+    # Round 23: an untyped localparam of sized numbers has the same value in every tool but is
+    # wider in Icarus (lossless): a concatenation and $bits saw the width (Icarus RTL and gates
+    # differ; both equivalent before widths were compared)
+    "wcat": "(wcat.v, line 14) gives the parameter `M` the same value but 9 unsigned bits in a "
+    "simulator (Icarus) and 8 unsigned bits in Verilator's elaboration and the gates",
+    "wsum": "(wsum.v, line 12) gives the parameter `S` the same value but 5 unsigned bits in a "
+    "simulator (Icarus) and 4 unsigned bits",
 }
 
 

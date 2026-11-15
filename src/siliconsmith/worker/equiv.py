@@ -24,25 +24,28 @@ EFFORT: `equiv_sv.refusal` refuses (`not_proven`, reason `guard_sim_synth_differ
 constructs that a simulator and Yosys read differently, `_hidden_lint` a race or x warning
 that a comment hid from the emit lint (the RTL linted again without its comments), and
 `_tree_checks` what is judged on Verilator's syntax tree (an impure function, a combinational
-block that can read a signal before
-it writes it on some path, a parameter with an x or z bit, a parameter value that the simulator
-Icarus works out differently, a different elaboration, a call with constant arguments of a
-function that selects at a computed index not proven inside the range or divides by a value not
-proven nonzero (`equiv_tree.constant_call`), a select outside the range that Yosys finds, also
-in an arm of `?:` that a constant condition never selects, RTL that Icarus cannot compile or
-stops on). NOT detected: an index computed from a signal or a variable (a loop index passed
-into a function too) that goes outside the range or a division by a signal that is 0, a
-constant that is x to a simulator steering a case inside a block, the values inside a generate
-loop or module copy, an inline call of a function that leaves its result unset for some
-constant arguments, a constant expression that Yosys evaluates differently from a simulator (a
-size cast or an unbased `'1` inside a localparam, `$rtoi` in any constant expression: a
-localparam or a generate condition; a real parameter override, which Yosys passes to the
-instance with six decimals; a finite real mixed into a signal expression, `ui_in == 2.5`; a
-select outside the range inside a constant function, also in a parameter's value, which Yosys
-0.62 evaluates to an undefined value, so the gates can
-differ even where Icarus and Verilator agree and the verdict can change with unrelated edits;
-only a parameter value on which the simulator and Verilator disagree is refused, as an untyped
-localparam that overflows is, which Icarus makes wider), and anything else that depends on
+block that can read a signal before it writes it on some path, a parameter with an x or z bit, a
+parameter value that the simulator Icarus works out differently, or to the same value with
+another width or sign (an untyped `8'hff + 8'h00` is 9 bits wide in Icarus, 8 in Verilator and
+the gates), a different elaboration, a call with constant arguments of a function that selects
+at a computed index not proven inside the range or divides by a value not proven nonzero
+(`equiv_tree.constant_call`), a select outside the range that Yosys finds, also in an arm of
+`?:` that a constant condition never selects, RTL that Icarus cannot compile or stops on). NOT
+detected: an index computed from a signal or a variable (a loop index passed into a function
+too) that goes outside the range or a division by a signal that is 0, a constant that is x to a
+simulator steering a case inside a block, the values inside a generate loop or module copy, an
+inline call of a function that leaves its result unset for some constant arguments, a constant
+expression that Yosys evaluates differently from a simulator (a size cast or an unbased `'1`
+inside a localparam, `$rtoi` in any constant expression: a localparam or a generate condition; a
+real parameter override, which Yosys passes to the instance with six decimals; a finite real
+mixed into a signal expression, `ui_in == 2.5`; a select outside the range inside a constant
+function, also in a parameter's value, which Yosys 0.62 evaluates to an undefined value, so the
+gates can differ even where Icarus and Verilator agree and the verdict can change with unrelated
+edits; only a parameter value on which the simulator and Verilator disagree is refused, as an
+untyped localparam that overflows is, which Icarus makes wider), an untyped localparam computed
+with an unsized number, which Icarus makes wider than 32 bits where Verilator and the gates keep
+32 (`W - 1` has 33 bits there: a concatenation, `$bits`, `^` or an expression that overflows 32
+bits sees it; `equiv_icarus.shape_disagreement` lets it pass), and anything else that depends on
 simulation event order;
 gate-level simulation (`run_tests` with `gl=true`) is the check against simulation behaviour.
 
@@ -890,8 +893,11 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        (Verilator folds those to a value, Icarus and Yosys read x), nor a parameter have other
        values than in Verilator's tree in some instance or loop pass
        (`equiv_tree.parameter_values`; a select outside the range inside a constant function
-       leaves no x and no warning), nor a parameter whose value holds a call that can give x
-       go uncompared (`equiv_tree.valued_calls`: a real, a string).
+       leaves no x and no warning), nor the same values with another width or sign
+       (`equiv_tree.parameter_shapes`; round 23: Icarus makes an untyped `8'hff + 8'h00` 9 bits
+       wide, Verilator and the gates 8, and `{M, M}` differs; a width of 32 bits or more in
+       Verilator that Icarus makes wider passes), nor a parameter whose value holds a call that
+       can give x go uncompared (`equiv_tree.valued_calls`: a real, a string).
     4. Yosys elaborates the same cleaned RTL to RTLIL (only if Verilator gave a tree). A failure
        or a time out is the verdict of `equiv_parse.guard_failure`, never a pass.
     5. `equiv_elab.unmatched`: every block and call Yosys keeps must be in Verilator's tree
@@ -923,8 +929,11 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        converts one (its warning: an assignment, also inside a function, a wire, a port). Then
        `_yosys_outside`: no select outside the range in Yosys's elaboration (its warning; Yosys
        sees one inside a function it inlines, also in an arm of `?:` that a constant condition
-       never selects). Last, so that a more specific finding about the same code is named
-       first.
+       never selects). Then `equiv_tree.uncompared_local`: a localparam declared inside a
+       function whose value is not compared with the simulator's (round 23: Verilator leaves
+       out a function it only works out as a constant, so `localparam M = 1 << 32;` there gave
+       `wire [h(3):0] w` another width in Icarus than in the gates) must be one number as
+       written. Last, so that a more specific finding about the same code is named first.
     """
     cleaned = {fname: equiv_sv.clean(text) for fname, text in sources}
     folder = r.scratch / "func_tree"
@@ -980,6 +989,7 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         condition = equiv_tree.x_condition(before, meta, list(cleaned))
         valued = equiv_tree.valued_calls(before, meta, list(cleaned))  # judged with Icarus's
         values = equiv_tree.parameter_values(tree, meta, list(cleaned))  # judged with Icarus's
+        shapes = equiv_tree.parameter_shapes(tree, meta, list(cleaned))  # judged with Icarus's
         found = equiv_tree.impure_function(tree, meta, list(cleaned))  # judged after Yosys
         early = equiv_tree.early_read(tree, meta, list(cleaned))  # judged after purity
     except (OSError, ValueError, equiv_tree.TreeError, RecursionError) as exc:
@@ -988,7 +998,7 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
     for root in (unknown, condition):
         if root is not None:
             return refuse("guard_sim_synth_differ", f"{root.sentence}.")
-    simulator, simulated = _icarus_checks(r, cleaned, name, values, valued)
+    simulator, simulated = _icarus_checks(r, cleaned, name, values, shapes, valued)
     r.timed("tree", t0)  # the Verilator and the Icarus run
     if simulator is not None:
         return simulator
@@ -998,6 +1008,7 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         built = equiv_tree.built_values(values, simulated)
         lone = equiv_tree.simulator_only_values(values, simulated)
         constant = equiv_tree.constant_call(before, meta, list(cleaned), agreed, plain, built, lone)
+        local = equiv_tree.uncompared_local(before, meta, list(cleaned), values, simulated)
     except (ValueError, equiv_tree.TreeError, RecursionError) as exc:
         return unreadable(f"no usable syntax tree ({type(exc).__name__}: {exc})")
 
@@ -1033,6 +1044,8 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
         return refuse("guard_sim_synth_differ", real)
     if outside is not None:
         return refuse("guard_sim_synth_differ", outside)
+    if local is not None:
+        return refuse("guard_sim_synth_differ", f"{local.sentence}.")
     return None
 
 
@@ -1143,13 +1156,15 @@ def _icarus_checks(
     cleaned: dict[str, str],
     name: str,
     values: equiv_tree.ParamValues,
+    shapes: equiv_tree.ParamShapes,
     valued: frozenset[equiv_tree.ParamKey],
 ) -> tuple[dict[str, Any] | None, equiv_tree.ParamValues]:
     """A `not_proven` verdict if the simulator (Icarus) elaborates a constant of the RTL to a
     value with an x or z bit, or a parameter to other values than Verilator did (`values`, from
-    its tree, instance by instance), or if a parameter whose value holds a call that can give x
-    (`valued`, `equiv_tree.valued_calls`) is not compared, else None (`equiv_icarus`). `cleaned`
-    is the cleaned RTL that Yosys reads. Like the Verilator run it must not pass by giving up:
+    its tree, instance by instance) or to the same values with another width or sign
+    (`shapes`), or if a parameter whose value holds a call that can give x (`valued`,
+    `equiv_tree.valued_calls`) is not compared, else None (`equiv_icarus`). `cleaned` is the
+    cleaned RTL that Yosys reads. Like the Verilator run it must not pass by giving up:
 
     * the run takes longer than the emit lint may: `time_limit`;
     * Icarus does not compile the RTL (a failing exit code or no output): `guard_sim_synth_differ`,
@@ -1161,9 +1176,10 @@ def _icarus_checks(
     * a parameter, localparam or genvar with an x or z bit (`equiv_icarus.x_parameter`), then a
       constant select outside the range (`equiv_icarus.x_select`), then a parameter or
       localparam whose values differ from Verilator's in some instance or loop pass
-      (`equiv_icarus.disagreement`), then one of `valued` that is not compared (a real, a
-      string, a parameter only one tool lists: `equiv_icarus.uncompared`):
-      `guard_sim_synth_differ`;
+      (`equiv_icarus.disagreement`), then one whose values agree but whose width or sign does
+      not (`equiv_icarus.shape_disagreement`: an untyped `8'hff + 8'h00` is 9 bits wide in
+      Icarus, 8 in Verilator), then one of `valued` that is not compared (a real, a string, a
+      parameter only one tool lists: `equiv_icarus.uncompared`): `guard_sim_synth_differ`;
     * Icarus cannot be started at all: inconclusive, logged, nothing is refused (it cannot happen
       in practice: the worker runs inside the toolchain image, which holds Icarus).
 
@@ -1217,6 +1233,9 @@ def _icarus_checks(
             equiv_icarus.x_parameter(vvp, ours)
             or equiv_icarus.x_select(run.output, ours)
             or equiv_icarus.disagreement(simulated, values, ours)
+            or equiv_icarus.shape_disagreement(
+                equiv_icarus.parameter_shapes(vvp, ours), shapes, ours
+            )
             or equiv_icarus.uncompared(simulated, values, valued, ours)
         )
     except equiv_icarus.IcarusError as exc:

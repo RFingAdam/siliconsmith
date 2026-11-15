@@ -607,6 +607,9 @@ def test_a_lint_off_is_read_as_verilator_reads_the_comment(comment: str) -> None
         "// verilator lint_off WIDTH /* no blkseq here */",  # closes on the line: a comment
         "// verilator lint_off WIDTH /* a */ // and no latch",
         "/* verilator lint_off WIDTH */ // verilator lint_off WIDTH // and BLKSEQ",
+        # VC14 (round 23): a form feed after the block comment is a blank to Verilator, which
+        # then reads the `//` comment to the end of the line
+        "// verilator lint_off WIDTH /* a */\f// b",
     ],
 )
 def test_words_verilator_does_not_read_as_codes_are_not_judged(comment: str) -> None:
@@ -666,6 +669,14 @@ def test_a_lint_off_in_a_string_or_an_escaped_name_is_no_comment() -> None:
     assert comments == [(text.index("/* c"), "/* c */"), (text.index("// d"), "// d")]
 
 
+def test_a_double_quote_is_a_blank_in_the_cleaned_reading() -> None:
+    """LO6 (round 23): Verilator's comment cleanup makes a double quote a space, so
+    `verilator"lint_off` reads as `verilator lint_off` there (Verilator then stops with
+    BADVLTPRAGMA, so this refusal changes no verdict; it pins the cleaned reading)."""
+    found = refused('  /* verilator"lint_off BLKSEQ */\n  wire a;', "lint_off")
+    assert found.what == "`verilator lint_off BLKSEQ`", found
+
+
 def test_the_words_are_judged_as_written_too() -> None:
     """Fail closed: a code counts before Verilator's cleanup joins it with the next word as well
     (`BLKSEQ//x` is `BLKSEQx` after it; Verilator stops with an error on that one)."""
@@ -697,6 +708,10 @@ def test_a_lint_off_over_several_lines_is_named_at_its_first_line() -> None:
         "  // verilator lint_restore / 2",
         "  // verilator lint_save /* x\n  wire a; */",
         "  // verilator lint_restore /* x\n  wire a; */",
+        # VC16 (round 23): a form feed between `//` and `verilator` is a blank to Verilator's
+        # preprocessor, which still ends the comment at the `/`
+        "  //\fverilator lint_off WIDTH / x",
+        "  //\f verilator lint_off WIDTH /* x\n  wire a; */",
     ],
 )
 def test_a_lint_off_comment_that_goes_on_after_a_single_slash_is_refused(text: str) -> None:

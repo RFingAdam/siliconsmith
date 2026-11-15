@@ -333,10 +333,12 @@ def xz_parameter(tree: Any, meta: Any, ours: list[str]) -> Unknown | None:
 # A parameter's declaration (`(file, line, name)`) and its values, one per module instance and
 # loop pass, as `(path, number)` (as `equiv_icarus.Values`): the path is the instance names from
 # the top module (or package) down, the number the value with its sign. None when some value is
-# not a plain number.
+# not a plain number. `ParamShapes`: the same with each value's width in bits and whether it is
+# signed in place of the number (as `equiv_icarus.Shapes`).
 ParamKey = tuple[str, int, str]
 Path = tuple[str, ...]
 ParamValues = dict[ParamKey, list[tuple[Path, int]] | None]
+ParamShapes = dict[ParamKey, list[tuple[Path, tuple[int, bool]]] | None]
 _PLAIN_CONST = re.compile(r"^(\d+)'(s?)([bodh])([0-9a-fA-F_]+)$")
 # The nodes inside a module that a simulator makes a scope of, named as Verilator names them: a
 # generate block or loop pass (`b[0]`), a named block, a function or task
@@ -344,9 +346,10 @@ _SCOPES = frozenset({"GENBLOCK", "BEGIN", "FUNC", "TASK"})
 _MAX_INSTANCES = 100_000  # module instances per module: more is not a design for one tile
 
 
-def _plain(node: dict[str, Any] | None, signed: bool | None = None) -> int | None:
-    """The number of a CONST node that is a plain number (no x or z bit), else None; negative
-    when its top bit is set and it is `signed` (None: when the constant says `'s`)."""
+def _sized(node: dict[str, Any] | None, signed: bool | None = None) -> tuple[int, int] | None:
+    """`(number, width in bits)` of a CONST node that is a plain number (no x or z bit), else
+    None; the number is negative when its top bit is set and it is `signed` (None: when the
+    constant says `'s`)."""
     if node is None or node.get("type") != "CONST":
         return None
     match = _PLAIN_CONST.match(str(node.get("name", "")))
@@ -358,7 +361,13 @@ def _plain(node: dict[str, Any] | None, signed: bool | None = None) -> int | Non
         signed = match.group(2) == "s"
     if signed and width > 0 and (value >> (width - 1)) & 1:
         value -= 1 << width
-    return value
+    return value, width
+
+
+def _plain(node: dict[str, Any] | None, signed: bool | None = None) -> int | None:
+    """The number of a CONST node that is a plain number, else None (`_sized`)."""
+    sized = _sized(node, signed)
+    return None if sized is None else sized[0]
 
 
 def _inside(module: dict[str, Any]) -> Iterator[tuple[Path, dict[str, Any]]]:
@@ -452,11 +461,11 @@ def _signed(var: dict[str, Any], nodes: dict[str, dict[str, Any]]) -> bool:
     return False
 
 
-# Verilator 5.046 replaces a name of 128 characters or more as it encodes it (an escaped name
-# counts each special character as several, `.` is `__02E`, and each `__` is `___05F`) by `__Vhsh`
-# and a hash, in `name`, `origName` and
-# `verilogName` alike, so such a parameter's key is never the simulator's and its values are
-# never compared (round 21: an untyped localparam that overflows, named with 128 characters)
+# Verilator 5.046 replaces a name of 128 characters or more as it encodes it (each special
+# character of an escaped name counts as several, `.` is `__02E`, so does a `$`, `__024`, and
+# each `__` is `___05F`) by `__Vhsh` and a hash, in `name`, `origName` and `verilogName` alike,
+# so such a parameter's key is never the simulator's and its values are never compared (round
+# 21: an untyped localparam that overflows, named with 128 characters)
 _HASHED = "__Vhsh"
 
 
@@ -465,24 +474,23 @@ def _param_name(node: dict[str, Any], file: str, line: int) -> str:
     name = str(node.get("name", "?"))
     if _HASHED in name:
         raise TreeError(
-            f"{file}, line {line}: Verilator shortens a parameter name of 128 characters or more "
-            "as it encodes it (`__` counts as several); use a shorter name"
+            f"{file}, line {line}: Verilator shortens a parameter name of 128 characters or more: "
+            "use a shorter name (`__`, `$` and an escaped name's symbols count as several)"
         )
     return name
 
 
-def parameter_values(tree: Any, meta: Any, ours: list[str]) -> ParamValues:
-    """The value of every parameter and localparam of our files in Verilator's elaborated tree,
-    once per module instance and loop pass, with its path (`_instances`, then the blocks around
-    it in the module); a genvar has no value there and is left out. A value that is not a plain
-    number (a real, an array, a string kept as text) makes it None. Compared with the
-    simulator's values by `equiv_icarus.disagreement`. A name that Verilator hashed raises
-    TreeError (`_param_name`): its values could never be compared."""
+def _parameters(
+    tree: Any, meta: Any, ours: list[str]
+) -> dict[ParamKey, list[tuple[Path, int, tuple[int, bool]]] | None]:
+    """The value (as a number with its sign) and the shape (width, signed) of every parameter
+    and localparam of our files in Verilator's elaborated tree, as `parameter_values` describes
+    them; the width is the constant's (`8'hff`: 8 bits), the sign the parameter's data type's."""
     if not isinstance(tree, dict):
         raise TreeError("the tree is not an object")
     files = _file_letters(meta)
     nodes = {str(n["addr"]): n for n in _subtree(tree) if "addr" in n}
-    found: ParamValues = {}
+    found: dict[ParamKey, list[tuple[Path, int, tuple[int, bool]]] | None] = {}
     for module, paths in _instances(tree).values():
         for around, node in _inside(module):
             if node.get("type") != "VAR" or not (
@@ -497,12 +505,34 @@ def parameter_values(tree: Any, meta: Any, ours: list[str]) -> ParamValues:
             known = found.setdefault(key, [])
             values = node.get("valuep") or []
             only = values[0] if isinstance(values, list) and len(values) == 1 else None
-            number = _plain(only, _signed(node, nodes)) if isinstance(only, dict) else None
-            if number is None or known is None:
+            signed = _signed(node, nodes)
+            sized = _sized(only, signed) if isinstance(only, dict) else None
+            if sized is None or known is None:
                 found[key] = None
                 continue
-            known.extend((path + around, number) for path in paths)
+            number, width = sized
+            known.extend((path + around, number, (width, signed)) for path in paths)
     return found
+
+
+def parameter_values(tree: Any, meta: Any, ours: list[str]) -> ParamValues:
+    """The value of every parameter and localparam of our files in Verilator's elaborated tree,
+    once per module instance and loop pass, with its path (`_instances`, then the blocks around
+    it in the module); a genvar has no value there and is left out. A value that is not a plain
+    number (a real, an array, a string kept as text) makes it None. Compared with the
+    simulator's values by `equiv_icarus.disagreement`. A name that Verilator hashed raises
+    TreeError (`_param_name`): its values could never be compared."""
+    found = _parameters(tree, meta, ours)
+    return {k: None if v is None else [(p, n) for p, n, _ in v] for k, v in found.items()}
+
+
+def parameter_shapes(tree: Any, meta: Any, ours: list[str]) -> ParamShapes:
+    """The shape (width in bits, signed) of every value that `parameter_values` gives, with the
+    same paths: the width of the constant Verilator gives it (`8'hff`: 8 bits, which Yosys and
+    the gates follow) and the sign of its data type. Compared with the simulator's by
+    `equiv_icarus.shape_disagreement`."""
+    found = _parameters(tree, meta, ours)
+    return {k: None if v is None else [(p, s) for p, _, s in v] for k, v in found.items()}
 
 
 # -- generate conditions that can be x ----------------------------------------------------------
@@ -1485,6 +1515,96 @@ def valued_calls(tree: Any, meta: Any, ours: list[str]) -> frozenset[ParamKey]:
             if file in ours:
                 found.add((file, line, str(owner.get("name", "?"))))
     return frozenset(found)
+
+
+# The types a function's local parameter may have when its value is not compared
+# (`uncompared_local`): integer and bit vectors (`LOGIC_IMPLICIT` is an untyped one).
+_LOCAL_TYPES = frozenset({"LOGIC_IMPLICIT", "logic", "reg", "integer"})
+
+
+def _literal(node: dict[str, Any]) -> bool:
+    """A CONST node that is a number as written: sized (`8'hff`, `33'h100000000`), or unsized
+    and no wider than 32 bits (`?32?sh5`), with no x or z bit. An unsized number of more digits
+    is not one: Verilator gives `'h1_0000_0000` another value than Icarus and Yosys do."""
+    match = _EARLY_CONST.match(str(node.get("name", ""))) if node.get("type") == "CONST" else None
+    return match is not None and match.group(1) in (None, "32")
+
+
+def _written_as_number(var: dict[str, Any]) -> bool:
+    """A parameter's VAR (in the tree before V3Param) whose value is one number as written
+    (`_literal`) and whose type is an integer or a bit vector with a range of such numbers, or
+    none: every tool reads it as the same number of the same width."""
+    values = var.get("valuep")
+    values = values if isinstance(values, list) else [values]
+    if len(values) != 1 or not isinstance(values[0], dict) or not _literal(values[0]):
+        return False
+    for node in _subtree(var):
+        kind = node.get("type")
+        if node is var or kind == "RANGE" or (kind == "CONST" and _literal(node)):
+            continue
+        if kind != "BASICDTYPE" or node.get("keyword") not in _LOCAL_TYPES:
+            return False
+    return True
+
+
+def uncompared_local(
+    tree: Any, meta: Any, ours: list[str], verilator: ParamValues, simulator: ParamValues
+) -> Unknown | None:
+    """The first parameter or localparam declared inside a function (or task) of our files, by
+    file order and line, whose values `equiv_icarus.disagreement` does not compare and whose
+    declaration is not one number as written (`_written_as_number`), else None. `tree` is
+    Verilator's tree BEFORE V3Param (the `linkinc` stage); `verilator` and `simulator` are the
+    values of `parameter_values` and `equiv_icarus.parameter_values`.
+
+    Round 23: Verilator's elaborated tree leaves out a function that it only works out as a
+    constant (a call in a range, a replication count), so only the simulator lists that
+    function's localparams, and their values were never compared. Such a value can still
+    differ: `localparam M = 1 << 32;` and `8'hff + 8'h01` overflow in Verilator and Yosys but
+    not in Icarus, and Icarus gives `$bits(a)` of an argument 0, so `wire [h(3):0] w` and
+    `{h(1){b}}` had another width in a simulator than in the gates while the check said
+    equivalent (also through another function, and when the function is also called in a
+    compared localparam). A plain number (`localparam MIN_DEPTH = 2;`) is the same in every tool;
+    anything else must be compared: refused (fail closed) unless both tools list it with plain
+    numbers. A string, a real or an x that the simulator lists is not plain there (None), so it
+    is refused as well."""
+    files = _file_letters(meta)
+    keys = _keys(tree, files, ours)
+    found: list[tuple[int, int, int, str, str, str]] = []
+    for function in _subtree(tree) if isinstance(tree, dict) else ():
+        if function.get("type") not in ("FUNC", "TASK"):
+            continue
+        for var in _subtree(function):
+            key = keys.get(str(var.get("addr"))) if var.get("type") == "VAR" else None
+            if key is None or key[0] not in ours:
+                continue
+            compared = bool(verilator.get(key)) and bool(simulator.get(key))
+            listed_plain = simulator.get(key) is not None or key not in simulator
+            if compared or (listed_plain and _written_as_number(var)):
+                continue
+            file, line, col = _place(var, files)
+            name = str(function.get("name", "?"))
+            found.append((ours.index(file), line, col, key[2], name, file))
+    if not found:
+        return None
+    _, line, _, param, function_name, file = min(found)
+    return Unknown(
+        param,
+        file,
+        line,
+        f"the RTL ({file}, line {line}) declares the localparam `{param}` inside the function "
+        f"`{function_name}`, and the check cannot compare its value between the simulator "
+        "(Icarus) and Verilator (Verilator leaves the locals of a function that it only works "
+        "out as a constant out of its tree, and a real or a string is not compared). The "
+        "value is not one number as written (it has an "
+        "operator, a call, $bits, a type that is not an integer or a vector, an unsized number "
+        "wider than 32 bits, a real or a string), and the tools can work such a value out "
+        "differently (`1 << 32` and `8'hff + 8'h01` overflow in Verilator and Yosys but not in "
+        "Icarus, which makes the localparam wider; Icarus gives `$bits` of an argument 0), so "
+        "a width or count computed from it can differ between a simulator and the gates and "
+        "the check cannot vouch for the design. Move the localparam out of the function (a "
+        "module-level localparam is compared) or write the number (`localparam W = 8;`, "
+        "`localparam [32:0] M = 33'h1_0000_0000;`)",
+    )
 
 
 # -- read before write in a combinational block -------------------------------------------------

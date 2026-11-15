@@ -407,3 +407,137 @@ def test_the_first_uncompared_value_by_file_order_then_line() -> None:
     assert got is not None and (got.file, got.line) == ("project.v", 30)
     got = ei.uncompared({}, {k: None for k in keys}, keys, ["core.v"])
     assert got is not None and (got.file, got.line) == ("core.v", 4)
+
+
+# -- round 23: the same value with another width or sign -----------------------------------------
+
+M8 = ("core.v", 6, "M")
+
+
+def test_the_simulators_shapes_follow_its_values() -> None:
+    """The width is the number of bits Icarus writes, the sign its `+`; None where
+    `parameter_values` gives None, with the same paths."""
+    assert ei.parameter_shapes(CLEAN, OURS) == {
+        ("core.v", 8, "g"): [(CORE, (2, True)), (CORE, (2, True))],
+        ("core.v", 1, "N"): [(CORE, (32, True))],
+        ("core.v", 6, "NEG"): [(CORE, (8, True))],
+        ("core.v", 3, "R"): None,
+        ("core.v", 2, "S"): None,
+    }
+    assert ei.parameter_shapes(QF2, OURS)[("core.v", 10, "Q")] is None  # an x bit
+    assert ei.parameter_shapes(SWAPPED, OURS)[M] == [(B0, (32, True)), (B1, (32, True))]
+    # wcat: `localparam M = 8'hff + 8'h00;` is 9 bits wide in Icarus
+    wcat = vvp('P_0x3 .param/l "M" 1 4 6, C4<011111111>;')
+    assert ei.parameter_values(wcat, OURS) == {M8: [(CORE, 255)]}
+    assert ei.parameter_shapes(wcat, OURS) == {M8: [(CORE, (9, False))]}
+
+
+def shaped(mine: tuple[int, bool], theirs: tuple[int, bool]) -> str | None:
+    got = ei.shape_disagreement({M8: [(CORE, mine)]}, {M8: [(CORE, theirs)]}, OURS)
+    return None if got is None else got.sentence
+
+
+@pytest.mark.parametrize(
+    ("mine", "theirs", "refused"),
+    [
+        ((8, False), (8, False), False),  # `localparam [7:0] M = 8'hff + 8'h00;`
+        ((32, True), (32, True), False),  # `W`, `$clog2(W)`, `W / 2`
+        ((9, False), (8, False), True),  # wcat: `8'hff + 8'h00`
+        ((5, False), (4, False), True),  # `4'd3 + 4'd4`
+        ((32, True), (31, True), True),  # the bound: Verilator under 32 bits
+        ((32, False), (31, False), True),
+        ((33, True), (32, True), False),  # `W - 1`, `W + 1`: Verilator 32 bits
+        ((33, False), (32, False), False),  # `8'hff + 1`
+        ((64, True), (32, True), False),  # `W * 2`
+        ((96, True), (32, True), False),  # `Q * Q * Q`
+        ((40, False), (33, False), False),  # wider than 32 in both
+        ((8, True), (8, False), True),  # another sign, the same width
+        ((32, False), (32, True), True),
+        ((33, False), (32, True), True),  # wider in Icarus, but another sign
+        ((8, False), (9, False), True),  # narrower in Icarus
+        ((32, True), (33, True), True),  # narrower in Icarus, also from 32 bits up
+    ],
+)
+def test_a_value_with_another_width_or_sign_is_refused_unless_verilator_has_32_bits_or_more(
+    mine: tuple[int, bool], theirs: tuple[int, bool], refused: bool
+) -> None:
+    assert (shaped(mine, theirs) is not None) is refused
+
+
+def test_the_refusal_names_both_widths_why_and_the_fix() -> None:
+    got = ei.shape_disagreement({M8: [(CORE, (9, False))]}, {M8: [(CORE, (8, False))]}, OURS)
+    assert got is not None and (got.file, got.line) == ("core.v", 6)
+    assert got.sentence.startswith(
+        "the RTL (core.v, line 6) gives the parameter `M` the same value but 9 unsigned bits in "
+        "a simulator (Icarus) and 8 unsigned bits in Verilator's elaboration and the gates (in "
+        "`tt_um_core.core`): a concatenation, `$bits`, a reduction or `~` sees that, so the "
+        "check cannot vouch for the design. Icarus works out an untyped parameter's value "
+        "without losing bits, so it is wider there"
+    )
+    assert "a select outside the range in a function that a range calls" in got.sentence
+    assert got.sentence.endswith(
+        "Give it a type or a size (`localparam [7:0] M = 8'hff + 8'h00;`) and keep every select "
+        "inside the declared range"
+    )
+    # rangecall (round 16): a typed range of 2 bits in Icarus, 1 in Verilator
+    one = shaped((2, False), (1, False))
+    assert (
+        one is not None and "2 unsigned bits in a simulator (Icarus) and 1 unsigned bit in" in one
+    )
+    signed = shaped((8, True), (8, False))
+    assert signed is not None and "8 signed bits in a simulator (Icarus) and 8 unsigned" in signed
+
+
+def test_shapes_are_paired_by_path_like_values() -> None:
+    """Each instance against the same instance in Verilator: two instances whose widths both
+    tools agree on pass, though 32 bits in one tool's u0 against 33 in the other's u1 would not;
+    the first instance that differs is named."""
+    u0, u1 = (*CORE, "u0"), (*CORE, "u1")
+    mine = [(u0, (32, True)), (u1, (33, True))]
+    assert (
+        ei.shape_disagreement({M8: mine}, {M8: [(u1, (33, True)), (u0, (32, True))]}, OURS) is None
+    )
+    got = ei.shape_disagreement(
+        {M8: [(u0, (8, False)), (u1, (9, False))]}, {M8: [(u0, (8, False)), (u1, (8, False))]}, OURS
+    )
+    assert got is not None and "(in `tt_um_core.core.u1`)" in got.sentence
+
+
+def test_shapes_that_cannot_be_paired_must_fit_in_every_combination() -> None:
+    """A block without a name (`$unm_blk_2` against `unnamedblk1`), or a path twice: every shape
+    of the simulator against every shape of Verilator."""
+    a, b, c = (*CORE, "$unm_blk_2"), (*CORE, "unnamedblk1"), (*CORE, "x")
+
+    def misfit(mine: list, theirs: list) -> str | None:
+        got = ei.shape_disagreement({M8: mine}, {M8: theirs}, OURS)
+        return None if got is None else got.sentence
+
+    assert misfit([(a, (8, False))], [(b, (8, False))]) is None
+    assert misfit([(a, (33, True)), (c, (64, True))], [(b, (32, True))]) is None
+    got = misfit([(a, (9, False))], [(b, (8, False))])
+    assert got is not None and "(in one of its instances)" in got
+    # each pair would fit by path, but the check cannot tell which is which: 32 bits in the
+    # simulator against 33 in Verilator is narrower
+    assert misfit([(a, (32, True)), (c, (33, True))], [(b, (32, True)), (c, (33, True))])
+    assert misfit([(a, (32, True)), (a, (33, True))], [(a, (32, True))]) is None  # a path twice
+    assert misfit([(a, (32, True))], [(a, (32, True)), (a, (31, True))]) is not None
+
+
+def test_a_parameter_only_one_tool_lists_or_without_a_plain_value_has_no_shape_compared() -> None:
+    for mine, theirs in [(None, [(CORE, (8, False))]), ([(CORE, (9, False))], None),
+                         ([(CORE, (9, False))], []), ([], [(CORE, (8, False))])]:  # fmt: skip
+        assert ei.shape_disagreement({M8: mine}, {M8: theirs}, OURS) is None
+    assert ei.shape_disagreement({M8: [(CORE, (9, False))]}, {}, OURS) is None
+    assert ei.shape_disagreement({}, {M8: [(CORE, (8, False))]}, OURS) is None
+    nine, eight = {M8: [(CORE, (9, False))]}, {M8: [(CORE, (8, False))]}
+    assert ei.shape_disagreement(nine, eight, ["project.v"]) is None  # another file
+
+
+def test_the_first_shape_disagreement_by_file_order_then_line() -> None:
+    keys = [("core.v", 9, "B"), ("project.v", 30, "W"), ("core.v", 4, "A")]
+    simulator = {k: [(CORE, (9, False))] for k in keys}
+    verilator = {k: [(CORE, (8, False))] for k in keys}
+    got = ei.shape_disagreement(simulator, verilator, OURS)
+    assert got is not None and (got.file, got.line) == ("project.v", 30)
+    got = ei.shape_disagreement(simulator, verilator, ["core.v"])
+    assert got is not None and (got.file, got.line) == ("core.v", 4)

@@ -80,11 +80,11 @@ In every file:
   `// verilator lint_off` comment at its first `/` (`// verilator lint_off WIDTH // no latch
   here` hides no LATCH); a comment whose text does not start with `verilator` is no
   meta-comment, so a note that only mentions a lint_off hides nothing (round 22);
-* a `// verilator lint_off` (or lint_on) comment that goes on after a single `/`, or after a
-  `/*` that does not close on that line: Verilator reads what follows as code or as a block
-  comment, the other tools as part of the line comment, so Verilator's lint would judge other
-  code than the proof (`// verilator lint_off WIDTH /*` ... `// */`, or `/**/ else q = 0;`,
-  hide a race or a latch from the lint).
+* a `// verilator lint_off` (or lint_on, lint_save, lint_restore) comment that goes on after a
+  single `/`, or after a `/*` that does not close on that line: Verilator reads what follows
+  as code or as a block comment, the other tools as part of the line comment, so Verilator's
+  lint would judge other code than the proof (`// verilator lint_off WIDTH /*` ... `// */`, or
+  `/**/ else q = 0;`, hide a race or a latch from the lint).
 
 * `function` without `automatic` (any front-end): a simulator keeps the local variables of a plain
   function between calls; a function argument that is not an input (`output`, `inout` or `ref`
@@ -1493,7 +1493,8 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
     for at, comment in _verilator_comments(text):
         if not comment:
             return refuse(
-                "a `// verilator lint_off` (or lint_on) comment that goes on after a single `/`: "
+                "a `// verilator lint_off` (or lint_on, lint_save, lint_restore) comment that "
+                "goes on after a single `/`: "
                 "Verilator ends that comment at the `/` and reads the rest of the line as code or "
                 "as a `/*` comment that can run over the next lines, the other tools as part of "
                 "the comment, so Verilator's lint does not see what they read",

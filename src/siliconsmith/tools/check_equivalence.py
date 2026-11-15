@@ -632,14 +632,14 @@ them: macros and `include, bit/int types (a loop index declared in a for header 
 for (int i = 0; ...), is fine), unique/priority, casex, ===, x or z literals, delays \
 (#), characters outside plain ASCII, a back-tick or a double quote inside an escaped \
 identifier (\\v`X, \\M": Icarus expands a macro there, and Verilator and Icarus spell the quote \
-differently), a parameter name of 128 characters or more as Verilator encodes it, where each __ \
-and each special character of an escaped name counts as several (Verilator shortens it, so its \
-value is never compared), a lint_off of a race warning (also one code of a list, lint_off \
-WIDTH,BLKSEQ, in any case: lint_off blkseq, and in a spelling only Verilator reads as one: it \
-deletes every // and /* inside a comment, so /* verilator lint_off WIDTH//,BLKSEQ */ hides \
-BLKSEQ), a // verilator lint_off comment that goes on after a single / (Verilator ends the \
-comment there and reads the rest as code or as a /* comment; write // verilator lint_off WIDTH \
-// why), every level-sensitive \
+differently), a parameter name of 128 characters or more as Verilator encodes it, where each \
+__, each $ and each special character of an escaped name counts as several (Verilator shortens \
+it, so its value is never compared), a lint_off of a race warning (also one code of a list, \
+lint_off WIDTH,BLKSEQ, in any case: lint_off blkseq, and in a spelling only Verilator reads as \
+one: it deletes every // and /* inside a comment, so /* verilator lint_off WIDTH//,BLKSEQ */ \
+hides BLKSEQ), a // verilator lint_off (or lint_on, lint_save, lint_restore) comment that goes on \
+after a single / (Verilator ends the comment there and reads the rest as code or as a /* \
+comment; write // verilator lint_off WIDTH // why), every level-sensitive \
 always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational block that \
 can read a signal before it writes it on some path through the block (a branch, a case item \
 or a loop pass that does not write it first: write each signal at the top of the block), a \
@@ -648,7 +648,14 @@ works it out (1/0, 5 % 0, 0 ** -1, a constant select outside the range, a consta
 returns x), a parameter or localparam that the simulator and Verilator work out to different \
 values in any module instance, array element or loop pass, compared as whole numbers (a select \
 outside the range inside a constant function, where an if or ! turns the x into 0 or 1; an \
-untyped localparam that overflows, which Icarus makes wider), any other constant in your files \
+untyped localparam that overflows, which Icarus makes wider), or to the same value with another \
+width or sign (an untyped localparam of sized numbers: 8'hff + 8'h00 is 255 everywhere, but 9 \
+bits wide in Icarus and 8 in Verilator and the gates, so {M, M} or $bits(M) differs; give it a \
+type or a size, localparam [7:0] M = 8'hff + 8'h00), a localparam inside a function \
+whose value the check cannot compare (Verilator leaves out a function it only works out as a \
+constant, as in wire [h(3):0] w) unless it is one number as written (8, 8'hff, \
+33'h1_0000_0000; not 1 << 32, 8'hff + 8'h01 or $bits(a): move it out of the function, where it \
+is compared, or write the number), any other constant in your files \
 that Verilator works out with an x bit (8'd5 / 8'd0 in an assign; with or without an always \
 block), a constant select or array index outside the declared \
 range, even on a signal (ui_in[9]) or in a branch that a constant never selects (A[6] of a 4-bit \
@@ -725,7 +732,11 @@ which Yosys rounds to an integer first; a select outside the range inside a cons
 also in a parameter's value, which Yosys 0.62 evaluates to an undefined value: the gates \
 can differ even \
 where Icarus and Verilator agree, and the verdict can change with unrelated edits; only a \
-parameter value on which the simulator and Verilator disagree is refused), or other effects of \
+parameter value on which the simulator and Verilator disagree is refused), an untyped \
+localparam computed with an unsized number, which Icarus makes wider than 32 bits (W - 1 has 33 \
+bits there, W * 2 64; Verilator and the gates keep 32): a concatenation, $bits, ^ or an \
+expression that overflows 32 bits sees it, so give such a localparam a type (localparam integer \
+M = W - 1;) when you use it so, or other effects of \
 simulation event order: run gate-level simulation (run_tests with gl=True) as well. A state \
 machine that synthesis re-encodes can end as not proven (unproven points).\n\
 What it checks: every output value the RTL defines must match for every power-up state of \

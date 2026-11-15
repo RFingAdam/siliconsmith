@@ -23,6 +23,10 @@ hand):
   instance or loop pass. A select outside the range inside a constant function warns nowhere
   and leaves no x bit: Icarus reads x there and an `if (!v[6])` turns it into a defined value,
   while Verilator and Yosys read 0;
+* `shape_disagreement`: a parameter or localparam with the same values in both tools but
+  another width or sign (`equiv_tree.parameter_shapes`). Icarus works out an untyped
+  parameter's value without losing bits: `8'hff + 8'h00` is 255 everywhere, but 9 bits wide in
+  Icarus and 8 in Verilator and Yosys, and a concatenation `{M, M}` or `$bits(M)` sees that;
 * `uncompared`: a parameter whose value holds a call that can give a simulator x
   (`equiv_tree.valued_calls`) but whose value is not compared (a real, a string, or a parameter
   only one tool lists).
@@ -36,7 +40,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, TypeVar
 
 
 class IcarusError(Exception):
@@ -223,12 +227,18 @@ def x_select(output: str, ours: list[str]) -> Finding | None:
 # a real, an x or z bit): such a parameter is not compared.
 Key = tuple[str, int, str]
 Values = dict[Key, list[tuple[Path, int]] | None]
+# The width in bits of such a value and whether it is signed (`Shapes`: as `Values`, with the
+# shape in place of the number)
+Shape = tuple[int, bool]
+Shapes = dict[Key, list[tuple[Path, Shape]] | None]
+_T = TypeVar("_T")
 
 
-def parameter_values(vvp: str, ours: list[str]) -> Values:
-    """The value of every parameter, localparam and genvar of the files in `ours` in the
-    simulator's elaboration, once per module instance and loop pass (`_parameters`)."""
-    found: Values = {}
+def _plain(vvp: str, ours: list[str]) -> dict[Key, list[tuple[Path, int, Shape]] | None]:
+    """The value (as a number with its sign) and the shape of every parameter, localparam and
+    genvar of the files in `ours` in the simulator's elaboration, once per module instance and
+    loop pass (`_parameters`); None as in `Values`."""
+    found: dict[Key, list[tuple[Path, int, Shape]] | None] = {}
     for file, line, name, bits, signed, path in _parameters(vvp):
         if file not in ours:
             continue
@@ -240,8 +250,24 @@ def parameter_values(vvp: str, ours: list[str]) -> Values:
             number = int(bits, 2)
             if signed and bits[0] == "1":
                 number -= 1 << len(bits)
-            known.append((path, number))
+            known.append((path, number, (len(bits), signed)))
     return found
+
+
+def parameter_values(vvp: str, ours: list[str]) -> Values:
+    """The value of every parameter, localparam and genvar of the files in `ours` in the
+    simulator's elaboration, once per module instance and loop pass (`_parameters`)."""
+    return {
+        k: None if v is None else [(p, n) for p, n, _ in v] for k, v in _plain(vvp, ours).items()
+    }
+
+
+def parameter_shapes(vvp: str, ours: list[str]) -> Shapes:
+    """The shape (width in bits, signed) of every value that `parameter_values` gives, with the
+    same paths: `+C4<...>` is signed, and the width is the number of its bits."""
+    return {
+        k: None if v is None else [(p, s) for p, _, s in v] for k, v in _plain(vvp, ours).items()
+    }
 
 
 def _shown(values: list[tuple[Path, int]]) -> str:
@@ -254,17 +280,28 @@ def _where(paths: list[Path]) -> str:
     return ", ".join(f"`{p}`" for p in named[:2]) + (", ..." if len(named) > 2 else "")
 
 
+def _paired(
+    mine: list[tuple[Path, _T]], theirs: list[tuple[Path, _T]]
+) -> list[tuple[Path, _T, _T]] | None:
+    """The two tools' entries of one parameter paired by path, in path order, or None when the
+    paths cannot be paired one to one (a path twice in one tool, or a path only one tool has)."""
+    a, b = dict(mine), dict(theirs)
+    if len(a) != len(mine) or len(b) != len(theirs) or a.keys() != b.keys():
+        return None
+    return [(p, a[p], b[p]) for p in sorted(a)]
+
+
 def _differ(mine: list[tuple[Path, int]], theirs: list[tuple[Path, int]]) -> tuple[str, bool]:
     """How the two tools' values of one parameter differ ("" if they do not), and whether that
     is a different value (True) or instances the check cannot pair (False)."""
-    a, b = dict(mine), dict(theirs)
-    if len(a) == len(mine) and len(b) == len(theirs) and a.keys() == b.keys():
-        wrong = sorted(p for p in a if a[p] != b[p])
+    pairs = _paired(mine, theirs)
+    if pairs is not None:
+        wrong = [(p, x, y) for p, x, y in pairs if x != y]
         if not wrong:
             return "", True
-        at = wrong[0]
+        at, x, y = wrong[0]
         return (
-            f"the value {a[at]} in a simulator (Icarus) but {b[at]} in Verilator's elaboration "
+            f"the value {x} in a simulator (Icarus) but {y} in Verilator's elaboration "
             f"(in `{'.'.join(at)}`)",
             True,
         )
@@ -291,8 +328,9 @@ def disagreement(simulator: Values, verilator: Values, ours: list[str]) -> Findi
     simulator's elaboration (`parameter_values`) differ from those in Verilator's tree
     (`equiv_tree.parameter_values`), else None.
 
-    The values are compared in full, as numbers with their sign (Icarus can make an untyped
-    localparam wider, which does not change the number), instance by instance: each path from
+    The values are compared in full, as numbers with their sign, instance by instance (Icarus
+    can make an untyped localparam wider than Verilator does: the number is compared here, the
+    width and sign by `shape_disagreement`, which runs next): each path from
     the top module (`tt_um_x.core.b[0]`, an instance, generate block or loop pass, named block
     or function) must have the same value in both tools. When the two tools' paths of a
     parameter cannot be paired one to one (a block without a name: Icarus calls it
@@ -300,7 +338,9 @@ def disagreement(simulator: Values, verilator: Values, ours: list[str]) -> Findi
     same value in both tools, and are refused otherwise. A parameter only one tool lists (a
     genvar has no value in Verilator's tree) or that holds a string, a real or an x is not
     compared here (an x is `x_parameter`'s, a call that can give x in a real or a string
-    `uncompared`'s). The other checks judge the design Verilator elaborated and the proof the
+    `uncompared`'s, and a localparam inside a function, which Verilator leaves out when it only
+    works the function out as a constant, `equiv_tree.uncompared_local`'s: it must then be one
+    number as written). The other checks judge the design Verilator elaborated and the proof the
     one Yosys did; a simulator that uses another value for a parameter (an index, a generate
     branch, a case item) runs a different design."""
     found: list[tuple[int, int, str, str, str, bool]] = []
@@ -330,6 +370,79 @@ def disagreement(simulator: Values, verilator: Values, ours: list[str]) -> Findi
     )
     return Finding(
         file, line, f"the RTL ({file}, line {line}) gives the parameter `{name}` {what}, {why}"
+    )
+
+
+def _fits(mine: Shape, theirs: Shape) -> bool:
+    """Whether the check accepts a value that the simulator holds with the shape `mine` and
+    Verilator with `theirs`: the same width and sign, or the same sign and a width of 32 bits
+    or more in Verilator that Icarus makes wider (its lossless unsized arithmetic: `W - 1` is
+    33 bits there, `W * 2` 64; too common in taught code to refuse, and read the same wherever
+    the value is used as a number, while a concatenation or `$bits` of it is not detected)."""
+    return mine == theirs or (mine[1] == theirs[1] and mine[0] > theirs[0] >= 32)
+
+
+def _misfit(
+    mine: list[tuple[Path, Shape]], theirs: list[tuple[Path, Shape]]
+) -> tuple[Shape, Shape, Path | None] | None:
+    """The first pair of the two tools' shapes of one parameter that does not fit (`_fits`), and
+    its path, else None. The shapes are paired by path as `_differ` pairs values; when the paths
+    cannot be paired one to one, every shape of the simulator must fit every one of Verilator's
+    (no path then)."""
+    pairs = _paired(mine, theirs)
+    if pairs is None:
+        mine_set, theirs_set = sorted({s for _, s in mine}), sorted({s for _, s in theirs})
+        return next(((x, y, None) for x in mine_set for y in theirs_set if not _fits(x, y)), None)
+    return next(((x, y, p) for p, x, y in pairs if not _fits(x, y)), None)
+
+
+def _bits(shape: Shape) -> str:
+    width, signed = shape
+    return f"{width} {'signed' if signed else 'unsigned'} bit{'' if width == 1 else 's'}"
+
+
+def shape_disagreement(simulator: Shapes, verilator: Shapes, ours: list[str]) -> Finding | None:
+    """The first parameter or localparam (by file order, line, name) whose values have another
+    width or sign in the simulator's elaboration (`parameter_shapes`) than in Verilator's tree
+    (`equiv_tree.parameter_shapes`), which Yosys and the gates follow, else None. Run after
+    `disagreement`, so the numbers already agree; the parameters compared are the ones it
+    compares (both tools list them, with plain numbers), paired the same way (`_misfit`).
+
+    Icarus works out an untyped parameter's value without losing bits (without
+    `-gstrict-expr-width`): `localparam M = 8'hff + 8'h00;` is 255 in every tool, but 9 bits
+    wide in Icarus and 8 in Verilator and Yosys, so `{M, M}`, `$bits(M)`, `&M` or `~M` give a
+    simulator other bits than the gates. A typed localparam whose range calls a function that
+    selects outside a vector's range differs the same way (round 16 rangecall: Icarus reads x
+    there, and an `if` turns it into another number). A pair passes when it has the same width
+    and sign, or the same sign and a width in Verilator of 32 bits or more that Icarus makes
+    wider (`W - 1`, `W * 2`, `1 << 4`: common in taught code, read the same wherever the value
+    is used as a number; a concatenation or `$bits` of it is not detected). Anything else is
+    refused: a width under 32 bits in Verilator that Icarus makes wider, another sign, or a
+    narrower width in Icarus."""
+    found: list[tuple[int, int, str, str, Shape, Shape, Path | None]] = []
+    for key in simulator.keys() & verilator.keys():
+        mine, theirs = simulator[key], verilator[key]
+        if not mine or not theirs or key[0] not in ours:
+            continue
+        misfit = _misfit(mine, theirs)
+        if misfit is not None:
+            file, line, name = key
+            found.append((ours.index(file), line, name, file, *misfit))
+    if not found:
+        return None
+    _, line, name, file, a, b, path = min(found, key=lambda f: f[:3])
+    where = f"in `{'.'.join(path)}`" if path is not None else "in one of its instances"
+    return Finding(
+        file,
+        line,
+        f"the RTL ({file}, line {line}) gives the parameter `{name}` the same value but "
+        f"{_bits(a)} in a simulator (Icarus) and {_bits(b)} in Verilator's elaboration and the "
+        f"gates ({where}): a concatenation, `$bits`, a reduction or `~` sees that, so the check "
+        "cannot vouch for the design. Icarus works out an untyped parameter's value without "
+        "losing bits, so it is wider there (`8'hff + 8'h00` has 9 bits, 8 in the gates), and a "
+        "select outside the range in a function that a range calls can change a width too. "
+        "Give it a type or a size (`localparam [7:0] M = 8'hff + 8'h00;`) and keep every "
+        "select inside the declared range",
     )
 
 

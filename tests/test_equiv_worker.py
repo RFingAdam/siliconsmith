@@ -1766,6 +1766,17 @@ def test_the_lint_without_comments_judges_only_race_codes_in_our_files(
     assert len(fake.tags) > 1  # the proof went on
 
 
+def test_a_race_code_in_the_wrapper_counts_in_the_lint_without_comments_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HL18 (round 23): every file of ours is judged, the wrapper `project.v` as well as the
+    core."""
+    run = equiv.LintRun(0, BLKSEQ_HIDDEN.replace("chip.v", "project.v"))
+    got, _, _ = check_hidden(tmp_path, monkeypatch, run)
+    assert got["reason"] == "guard_sim_synth_differ", got
+    assert "(project.v, line 3) has a Verilator BLKSEQ warning" in got["message"], got
+
+
 def test_the_lint_without_comments_does_not_pass_by_giving_up(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2523,12 +2534,14 @@ def test_a_clean_simulator_run_goes_on_to_the_elaboration_and_a_stale_output_is_
 # c02ifnot (round 15): `localparam integer M = pick(4'b1010, 6);` on line 11 of chip.v, where
 # `pick` reads `v[6]` of a 4-bit `v` and returns `!v[k] ? 0 : 1`. Verilator folds it to 0, the
 # simulator reads x, `if (!x)` takes the else branch and M is 1.
-def param_tree(value: str) -> str:
+def param_tree(value: str, signed: bool = True) -> str:
     m = {"type": "VAR", "addr": "(V)", "name": "M", "varType": "LPARAM", "isParam": True,
-         "loc": "e,11:20,11:21",
+         "loc": "e,11:20,11:21", "dtypep": "(D)",
          "valuep": [{"type": "CONST", "name": value, "loc": "e,11:24,11:28"}]}  # fmt: skip
+    dtype = {"type": "BASICDTYPE", "addr": "(D)", "keyword": "logic", "signed": signed}
     top = {"type": "MODULE", "addr": "(T)", "name": "tt_um_chip", "level": 1, "stmtsp": [m]}
-    return json.dumps({"type": "NETLIST", "modulesp": [top]})
+    return json.dumps({"type": "NETLIST", "modulesp": [top],
+                       "typeTablep": [{"type": "TYPETABLE", "typesp": [dtype]}]})  # fmt: skip
 
 
 SIM_M = SIM_TOP + 'P_0x1 .param/l "M" 1 4 11, +C4<00000000000000000000000000000001>;\n' + SIM_TABLE
@@ -2552,6 +2565,47 @@ def test_a_parameter_the_simulator_and_verilator_compute_differently_is_refused(
         assert fake.tags == []  # named before Yosys's elaboration
     else:
         assert got is None and fake.tags == ["elab"]
+
+
+# Round 23 wcat: `localparam M = 8'hff + 8'h00;` on line 11 of chip.v is 255 in every tool, but
+# Icarus works it out without losing bits (9 bits wide) and Verilator and the gates keep 8, so
+# `{M, M}` gives a simulator other bits than the gates.
+def sim_m(bits: str) -> str:
+    return SIM_TOP + f'P_0x1 .param/l "M" 1 4 11, {bits};\n' + SIM_TABLE
+
+
+@pytest.mark.parametrize(
+    ("bits", "verilator", "signed", "shown"),
+    [
+        ("C4<011111111>", "8'hff", False, "but 9 unsigned bits in a simulator (Icarus) and 8 "
+         "unsigned bits in Verilator's elaboration and the gates (in `tt_um_chip`)"),
+        ("+C4<0" + "0" * 27 + "1000>", "32'sh8", True, None),  # `W + 0`: 33 bits, 32 in Verilator
+        ("C4<11111111>", "8'hff", False, None),  # `localparam [7:0] M = 8'hff + 8'h00;`
+        ("+C4<01111111>", "8'h7f", False, "8 signed bits in a simulator (Icarus) and 8 unsigned"),
+    ],
+    ids=["wider", "unsized", "typed", "sign"],
+)  # fmt: skip
+def test_a_parameter_with_the_same_value_and_another_width_is_refused_before_yosys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bits: str,
+    verilator: str,
+    signed: bool,
+    shown: str | None,
+) -> None:
+    simulator(monkeypatch, equiv.LintRun(0, ""), sim_m(bits))
+    fake = fake_elab("module \\tt_um_chip\nend\n")
+    tree = param_tree(verilator, signed)
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=tree, fake=fake)
+    if shown is None:
+        assert got is None and fake.tags == ["elab"]
+        return
+    assert got is not None and got[0] == "guard_sim_synth_differ", got
+    assert "(chip.v, line 11) gives the parameter `M` the same value but" in got[1]
+    assert shown in got[1], got[1]
+    assert "Give it a type or a size (`localparam [7:0] M = 8'hff + 8'h00;`)" in got[1]
+    assert got[1].endswith("keep every select inside the declared range."), got[1]
+    assert fake.tags == []  # named before Yosys's elaboration
 
 
 # Round 16 breal: `localparam real R = pick(4'b1010, 6);` on line 7 of chip.v. Before V3Param the
@@ -2868,6 +2922,81 @@ def test_a_function_local_that_only_the_simulator_lists_holds_no_real_in_the_che
     else:
         assert got is None, got
     assert fake.tags == ["elab"]
+
+
+# Round 23 (a01, flocshift): `localparam M = 1 << 32;` inside the function `h`, whose call sets a
+# wire's range (`wire [h(3):0] w`), as Verilator's tree has it before V3Param. Verilator leaves
+# `h` out of its elaborated tree, so only the simulator lists M (Icarus: 2**32, 33 bits; Verilator
+# and Yosys: 0), and its value was never compared.
+def overflow_local_tree(value: dict[str, Any]) -> str:
+    def at(line: int) -> str:
+        return f"e,{line}:3,{line}:5"
+
+    integer = {"type": "BASICDTYPE", "keyword": "integer", "range": "31:0", "signed": True}
+    m = {"type": "VAR", "addr": "(M)", "name": "M", "varType": "LPARAM", "isParam": True,
+         "isFuncLocal": True, "loc": at(8),
+         "childDTypep": [{"type": "BASICDTYPE", "keyword": "LOGIC_IMPLICIT"}],
+         "valuep": [value]}  # fmt: skip
+    h = {"type": "FUNC", "addr": "(H)", "name": "h", "loc": at(7), "stmtsp": [
+        {"type": "VAR", "addr": "(rh)", "name": "h", "loc": at(7), "isFuncLocal": True,
+         "isFuncReturn": True, "childDTypep": [integer]},
+        {"type": "VAR", "addr": "(a)", "name": "a", "loc": at(7), "isFuncLocal": True,
+         "varType": "PORT", "direction": "INPUT", "childDTypep": [integer]},
+        m,
+    ]}  # fmt: skip
+    top = {"type": "MODULE", "addr": "(T)", "name": "tt_um_chip", "level": 1, "stmtsp": [h]}
+    return json.dumps({"type": "NETLIST", "modulesp": [top]})
+
+
+SHIFTED = {"type": "SHIFTL", "lhsp": [{"type": "CONST", "name": "?32?sh1"}],
+           "rhsp": [{"type": "CONST", "name": "?32?sh20"}]}  # fmt: skip
+SIM_H = (
+    SIM_TOP
+    + 'S_0xa .scope function.vec4.s32, "h" "h" 4 7, 4 8 0, S_0x9;\n'
+    + f'P_0x3 .param/l "M" 1 4 8, C4<1{"0" * 32}>;\n'
+    + SIM_TABLE
+)
+SIM_H_PLAIN = SIM_H.replace("C4<1" + "0" * 32, "C4<" + "0" * 30 + "10")
+M_SENTENCE = "(chip.v, line 8) declares the localparam `M` inside the function `h`"
+
+
+@pytest.mark.parametrize(
+    ("value", "vvp", "refused"),
+    [
+        (SHIFTED, SIM_H, True),
+        ({"type": "CONST", "name": "?32?sh2"}, SIM_H_PLAIN, False),  # `localparam M = 2;`
+        ({"type": "CONST", "name": "33'h100000000"}, SIM_H, False),  # a sized number
+        ({"type": "CONST", "name": "?36?h100000000"}, SIM_H, True),  # unsized, wider than 32
+        (SHIFTED, SIM_CLEAN, True),  # listed by no tool
+    ],
+    ids=["shift-simulator-only", "plain", "sized", "unsized-wide", "listed-by-no-tool"],
+)
+def test_a_function_local_whose_value_is_not_compared_must_be_a_plain_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: dict[str, Any], vvp: str, refused: bool
+) -> None:
+    simulator(monkeypatch, equiv.LintRun(0, ""), vvp)
+    fake = fake_elab("module \\tt_um_chip\nend\n")
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE,
+                    before=overflow_local_tree(value), fake=fake)  # fmt: skip
+    if refused:
+        assert got is not None and got[0] == "guard_sim_synth_differ", got
+        assert M_SENTENCE in got[1] and "Move the localparam out of the function" in got[1], got
+    else:
+        assert got is None, got
+    assert fake.tags == ["elab"]  # judged after Yosys's elaboration
+
+
+def test_a_function_local_that_is_not_compared_is_named_after_a_yosys_select_outside(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The broad rule comes last: a more specific finding (here Yosys's select outside the
+    range) is named first."""
+    simulator(monkeypatch, equiv.LintRun(0, ""), SIM_H)
+    fake = fake_elab("module \\tt_um_chip\nend\n", elab=(0, "inline", OUT_OF_RANGE))
+    got, _ = purity(tmp_path, monkeypatch, equiv.LintRun(0, ""), tree=EMPTY_TREE,
+                    before=overflow_local_tree(SHIFTED), fake=fake)  # fmt: skip
+    assert got is not None and got[0] == "guard_sim_synth_differ", got
+    assert M_SENTENCE not in got[1] and "out of bounds" in got[1], got
 
 
 def test_a_simulator_that_times_out_or_cannot_start(

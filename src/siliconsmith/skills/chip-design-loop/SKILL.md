@@ -95,8 +95,9 @@ Never switch off a race warning (`BLKSEQ`, `MULTIDRIVEN`, ...) with `lint_off`, 
 ## Lint comments and long names
 
 The check reads a `lint_off` comment the way Verilator reads it. Verilator deletes every `//` and `/*` inside a comment before it reads the codes, so `/* verilator lint_off WIDTH//,BLKSEQ */` is refused as `lint_off BLKSEQ`.
-Give the reason for a `lint_off` in a second `//` comment (`// verilator lint_off WIDTH // why`) or in a `/* */` that closes on the same line. Verilator ends a `// verilator lint_off` comment at its first `/`, so a single `/` or an open `/*` after the codes is refused.
-Keep parameter names short and without `__`. Verilator shortens a name of 128 characters or more as it encodes it (each `__` and each special character of an escaped name counts as several), so the check cannot compare its values and refuses it.
+Give the reason for a `lint_off` in a second `//` comment (`// verilator lint_off WIDTH // why`) or in a `/* */` that closes on the same line. Verilator ends a `// verilator lint_off` comment (and a `lint_on`, `lint_save` or `lint_restore` one) at its first `/`, so a single `/` or an open `/*` after the codes is refused.
+The check also lints the RTL again with every comment removed, and refuses a race, latch or x warning (`BLKSEQ`, `MULTIDRIVEN`, `LATCH`, ...) that a comment hid from the first lint.
+Keep parameter names short and without `__` or `$`. Verilator shortens a name of 128 characters or more as it encodes it (each `__`, each `$` and each special character of an escaped name counts as several), so the check cannot compare its values and refuses it.
 
 ## Constants the equivalence check accepts
 
@@ -105,11 +106,18 @@ A parameter that the simulator (Icarus) and Verilator work out to different valu
 In a generate `if`, `case` or `for` condition, a `/` or `%` by anything but a plain nonzero number (a localparam is not one: `W / B` is refused), a `**` unless its base is a plain nonzero number or its exponent a plain number of 0 or more, and a call of your own function are refused: compute the value in a localparam first (`localparam AW = clog2(DEPTH);`, then `if (AW == 4)`).
 Give a number of 2**31 or more a size (`32'd3000000000`). Choose with a generate `if`, not with a constant inside an expression that holds a call (`EN ? f(a) : a`, `EN && f(a)`, `f(a) & {8{EN}}`): Verilator folds that call away, and outside an always block the check refuses it.
 
+## Widths of untyped localparams
+
+An untyped `localparam` takes the width of its value, and the simulator (Icarus) works that value out without losing bits. `localparam M = 8'hff + 8'h00;` is 255 everywhere, but 9 bits wide in Icarus and 8 in Verilator and the gates, so `{M, M}`, `$bits(M)` or `&M` give the simulation other bits than the chip.
+The check compares each parameter's width and sign as well as its value, and refuses such a difference: give the localparam a size or a type (`localparam [7:0] M = 8'hff + 8'h00;`).
+It accepts a width of 32 bits or more in Verilator that Icarus makes wider (`W - 1` has 33 bits there, `W * 2` 64): used as a number (a counter limit, a range) it reads the same. It does not detect a concatenation, `$bits`, `^` or an expression that overflows 32 bits on such a localparam, so give it a type (`localparam integer M = W - 1;`) when you use it that way.
+
 ## Constant calls
 
 A call of your function with constant arguments (numbers, parameters, genvars) anywhere but in the value of a parameter or localparam (its range or type is not its value) is refused when the function reads a vector at a computed index that the check cannot prove inside the declared range, or divides by something it cannot prove nonzero: a simulator works the call out itself, and an `if (!v[k])` in the function turns the x of a bit outside the range into 0 or 1 that the gates need not give.
 Instead, compute such a call in an integer localparam first (`localparam integer V = pick(4'b1010, 6);`, inside the generate loop for a genvar argument) and use `V`; only such a value is compared with the simulator's, so the same call in a `real` or string parameter is refused too.
 A select outside the range that Yosys finds once it inlines a function or unrolls a loop (`pick(ui_in[3:0], 6)` reading bit 6 of a 4-bit argument) is refused as well. So is one in an arm of `?:` that a constant condition never selects (`(i == 7) ? 1'b0 : getbit(v, i + 1)` in a loop): guard it with an `if (i < 7)` instead.
+Keep a `localparam` inside a function one number as written (`localparam W = 8;`, `localparam [32:0] M = 33'h1_0000_0000;`): Verilator leaves out a function it only works out as a constant (`wire [h(3):0] w`), so such a local is not compared, and `1 << 32`, `8'hff + 8'h01` or `$bits(a)` there is refused. Move a computed one out of the function.
 
 ## Indices a constant call may use
 
