@@ -89,8 +89,8 @@ Write `always @(*)` (a list of level signals is refused) and `function automatic
 Write every signal of a combinational block at the top of the block, before any `if`, `case` or loop. A block that can read a signal before it writes it on some path (a branch, a case item or a loop pass that does not write it first) is refused: a simulator does not rerun the block for its own write, the gates do.
 A `function` may read only its arguments (pass the rest in), every argument must be an `input` (return the value; Icarus cannot compile an `output` argument) and a `task` is refused; so is a hierarchical function call (`g.f(a)`) and a hierarchical name in a function (`g.k`; a member of an argument or local, such as `p.lo` of a struct `p`, is fine unless `p` is also a label, module, instance or call name (the port name in a connection such as `.p(p)` does not count), or declared inside an `if`).
 In MyHDL the core must be the plain single module MyHDL writes, and a level-sensitive block must have the plain shape `@always_comb` writes and list every signal it reads; otherwise it is refused, so use `@always_comb`.
-Use a parameter, not a macro.
-Never switch off a race warning (`BLKSEQ`, `MULTIDRIVEN`, ...) with `lint_off`, also not as one code of a list such as `lint_off WIDTH,BLKSEQ`: every code of the list is judged.
+Use a parameter, not a macro, and keep a back-tick or a double quote out of an escaped name (``\v`X``, `\M"`): Icarus expands a macro there.
+Never switch off a race warning (`BLKSEQ`, `MULTIDRIVEN`, ...) with `lint_off`, also not as one code of a list such as `lint_off WIDTH,BLKSEQ` or in lower case (`lint_off blkseq`): every code of the list is judged, whatever its case.
 
 ## Constants the equivalence check accepts
 
@@ -113,8 +113,11 @@ An argument that can be x refuses even a proven call: an x or z bit, a divide, a
 
 ## Reals and hierarchical names
 
-A real or a hierarchical name (`g.R`) as an argument refuses a constant call of any of your functions, even one without a select (`case (x) f(R): ...` with an infinite `R`): Yosys works the call out with a number where a simulator has x. A parameter or `localparam` in code that no tool builds (a generate branch the parameters do not choose, a module nothing instantiates) needs no value, since that call is dead code everywhere.
-An infinite or NaN real converted to an integer anywhere else is refused too (`wire [3:0] w = integer'(R);`, `v = R;` in a function, `w <= R;` in a clocked block; Yosys warns `converting real value inf to binary 32'x`). Use a real only to compute an integer parameter or `localparam`, and keep it finite.
+A real or a hierarchical name (`g.R`) in an argument refuses ANY call of your functions, even one without a select (`case (x) f(R): ...` with an infinite `R`), wherever it is: also in a `localparam` value or an override (`localparam [7:0] K = g(R)`), and when the argument reads a signal or loop variable too (`f(R + i)`). Yosys works the call out with a number, silently, where a simulator has x.
+Work an integer out first (`localparam integer N = R;`) and pass `N`. A `real` or untyped parameter whose value is not a plain number counts as a real (an untyped string too); one with a packed range or an integer type holds bits and is fine (`localparam [39:0] MSG = "HELLO";`, then `first_char(MSG)`).
+A parameter or `localparam` in code that no tool builds (a generate branch the parameters do not choose, a module nothing instantiates) needs no value, since that call is dead code everywhere.
+An infinite or NaN real converted to an integer anywhere else is refused too (`wire [3:0] w = integer'(R);`, `v = R;` in a function, `w <= R;` in a clocked block; Yosys warns `converting real value inf to binary 32'x`). Use a real only to compute an integer `localparam`, right there (`localparam integer DIV = CLK_HZ / BAUD;` with `// verilator lint_off REALCVT`; Yosys 0.62 cannot use a real in a function or an `int'()` cast), and keep it finite.
+Not detected: a real parameter override (Yosys keeps six decimals: `1.0e-9` becomes 0) and a real in a signal expression (`ui_in == 2.5`, rounded first).
 
 ## Simulator limits
 

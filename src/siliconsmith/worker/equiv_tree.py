@@ -1022,17 +1022,37 @@ def _real(kind: str) -> bool:
     )
 
 
-def _real_argument(call: dict[str, Any], unplain: frozenset[str]) -> bool:
-    """True if an argument of a call can hold a real although it reads no variable: a real
-    literal (a CONST whose name is neither a number, `?32?sh5` or `4'ha`, nor a fill such as
-    `'1`, nor a string: `inf.0`, `2.5`), a parameter or localparam whose `addr` is in `unplain`
-    (its value is not a plain number in every instance in both tools: a real, typed or untyped,
-    also one an override sets; a string or another value that is not a plain number counts
-    too, fail closed), a hierarchical name or one not yet resolved (a VARXREF, any type ending
-    in XREF, a DOT: `g.R` of a generate block; before V3Param it points at no VAR whose value
-    could be judged, and `reads_a_variable` does not count it), or a node that makes a real
-    (`_real`: `$sqrt(-1)`, `$ln(0)`, `$bitstoreal(...)`; not a cast, whatever a cast converts
-    is judged by itself).
+def _holds_bits(var: dict[str, Any]) -> bool:
+    """True if a parameter's VAR is declared with an integer type or a packed range
+    (`localparam [39:0] MSG = "HELLO"`, `parameter integer N`, `localparam logic [7:0] K`: one
+    BASICDTYPE whose keyword is `_SIZED_KEYWORDS`; an untyped parameter is LOGIC_IMPLICIT, also
+    with only `signed`, a real is `real`, a typedef a REFDTYPE). Such a parameter holds bits and
+    never a real: a real set into it is converted where it is declared or overridden, and an
+    infinite or NaN one there is refused (Yosys warns `converting real value inf to binary
+    8'x` at that line, `equiv._yosys_real_x`, and a simulator makes the parameter all x,
+    `equiv_icarus.x_parameter`)."""
+    types = var.get("childDTypep") or []
+    return (
+        len(types) == 1
+        and isinstance(types[0], dict)
+        and types[0].get("type") == "BASICDTYPE"
+        and types[0].get("keyword") in _SIZED_KEYWORDS
+    )
+
+
+def _real_argument(call: dict[str, Any], unreal: frozenset[str], parseref: bool = True) -> bool:
+    """True if an argument of a call can hold a real: a real literal (a CONST whose name is
+    neither a number, `?32?sh5` or `4'ha`, nor a fill such as `'1`, nor a string: `inf.0`,
+    `2.5`), a parameter or localparam whose `addr` is in `unreal` (its value is not a plain
+    number in every instance in both tools, and it is not declared to hold bits, `_holds_bits`:
+    a real, typed or untyped, also one an override sets; an untyped string or another value
+    that is not a plain number counts too, fail closed), a hierarchical name or one not yet
+    resolved (a VARXREF, any type ending in XREF, a DOT: `g.R` of a generate block; before
+    V3Param it points at no VAR whose value could be judged, and `reads_a_variable` does not
+    count it; a PARSEREF only if `parseref`: in a call that reads a variable it is an unlinked
+    module's plain name), or a node that makes a real (`_real`: `$sqrt(-1)`, `$ln(0)`,
+    `$bitstoreal(...)`; not a cast, whatever a cast converts is judged by itself). An argument
+    that also reads a variable counts too (`R + i`, `R + a`).
 
     Round 19: Yosys works a call with constant arguments out itself and converts a real
     argument without a warning (`equiv._yosys_real_x` does not see it), while a simulator
@@ -1040,15 +1060,19 @@ def _real_argument(call: dict[str, Any], unplain: frozenset[str]) -> bool:
     index gives that x back (`f = a + 1`), and a case label that is x matches nothing in a
     simulator while the gates need not keep the x (`case (ui_in) f(R): ...` with
     `R = 1.0e999`), so this counts for a call of any function (`f(g.R)` with `localparam real
-    R = 1.0e999` in the generate block `g`, too)."""
+    R = 1.0e999` in the generate block `g`, too). Round 20: Yosys also works out, silently, a
+    call in a parameter value (`localparam [7:0] K = g(R)`, where Verilator and a simulator
+    agree on another value, so the comparison of the values does not see it), a call whose
+    argument reads a loop variable once it unrolls the loop (`f(R + i)`) and one inside a
+    function it works out (`h = f(R + a)`), so this counts for every call."""
     for arg in call.get("argsp") or []:
         for node in _subtree(arg) if isinstance(arg, dict) else ():
             kind = str(node.get("type", ""))
             if kind == "CONST" and not any(c in str(node.get("name", "")) for c in "'?\""):
                 return True
-            if kind == "VARREF" and str(node.get("varp")) in unplain:
+            if kind == "VARREF" and str(node.get("varp")) in unreal:
                 return True
-            if kind.endswith("XREF") or kind in UNRESOLVED:
+            if kind.endswith("XREF") or (kind in UNRESOLVED and (parseref or kind != "PARSEREF")):
                 return True
             if _real(kind) and not kind.startswith("CAST"):
                 return True
@@ -1062,7 +1086,8 @@ def _x_argument(call: dict[str, Any], unplain: frozenset[str]) -> bool:
     operator that can give x (`_x_operator`: a divide, a `**`, another call). A real that is
     infinite or NaN (`1.0e999`, `1.0e999 - 1.0e999`, `$sqrt(-1)`) becomes an all-x integer in
     a simulator when it is converted to an integer (round 18: `f(integer'(R))` with
-    `R = 1.0e999`), so a real counts whatever its value."""
+    `R = 1.0e999`), so a real counts whatever its value. Every parameter in `unplain` counts
+    here, also one declared to hold bits (a string such as `localparam [7:0] CH = "A"`)."""
     if _real_argument(call, unplain):
         return True
     for arg in call.get("argsp") or []:
@@ -1077,15 +1102,17 @@ def _x_argument(call: dict[str, Any], unplain: frozenset[str]) -> bool:
 
 def _constant_calls(
     tree: Any, known: dict[str, int] | None = None, plain: frozenset[str] = frozenset()
-) -> Iterator[tuple[dict[str, Any], dict[str, Any] | None]]:
+) -> Iterator[tuple[dict[str, Any], dict[str, Any] | None, bool]]:
     """Every call of one of the design's functions that can give a simulator an x for constant
     arguments, made with constant arguments, with the parameter VAR whose value holds it (for
     an override, the child's parameter, the PIN's `modVarp`), or None anywhere else (an
-    override whose parameter does not resolve too). `known`: the one agreed value of a
+    override whose parameter does not resolve too), and False. Then, with None and True, every
+    call anywhere (also in a parameter value, and one whose arguments read a variable) with an
+    argument that can hold a real (`_real_argument`), once. `known`: the one agreed value of a
     parameter, by the `addr` of its VAR (`_Ranges`). `plain`: the `addr`s of the parameters
     whose value is a plain number in every instance in both tools; any other parameter can make
-    an argument x (`_x_argument`), or hold a real (`_real_argument`, for a call of any function
-    outside a parameter value). See `constant_call`."""
+    an argument x (`_x_argument`), or hold a real unless it is declared to hold bits
+    (`_holds_bits`). See `constant_call`."""
     if not isinstance(tree, dict):
         raise TreeError("the tree is not an object")
     nodes = list(_subtree(tree))
@@ -1094,6 +1121,7 @@ def _constant_calls(
     functions = {str(n["addr"]): n for n in nodes if n.get("type") == "FUNC" and "addr" in n}
     ranges = _Ranges(variables, known or {})
     unplain = frozenset(a for a, k in kinds.items() if k in _PARAMETER_VALUES and a not in plain)
+    unreal = frozenset(a for a in unplain if not _holds_bits(variables[a]))
 
     def reads_a_variable(root: dict[str, Any]) -> bool:
         stack = [root]
@@ -1184,14 +1212,15 @@ def _constant_calls(
         kind = node.get("type")
         if kind == "FUNCREF":
             arguments = [a for a in node.get("argsp") or [] if isinstance(a, dict)]
-            if not any(reads_a_variable(a) for a in arguments):
-                how = level.get(str(node.get("taskp")), risky)
-                if (
-                    how == risky
-                    or (how == proven and _x_argument(node, unplain))
-                    or (owner is None and _real_argument(node, unplain))
-                ):
-                    yield node, owner
+            constant = not any(reads_a_variable(a) for a in arguments)
+            how = level.get(str(node.get("taskp")), risky)
+            x_call = constant and (how == risky or (how == proven and _x_argument(node, unplain)))
+            # round 20: Yosys converts a real argument silently wherever it works a call out (a
+            # parameter value, an unrolled loop, a function it works out), so it counts anywhere
+            if _real_argument(node, unreal, parseref=constant):
+                yield node, None, True
+            if x_call:
+                yield node, owner, False
         for key, value in node.items():
             items = value if isinstance(value, list) else [value]
             for item in (i for i in items if isinstance(i, dict)):
@@ -1219,6 +1248,18 @@ def _keys(tree: Any, files: dict[str, str]) -> dict[str, ParamKey]:
             str(node.get("name", "?")),
         )
     return found
+
+
+def _function_locals(tree: Any) -> frozenset[str]:
+    """The `addr` of every VAR declared inside a function or task of `tree` (a FUNC or TASK
+    node)."""
+    found: set[str] = set()
+    for node in _subtree(tree) if isinstance(tree, dict) else ():
+        if node.get("type") in ("FUNC", "TASK"):
+            found.update(
+                str(n["addr"]) for n in _subtree(node) if n.get("type") == "VAR" and "addr" in n
+            )
+    return frozenset(found)
 
 
 def agreed_values(verilator: ParamValues, simulator: ParamValues) -> dict[ParamKey, int]:
@@ -1251,7 +1292,10 @@ def built_values(verilator: ParamValues, simulator: ParamValues) -> frozenset[Pa
     fail closed), or the simulator's elaboration lists it at all. A parameter of our files that
     neither tool builds is in code that no tool runs (a generate branch the parameters do not
     choose, a loop with no pass, a module nothing instantiates), so a call that uses it is dead
-    code in every tool (`constant_call`)."""
+    code in every tool (`constant_call`). Verilator's elaborated tree leaves out the local
+    parameters of a function that it only works out for a parameter value, so only the
+    simulator lists those: `constant_call` counts every parameter declared inside a function
+    as built (round 20)."""
     return frozenset(key for key, mine in verilator.items() if mine is None or mine) | frozenset(
         simulator
     )
@@ -1267,9 +1311,9 @@ def constant_call(
 ) -> Unknown | None:
     """The first call (by file order, line, column) of one of the design's functions that can
     give a simulator an x for constant arguments, made with constant arguments anywhere but in
-    the value of a parameter or localparam or in a parameter override, else None. `tree` is
-    Verilator's tree BEFORE V3Param (the `linkinc` stage), where every call is still there as
-    written.
+    the value of a parameter or localparam or in a parameter override, or with an argument that
+    can hold a real anywhere (round 20, below), else None. `tree` is Verilator's tree BEFORE
+    V3Param (the `linkinc` stage), where every call is still there as written.
 
     Constant arguments read no variable: literals, parameters, localparams and genvars only (a
     variable read only for its size, `$bits(x)`, an `ATTROF`, counts as constant), or none. A
@@ -1313,26 +1357,61 @@ def constant_call(
     not in `plain` can make an argument x. A hierarchical name in an argument (`f(g.R)`) always
     can (`_x_argument`).
 
+    Round 20: an argument that can hold a real counts for EVERY call of one of the design's
+    functions, wherever it is and whatever else its arguments read: in a parameter value or an
+    override (`localparam [7:0] K = g(R)`: Yosys gives K another value than Verilator and a
+    simulator, which agree, so the comparison of the values does not see it), in a call whose
+    argument reads a loop variable (`f(R + i)`, worked out once Yosys unrolls the loop) and in a
+    function that Yosys works out (`h = f(R + a)`). A parameter declared to hold bits
+    (`_holds_bits`: `localparam [39:0] MSG = "HELLO"`) holds no real, so it does not count
+    there, while an untyped or real one whose value is not a plain number does (a string
+    without a packed range too, fail closed). A parameter declared inside a function counts
+    as built whatever `built` says: Verilator's elaborated tree leaves out the local
+    parameters of a function that it only works out for a parameter value, so only the
+    simulator could list it, and a name that the two tools spelled differently would hide it.
+
     An unresolved name (`PARSEREF`, a `VARREF` to no `VAR`) counts as a variable: only a module
     that nothing instantiates is left unlinked (in the design Verilator stops with an error)."""
     files = _file_letters(meta)
     keys = _keys(tree, files)
     agreed = agreed or {}
     known = {addr: agreed[key] for addr, key in keys.items() if key in agreed}
+    local = _function_locals(tree)
     plains = frozenset(
         addr
         for addr, key in keys.items()
-        if key in plain or (built is not None and key[0] in ours and key not in built)
+        if key in plain
+        or (built is not None and key[0] in ours and key not in built and addr not in local)
     )
-    found: list[tuple[int, int, int, str, str]] = []
-    for node, owner in _constant_calls(tree, known, plains):
+    found: list[tuple[int, int, int, bool, str, str]] = []
+    for node, owner, real in _constant_calls(tree, known, plains):
         if owner is None:
             file, line, col = _place(node, files)
             if file in ours:
-                found.append((ours.index(file), line, col, str(node.get("name", "?")), file))
+                # at the same call, the constant-call sentence (it names a real too) comes first
+                at = (ours.index(file), line, col, real, str(node.get("name", "?")), file)
+                found.append(at)
     if not found:
         return None
-    _, line, _, name, file = min(found)
+    _, line, _, real, name, file = min(found)
+    if real:
+        return Unknown(
+            name,
+            file,
+            line,
+            f"the RTL ({file}, line {line}) calls the function `{name}` with an argument that "
+            "can hold a real (a real literal or parameter, a function such as `$sqrt`, or a "
+            "parameter or localparam without an integer type or a packed range whose value is "
+            "not a plain number in both tools, such as an untyped string) or with a "
+            "hierarchical name (`g.R`). Yosys works such a call out itself, also in a "
+            "parameter value, an override, a loop or another function, and turns the real into "
+            "a number without a warning, while a simulator converts an infinite or NaN real "
+            "to an all-x integer, which any function can give back; a case label, an `if` or "
+            "a `!` can turn that x into a 0 or 1 that the gates need not give, so the check "
+            "cannot vouch for the design. Compute an integer localparam from the real first "
+            "(`localparam integer N = R;`) and pass that, and give a string parameter a packed "
+            'range (`localparam [7:0] CH = "A";`)',
+        )
     return Unknown(
         name,
         file,
@@ -1341,11 +1420,12 @@ def constant_call(
         "outside the value of a parameter or localparam, and the function reads a vector at a "
         "computed index that the check cannot prove inside the declared range or divides by a "
         "value it cannot prove nonzero, or an argument can be x (an x or z bit, a divide, "
-        "another call, a hierarchical name, a real: a simulator converts an infinite or NaN "
-        "real to an all-x integer, which any function can give back). A select outside the "
-        "range or at an x index, a divide by 0 and such a real are x to a simulator, which an "
-        "`if`, a `!` or a case label can turn into a 0 or 1 that Yosys does not use. The check "
-        "compares such values only for parameters, so it cannot vouch for the design. "
+        "another call, a cast, a parameter whose value is not a plain number in both tools "
+        "such as a string, a hierarchical name, a real: a simulator converts an infinite or "
+        "NaN real to an all-x integer, which any function can give back). A select outside "
+        "the range or at an x index, a divide by 0 and such a real are x to a simulator, which "
+        "an `if`, a `!` or a case label can turn into a 0 or 1 that Yosys does not use. The "
+        "check compares such values only for parameters, so it cannot vouch for the design. "
         f"Compute it in a localparam first (`localparam integer V = {name}(...);`, inside the "
         "generate loop for a genvar argument) and use that",
     )
@@ -1359,7 +1439,7 @@ def valued_calls(tree: Any, meta: Any, ours: list[str]) -> frozenset[ParamKey]:
     tree."""
     files = _file_letters(meta)
     found: set[ParamKey] = set()
-    for _, owner in _constant_calls(tree):
+    for _, owner, _real in _constant_calls(tree):
         if owner is not None:
             file, line, _ = _place(owner, files)
             if file in ours:

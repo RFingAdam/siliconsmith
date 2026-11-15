@@ -2544,6 +2544,19 @@ def test_an_infinite_or_nan_real_that_yosys_converts_is_named_with_its_line(
     assert "keep its value finite" in got
 
 
+def test_an_infinite_real_warning_after_a_long_elaboration_log_is_found() -> None:
+    """YR8 (round 20): the warning comes wherever Yosys gets to the conversion, after several
+    KB of derive and parameter lines in a design with sub-modules, and the whole log counts."""
+    head = "".join(
+        f"Parameter \\W = {i}\nGenerating RTLIL representation for module `$paramod\\sub\\W={i}'.\n"
+        for i in range(400)
+    )
+    assert len(head) > 20000
+    log = head + "big.v:812: Warning: converting real value inf to binary 32'x.\nEnd of script.\n"
+    got = equiv._yosys_real_x(log)
+    assert got is not None and "(big.v, line 812)" in got, got
+
+
 def test_a_finite_real_that_yosys_converts_is_no_finding() -> None:
     finite = (
         "rw09c.v:7: Warning: converting real value 3.000000e+00 to binary 3.\n"

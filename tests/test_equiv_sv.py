@@ -501,9 +501,37 @@ def test_every_code_of_a_lint_off_list_is_judged(comment: str, code: str) -> Non
     assert found.line == 2 and found.what == f"`verilator lint_off {code}`", found
 
 
+@pytest.mark.parametrize(
+    ("comment", "code"),
+    [
+        ("// verilator lint_off blkseq", "blkseq"),
+        ("/* verilator lint_off Latch */", "Latch"),
+        ("// verilator lint_off WIDTH,latch", "latch"),
+        ("// verilator lint_off width,CaseIncomplete", "CaseIncomplete"),
+    ],
+)
+def test_a_lint_off_code_in_lower_or_mixed_case_is_judged_too(comment: str, code: str) -> None:
+    """LO3 (round 20): Verilator 5.046 compares the codes without case (`lint_off blkseq` hides
+    BLKSEQ), so the code is judged in upper case."""
+    found = refused(f"  {comment}\n  wire a;", "lint_off")
+    assert found.line == 2 and found.what == f"`verilator lint_off {code}`", found
+
+
 def test_a_lint_off_list_of_other_codes_may_be_switched_off() -> None:
     ok("module m;\n  // verilator lint_off WIDTH,UNUSEDSIGNAL\n  wire a;\nendmodule\n")
     ok("module m;\n  /* verilator lint_off WIDTHTRUNC,WIDTHEXPAND */\n  wire a;\nendmodule\n")
+
+
+def test_the_words_of_a_comment_after_a_lint_off_are_not_codes() -> None:
+    """Round 20: Verilator 5.046 reads no code in a `//` comment after the list (`lint_off
+    WIDTH // no latch here` still reports LATCH), so its words are not judged; the codes before
+    it still are."""
+    ok("module m;\n  // verilator lint_off WIDTH // cut sum, no latch here\n  wire a;\nendmodule\n")
+    ok("module m;\n  /* verilator lint_off WIDTH */ // blkseq is not hidden\nendmodule\n")
+    found = refused("  // verilator lint_off WIDTH,BLKSEQ // keep the race\n  wire a;", "lint_off")
+    assert found.what == "`verilator lint_off BLKSEQ`", found
+    found = refused("  // verilator lint_off BLKSEQ // a note about latch\n  wire a;", "lint_off")
+    assert found.what == "`verilator lint_off BLKSEQ`", found
 
 
 def test_lint_on_and_other_comments_are_fine() -> None:
@@ -724,6 +752,40 @@ def test_the_reviewers_escaped_identifier_tricks_are_refused(char: str) -> None:
     for text in (hidden_off, hidden_delay):
         found = sv.refusal([("d.v", text)])
         assert found is not None and "outside plain ASCII" in found.what
+
+
+@pytest.mark.parametrize(
+    ("name", "char", "what"),
+    [
+        # es02 (round 20): Icarus expands the predefined macro inside the name and reads `\v1`,
+        # which inside block g is g's own `\v1`; Yosys and Verilator read the module's wire
+        ("\\v`__ICARUS__", "`", "a back-tick inside an escaped identifier"),
+        ("\\v`undefined_macro", "`", "a back-tick inside an escaped identifier"),  # es01
+        ("\\`a", "`", "a back-tick inside an escaped identifier"),
+        # pd03, rk18: Verilator spells the name `M\"`, Icarus `M"`: the values of the two tools
+        # were never compared (and a real localparam so named counted as dead code)
+        ('\\M"', '"', "a double quote inside an escaped identifier"),
+        ('\\a"b', '"', "a double quote inside an escaped identifier"),
+    ],
+)
+def test_a_back_tick_or_double_quote_inside_an_escaped_identifier_is_refused(
+    name: str, char: str, what: str
+) -> None:
+    body = f"  wire [7:0] x;\n  localparam {name} = 1;\n  assign x = {name} ;\n"
+    text = f"module m;\n{body}endmodule\n"
+    problem = sv.lex(text)[2]
+    assert problem is not None and problem[0] == text.index(char) and what in problem[1]
+    found = sv.refusal([("d.v", text)])
+    assert found is not None and found.line == 3 and what in found.what, found
+    message = sv.plain_message(found)
+    assert "Rename it to a plain name" in message and "Icarus expands a macro" in message
+
+
+@pytest.mark.parametrize(
+    "name", ["\\v1", "\\a$b", "\\u_sub.x", "\\fsm[0]", "\\a/*b", "\\a'b", "\\x+y", "\\#5"]
+)
+def test_other_escaped_identifiers_are_fine(name: str) -> None:
+    ok(f"module m;\n  wire [7:0] x;\n  wire [7:0] {name} ;\n  assign x = {name} ;\nendmodule\n")
 
 
 def test_an_escaped_identifier_ends_at_space_tab_cr_or_lf_only() -> None:

@@ -1790,9 +1790,13 @@ def test_a_real_or_hierarchical_argument_refuses_a_constant_call_of_any_function
     fn, args = (PROVEN_K, (num(0x81, "8'h"), value)) if proven else (SAFE_F, (value,))
     got = judged(fn, REAL_R, args=args, plain=plain)
     assert got is not None and (got.name, got.line) == ("f", 9)
-    assert "a hierarchical name, a real: a simulator converts an infinite or NaN real to an " in (
-        got.sentence
-    )
+    if proven:  # the constant-call sentence, which names the real too
+        assert "a hierarchical name, a real: a simulator converts an infinite or NaN real to " in (
+            got.sentence
+        )
+    else:  # round 20: the sentence of a real argument, which counts for every call
+        assert "with an argument that can hold a real" in got.sentence
+        assert "Compute an integer localparam from the real first" in got.sentence
     assert "which any function can give back" in got.sentence
 
 
@@ -1818,11 +1822,14 @@ def test_an_argument_that_holds_no_real_lets_a_safe_constant_call_through(
     assert judged(SAFE_F, REAL_R, args=(value,), plain=PLAIN) is None
 
 
-def test_a_real_argument_in_a_parameter_value_is_left_to_the_value_comparison() -> None:
-    """Only an inline call counts a real argument for a function without a computed index: a
-    call in a parameter's value is compared with the simulator's value (`x_parameter`,
-    `disagreement`), so `valued_calls` does not name it. A proven function's call there with a
-    hierarchical argument is named (its value must then be compared)."""
+def test_a_real_argument_in_a_parameter_value_is_refused_and_not_left_to_the_comparison() -> None:
+    """rk10 (round 20): `localparam [7:0] K = g(R)` with `R = 1.0e999` and g without a
+    computed index. Verilator and a simulator both give K the value 1, Yosys works the call out
+    itself, silently, to 2, so the comparison of the values cannot see it: `constant_call`
+    refuses a real argument in a parameter value too (it was left to the comparison). The
+    parameters `valued_calls` names do not change: a proven function's call there with a
+    hierarchical argument is named (its value must then be compared), a real argument of a
+    function without a computed index is not."""
 
     def value(*args: dict[str, Any]) -> dict[str, Any]:
         call_f = call("(c)", "(F8)", "f", 7) | {
@@ -1833,10 +1840,190 @@ def test_a_real_argument_in_a_parameter_value_is_left_to_the_value_comparison() 
     def valued(fn: dict[str, Any], *args: dict[str, Any]) -> frozenset[et.ParamKey]:
         return et.valued_calls(module(*NAMED, fn, REAL_R, value(*args)), META, OURS)
 
+    def refused(fn: dict[str, Any], *args: dict[str, Any]) -> et.Unknown | None:
+        tree = module(*NAMED, fn, REAL_R, value(*args))
+        return et.constant_call(tree, META, OURS, plain=PLAIN)
+
     assert valued(SAFE_F, named("(RL)", "R")) == set()
     assert valued(SAFE_F, XREF) == set()
     assert valued(PROVEN_K, num(0x81, "8'h"), XREF) == {("core.v", 7, "V")}
     assert valued(PROVEN_K, num(0x81, "8'h"), num(3)) == set()
+    for fn, args in [
+        (SAFE_F, (named("(RL)", "R"),)),
+        (SAFE_F, (XREF,)),
+        (SAFE_F, (unary("SQRTD", unary("NEGATE", const("1.0"))),)),  # rk03: $sqrt(-1.0)
+        (SAFE_F, (ar("MUL", named("(RL)", "R"), named("(RL)", "R")),)),  # rk08: R * R
+        (PROVEN_K, (num(0x81, "8'h"), XREF)),
+    ]:
+        got = refused(fn, *args)
+        assert got is not None and (got.name, got.line) == ("f", 7)
+        assert "with an argument that can hold a real" in got.sentence
+    assert refused(SAFE_F, num(3)) is None
+    assert refused(SAFE_F, named("(LP)", "P")) is None  # a plain localparam
+    assert refused(PROVEN_K, num(0x81, "8'h"), num(3)) is None
+
+
+def test_a_real_argument_in_a_parameter_override_is_refused() -> None:
+    """rk11 (round 20): `rk11_sub #(.P(g(R)))`: the child's P is 1 in Verilator and a
+    simulator, 2 in Yosys."""
+
+    def over(*args: dict[str, Any], to: str | None = "(GP)") -> dict[str, Any]:
+        call_f = call("(c)", "(F8)", "f", 8) | {
+            "argsp": [{"type": "ARG", "exprp": [a]} for a in args]
+        }
+        pin = {"type": "PIN", "exprp": [call_f]} | ({"modVarp": to} if to else {})
+        return {"type": "CELL", "name": "u", "paramsp": [pin]}
+
+    for to in ("(GP)", None):
+        tree = module(*NAMED, SAFE_F, REAL_R, over(named("(RL)", "R"), to=to))
+        got = et.constant_call(tree, META, OURS, plain=PLAIN)
+        assert got is not None and (got.name, got.line) == ("f", 8)
+        assert "also in a parameter value, an override" in got.sentence
+    tree = module(*NAMED, SAFE_F, REAL_R, over(num(3)))
+    assert et.constant_call(tree, META, OURS, plain=PLAIN) is None
+
+
+# b1case and b3ff (round 20): `for (i = 0; i < 1; i = i + 1) case (ui_in) f(R + i): ...` with an
+# `integer i`; b2case: `h = f(R + a);` in a function h whose argument is a. Verilator sees a call
+# whose argument reads a variable, Yosys works it out itself once it unrolls the loop or works
+# out h, and converts R silently: the real counts in an argument that reads a variable too.
+I_SIG = var("(IS)", "i", 3, varType="VAR", childDTypep=[INTEGER])  # `integer i` of a block
+
+
+@pytest.mark.parametrize("proven", [False, True], ids=["safe-function", "proven-function"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(ar("ADD", named("(RL)", "R"), named("(IS)", "i")), id="loop-variable"),
+        pytest.param(ar("ADD", named("(RL)", "R"), named("(WS)", "w")), id="signal"),
+        pytest.param(ar("ADD", XREF, named("(WS)", "w")), id="hierarchical"),
+        pytest.param(ar("ADD", const("2.5"), named("(WS)", "w")), id="literal"),
+    ],
+)
+def test_a_real_in_an_argument_that_reads_a_variable_is_refused(
+    value: dict[str, Any], proven: bool
+) -> None:
+    fn, args = (PROVEN_K, (num(0x81, "8'h"), value)) if proven else (SAFE_F, (value,))
+    got = judged(fn, REAL_R, I_SIG, args=args, plain=PLAIN)
+    assert got is not None and (got.name, got.line) == ("f", 9)
+    assert "with an argument that can hold a real" in got.sentence
+    plain = ar("ADD", named("(LP)", "P"), named("(IS)", "i"))  # P + i: no real
+    args = (num(0x81, "8'h"), plain) if proven else (plain,)
+    assert judged(fn, REAL_R, I_SIG, args=args, plain=PLAIN) is None
+
+
+def test_a_real_in_a_call_inside_another_function_is_refused() -> None:
+    """b2case: `function h(input [3:0] a); h = f(R + a);` called as `case (ui_in) h(4'd0):`."""
+    inner = call("(ci)", "(F8)", "f", 6) | {"argsp": [{"type": "ARG", "exprp": [
+        ar("ADD", named("(RL)", "R"), ref("(ha)", "(HHk)", "k", 6))]}]}  # fmt: skip
+    h = with_k("HH", "h", 5, set_return(inner, "(RH)", "h"))
+    top = call("(ct)", "(HH)", "h", 11) | {"argsp": [{"type": "ARG", "exprp": [num(0)]}]}
+    tree = module(*NAMED, SAFE_F, REAL_R, h, top)
+    got = et.constant_call(tree, META, OURS, plain=PLAIN)
+    assert got is not None and (got.name, got.line) == ("f", 6)  # the inner call, by line
+    assert "with an argument that can hold a real" in got.sentence
+
+
+def test_an_unresolved_plain_name_counts_only_in_a_constant_call() -> None:
+    """A PARSEREF is a plain name of a module that nothing instantiates: in a call that reads a
+    variable it is that variable (`test_a_call_with_an_argument_that_reads_a_variable_is_fine`),
+    but read only for its size (`$bits(x)`, the call is constant) it is a name the check cannot
+    judge, so it counts as one that can hold a real (a DOT counts either way)."""
+    size = {"type": "ATTROF", "fromp": [{"type": "PARSEREF", "name": "x"}]}
+    assert judged(SAFE_F, REAL_R, args=(size,), plain=PLAIN) is not None
+    in_sum = ar("ADD", {"type": "PARSEREF", "name": "x"}, named("(WS)", "w"))
+    assert judged(SAFE_F, REAL_R, args=(in_sum,), plain=PLAIN) is None
+    dot = ar("ADD", DOT, named("(WS)", "w"))
+    assert judged(SAFE_F, REAL_R, args=(dot,), plain=PLAIN) is not None
+
+
+# u04e, v03 (round 20): `localparam [39:0] MSG = "HELLO";` then `first_char(MSG)` in an assign. A
+# simulator lists a sized string localparam as a string, so it is not plain, but its declared
+# packed range makes it hold bits: no real can reach the call through it.
+def typed(addr: str, name: str, dtype: dict[str, Any] | None, kind: str = "LPARAM") -> Any:
+    more = {"childDTypep": [dtype]} if dtype is not None else {}
+    return var(addr, name, 3, varType=kind, isParam=True, valuep=[const('"A"')], **more)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "holds_bits"),
+    [
+        pytest.param(basic(39), True, id="packed-range"),  # localparam [39:0] MSG = "HELLO"
+        pytest.param(basic(7, signed=True), True, id="signed-range"),
+        pytest.param(INTEGER, True, id="integer"),
+        pytest.param({"type": "BASICDTYPE", "keyword": "logic"}, True, id="logic-one-bit"),
+        pytest.param({"type": "BASICDTYPE", "keyword": "LOGIC_IMPLICIT"}, False, id="untyped"),
+        pytest.param({"type": "BASICDTYPE", "keyword": "LOGIC_IMPLICIT", "signed": True}, False,
+                     id="signed-only"),  # localparam signed P = 1.0e999 holds a real
+        pytest.param({"type": "BASICDTYPE", "keyword": "real"}, False, id="real"),
+        pytest.param({"type": "BASICDTYPE", "keyword": "string"}, False, id="string-type"),
+        pytest.param({"type": "REFDTYPE", "name": "byte_t"}, False, id="typedef"),
+        pytest.param(None, False, id="no-type"),
+    ],
+)  # fmt: skip
+@pytest.mark.parametrize("kind", ["LPARAM", "GPARAM"])
+def test_a_parameter_declared_to_hold_bits_holds_no_real(
+    dtype: dict[str, Any] | None, holds_bits: bool, kind: str
+) -> None:
+    param = typed("(TP)", "MSG", dtype, kind)
+    got = judged(SAFE_F, param, args=(named("(TP)", "MSG"),), plain=PLAIN)
+    assert (got is None) == holds_bits
+    if got is not None:
+        assert "with an argument that can hold a real" in got.sentence
+    # a proven function still refuses a parameter that is not plain, whatever its type (a
+    # string is not a number the proof can bound)
+    got = judged(PROVEN_K, param, args=(num(0x81, "8'h"), named("(TP)", "MSG")), plain=PLAIN)
+    assert got is not None and "calls the function `f` with constant arguments" in got.sentence
+    # and a plain one is fine whatever its type
+    plain = PLAIN | {("core.v", 3, "MSG")}
+    assert judged(SAFE_F, param, args=(named("(TP)", "MSG"),), plain=plain) is None
+
+
+def test_a_parameter_inside_a_function_always_counts_as_built() -> None:
+    """rk18 (round 20): Verilator's elaborated tree leaves out the local parameters of a
+    function that it only works out for a parameter value, so only the simulator lists them,
+    and a name the two tools spelled differently (`\\R"`) was then built by neither: `f(R)` in
+    g's body counted as dead code. A parameter declared inside a function counts as built."""
+    local_r = var("(FR)", "R", 6, varType="LPARAM", isParam=True,
+                  childDTypep=[{"type": "BASICDTYPE", "keyword": "real"}],
+                  valuep=[const("inf.0")])  # fmt: skip
+    inner = call("(ci)", "(F8)", "f", 7) | {"argsp": [{"type": "ARG", "exprp": [
+        named("(FR)", "R")]}]}  # fmt: skip
+    g = func("(G2)", "g", 5, local("(RG2)", "g", basic(7), isFuncReturn=True), local_r,
+             {"type": "BEGIN", "stmtsp": [set_return(inner, "(RG2)", "g")]})  # fmt: skip
+    tree = module(*NAMED, SAFE_F, g)
+    got = et.constant_call(tree, META, OURS, plain=PLAIN, built=frozenset())
+    assert got is not None and (got.name, got.line) == ("f", 7)
+    # the same localparam outside a function, built by no tool, is dead code
+    outside = local_r | {"isFuncLocal": False}
+    call_r = f8_call(named("(FR)", "R"))
+    tree = module(*NAMED, SAFE_F, outside, call_r)
+    assert et.constant_call(tree, META, OURS, plain=PLAIN, built=frozenset()) is None
+    # and one inside a task counts as built too (fail closed; the source check refuses a task)
+    task = func("(T2)", "t", 5, local_r, {"type": "BEGIN", "stmtsp": []}, kind="TASK")
+    tree = module(*NAMED, SAFE_F, task, call_r)
+    assert et.constant_call(tree, META, OURS, plain=PLAIN, built=frozenset()) is not None
+
+
+def test_a_parameter_with_more_than_one_type_node_is_not_counted_as_holding_bits() -> None:
+    """Fail closed: only a VAR with exactly one type node, a BASICDTYPE of an integer type."""
+    real = {"type": "BASICDTYPE", "keyword": "real"}
+    assert et._holds_bits({"childDTypep": [basic(7)]})
+    assert not et._holds_bits({"childDTypep": [basic(7), real]})
+    assert not et._holds_bits({"childDTypep": ["(1)"]})  # a reference, not a node
+    assert not et._holds_bits({})
+
+
+def test_the_constant_call_sentence_comes_first_at_a_call_that_is_both() -> None:
+    """A proven function's constant call with a real argument is named with the constant-call
+    sentence (it names the real too), a call of a function without a computed index with the
+    sentence of a real argument."""
+    real = named("(RL)", "R")
+    both = judged(PROVEN_K, REAL_R, args=(num(0x81, "8'h"), real), plain=PLAIN)
+    assert both is not None and "with constant arguments outside the value" in both.sentence
+    assert "a real: a simulator converts an infinite or NaN real" in both.sentence
+    only = judged(SAFE_F, REAL_R, args=(real,), plain=PLAIN)
+    assert only is not None and "with an argument that can hold a real" in only.sentence
 
 
 @pytest.mark.parametrize("fn", [PROVEN_K, SAFE_F], ids=["proven-function", "safe-function"])

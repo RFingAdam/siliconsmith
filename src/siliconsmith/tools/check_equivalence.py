@@ -630,8 +630,10 @@ macros out of the way (synthesis did not change your logic). A simulator can rea
 constructs differently from Yosys. The tool refuses the common ones as not proven and names \
 them: macros and `include, bit/int types (a loop index declared in a for header with no range, \
 for (int i = 0; ...), is fine), unique/priority, casex, ===, x or z literals, delays \
-(#), characters outside plain ASCII, a lint_off of a race warning (also one code of a list, \
-lint_off WIDTH,BLKSEQ), every level-sensitive \
+(#), characters outside plain ASCII, a back-tick or a double quote inside an escaped \
+identifier (\\v`X, \\M": Icarus expands a macro there, and Verilator and Icarus spell the quote \
+differently), a lint_off of a race warning (also one code of a list, lint_off WIDTH,BLKSEQ, in \
+any case: lint_off blkseq), every level-sensitive \
 always @(a or b) in Verilog or Amaranth (write always @(*)), a combinational block that \
 can read a signal before it writes it on some path through the block (a branch, a case item \
 or a loop pass that does not write it first: write each signal at the top of the block), a \
@@ -653,7 +655,8 @@ value) when the function reads a vector at a computed index that the check canno
 the declared range, or divides by a value it cannot prove nonzero, or when such a proven function \
 gets an argument that can be x (an x or z bit, a divide, another call, any cast, also a size \
 cast such as 3'(N) (write N[2:0] instead), or a real: a literal such as 1.0e999, a real or \
-untyped parameter holding one, $sqrt(-1); a simulator converts an infinite or NaN real to an all-x integer) (proven: an index from a simple \
+untyped parameter holding one, $sqrt(-1); a simulator converts an infinite or NaN real to an \
+all-x integer) (proven: an index from a simple \
 for loop inside the range, an input argument whose declared width fits, constants and parameters \
 with one value and constant selects of these (k[1:0]), also through + - *, so rev(8'h81) with \
 for (i = 0; i < 8; i++) is fine; not proven: a 3-bit index into 4 bits, a loop to i <= 8 over 8 \
@@ -662,11 +665,18 @@ bits, v[i - 1] from i = 0, a signed argument as index, a loop step other than 1,
 v[7 - i], not v[i ^ 7]), a call as an argument, another local or an array element as index, \
 even through a select (v[m[0]], v[loc[1:0]]); a simulator works the call out itself: compute it \
 in an integer localparam first; such a call in a real or string parameter is refused too), a \
-real (as above) or a hierarchical name (g.R) as an argument of a call of any of your functions \
-with constant arguments outside the value of a parameter or localparam, even a function \
-without a select (Yosys works the call out with a number where a simulator has x; a \
-parameter or localparam in code that no tool builds, such as a generate branch the parameters \
-do not choose or a module nothing instantiates, needs no value: that call is dead code), a \
+real (as above: also a real or untyped parameter or localparam whose value is not a plain \
+number in both tools, such as an untyped string; one declared with an integer type or a packed \
+range, localparam [39:0] MSG = "HELLO", holds bits and is fine) or a hierarchical name (g.R) in \
+an argument of ANY call of any of your functions, even a function without a select, wherever \
+the call is: also in the value of a parameter or localparam or in an override (localparam [7:0] \
+K = g(R)), and in an argument that reads a signal or a loop variable too (f(R + i) in a loop, \
+f(R + a) inside another function): Yosys works such a call out itself and turns the real into a \
+number without a warning where a simulator has x, and Verilator and a simulator can agree on a \
+parameter value that Yosys does not give (compute an integer localparam from the real first, \
+localparam integer N = R, and pass that; a parameter or localparam in code that no tool \
+builds, such as a generate branch the parameters do not choose or a module nothing \
+instantiates, needs no value: that call is dead code), a \
 real that is infinite or not a number and is converted to an integer anywhere (an assign, a \
 wire or port, a function body, a clocked block, a case label; Yosys warns "converting real \
 value inf to binary 32'x", a simulator makes it all x: use a real only to compute an integer \
@@ -698,8 +708,11 @@ copy), a function that reads one of its own locals before it writes it (x in a s
 inline call of a function that leaves its result unset for some constant arguments (x in a \
 simulator), a constant expression that Yosys evaluates differently from a simulator (a size cast \
 or an unbased '1 inside a localparam, $rtoi in any constant expression: a localparam or a \
-generate condition; a select outside the range inside a constant function, also in a \
-parameter's value, which Yosys 0.62 evaluates to an undefined value: the gates can differ even \
+generate condition; a real parameter override, which Yosys passes to the instance with six \
+decimals, so 1.0e-9 becomes 0.0; a finite real mixed into a signal expression, ui_in == 2.5, \
+which Yosys rounds to an integer first; a select outside the range inside a constant function, \
+also in a parameter's value, which Yosys 0.62 evaluates to an undefined value: the gates \
+can differ even \
 where Icarus and Verilator agree, and the verdict can change with unrelated edits; only a \
 parameter value on which the simulator and Verilator disagree is refused), or other effects of \
 simulation event order: run gate-level simulation (run_tests with gl=True) as well. A state \

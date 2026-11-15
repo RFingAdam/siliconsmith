@@ -34,8 +34,10 @@ constant that is x to a simulator steering a case inside a block, the values ins
 loop or module copy, an inline call of a function that leaves its result unset for some
 constant arguments, a constant expression that Yosys evaluates differently from a simulator (a
 size cast or an unbased `'1` inside a localparam, `$rtoi` in any constant expression: a
-localparam or a generate condition; a select outside the range inside a constant function, also
-in a parameter's value, which Yosys 0.62 evaluates to an undefined value, so the gates can
+localparam or a generate condition; a real parameter override, which Yosys passes to the
+instance with six decimals; a finite real mixed into a signal expression, `ui_in == 2.5`; a
+select outside the range inside a constant function, also in a parameter's value, which Yosys
+0.62 evaluates to an undefined value, so the gates can
 differ even where Icarus and Verilator agree and the verdict can change with unrelated edits;
 only a parameter value on which the simulator and Verilator disagree is refused, as an untyped
 localparam that overflows is, which Icarus makes wider), and anything else that depends on
@@ -839,7 +841,10 @@ def _tree_checks(r: _Run, sources: list[tuple[str, str]], name: str) -> dict[str
        (an infinite or NaN real is an all-x integer to a simulator), a hierarchical name and a
        parameter whose value is not a plain number in both tools (`equiv_tree.plain_values`),
        unless neither tool builds that parameter (`equiv_tree.built_values`: its code is dead
-       in every tool). Then `_yosys_real_x`: no real that is infinite or NaN converted to an
+       in every tool). A real or a hierarchical name in an argument refuses every call of a
+       design function, wherever it is (round 20: also in a parameter value or an override,
+       and in an argument that reads a variable: Yosys converts the real silently wherever it
+       works a call out). Then `_yosys_real_x`: no real that is infinite or NaN converted to an
        integer anywhere Yosys converts one (its warning: an assignment, also inside a function,
        a wire, a port). Then `_yosys_outside`: no select outside the range in Yosys's
        elaboration (its warning; Yosys sees one inside a function it inlines, also in an arm of
@@ -967,13 +972,17 @@ def _yosys_real_x(log_text: str) -> str | None:
     to an integer when it elaborated the RTL (its warning "converting real value inf to binary
     32'x"), else None. A simulator converts such a real to an all-x integer too, and an `if`, a
     `!` or a case label turns that x into a 0 or 1 that the gates need not give: the RTL's x is a
-    don't-care to the proof. Yosys warns for every such conversion it makes, wherever it is: an
-    assignment in an always block or a function (also one it works out with constant
-    arguments), a wire's value, an assign, a port connection (round 19: `v = R;` in a function,
+    don't-care to the proof. Yosys warns for such a conversion in an assignment or a
+    connection, wherever it is: an assignment in an always block or a function (also one it
+    works out with constant arguments), a wire's value, an assign, a port connection, a
+    parameter declared with a type or range (round 19: `v = R;` in a function,
     `w <= R;`, `wire [3:0] w = 4'(integer'(R));` as a case label, `.a(R)`, all with
     `R = 1.0e999`). It does not warn for a real that it passes as an argument to a function it
-    works out with constant arguments (`f(R)`, `f(g.R)`): `equiv_tree.constant_call` judges
-    those."""
+    works out itself (`realAsConst` in `eval_const_function` prints nothing): a call with
+    constant arguments (`f(R)`, `f(g.R)`), a call in a parameter value or an override
+    (`localparam [7:0] K = g(R)`), a call whose argument reads a loop variable once Yosys
+    unrolls the loop (`f(R + i)`) and a call inside a function it works out (`h = f(R + a)`):
+    `equiv_tree.constant_call` refuses a real argument of every call (round 20)."""
     found = _REAL_TO_X.search(log_text)
     if found is None:
         return None

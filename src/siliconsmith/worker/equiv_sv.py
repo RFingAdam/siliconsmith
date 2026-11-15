@@ -64,6 +64,9 @@ In every file:
   another branch than the proof (`if (2147483648 > 0)`); a size (`32'd2147483648`) is fine;
 * every character outside printable ASCII, tab, CR and LF that is not in a comment (the tools
   disagree about where an escaped identifier ends and what counts as a blank);
+* a back-tick or a double quote inside an escaped identifier (`\\v`__ICARUS__`, `\\M"`): Icarus
+  expands a macro there and Yosys and Verilator do not, and Verilator and Icarus spell a double
+  quote in a name differently, so the values the two give such a parameter are never compared;
 * delay controls (`#`), except a parameter list in exactly two shapes:
   `module NAME #(` and `NAME #( ... ) INSTANCE [range] (`; neither name may be a reserved word;
 * `$readmemh`, `$readmemb`, `$test$plusargs`, `$value$plusargs`;
@@ -262,6 +265,17 @@ def lex(text: str) -> tuple[str, str, tuple[int, str] | None]:
             while j < n and text[j] not in ASCII_BLANKS:
                 j += 1
             code(text[i:j], i)
+            # round 20: Icarus expands a macro inside an escaped identifier (`\v`__ICARUS__`
+            # is `\v1` there), Yosys and Verilator do not; and Verilator and Icarus spell a
+            # double quote in a name differently, so the values of `\M"` are never compared
+            odd = next((x for x in text[i:j] if x in '`"'), None)
+            if odd is not None:
+                note(
+                    text.index(odd, i),
+                    f"a {'back-tick' if odd == '`' else 'double quote'} inside an escaped "
+                    "identifier (Icarus expands a macro there, Yosys and Verilator do not; "
+                    "Verilator and Icarus spell a double quote in a name differently)",
+                )
             clean.append(text[i:j])
             scan.append("\\" + "x" * (j - i - 1))
             last = "x"
@@ -1390,8 +1404,10 @@ def _refusal_in(name: str, text: str, hand: bool, myhdl: bool = False) -> Refusa
             return refuse("a delay (`#`)", m.start())
     for m in _LINT_OFF.finditer(text):  # a comment: look at the original text
         # Verilator turns off every code of a comma list (`lint_off WIDTH,BLKSEQ`, also with an
-        # empty item: `WIDTH,,BLKSEQ`), so every word counts, not only the first (round 19)
-        words = re.findall(r"[-\w]+", m.group(1), re.ASCII)
+        # empty item: `WIDTH,,BLKSEQ`), so every word counts, not only the first (round 19).
+        # Not the words of a `//` comment after it: Verilator reads no code there
+        # (`lint_off WIDTH // no latch here` still reports LATCH; round 20)
+        words = re.findall(r"[-\w]+", m.group(1).split("//")[0], re.ASCII)
         codes = [w for w in words if not w.startswith("-")]
         hidden = next((c for c in codes if c.upper() in LINT_CODES_NOT_TO_HIDE), None)
         if not codes or hidden is not None:
@@ -1432,6 +1448,8 @@ _ADVICE = (
      "`@always_seq`, converted by MyHDL): the check reads only the plain single module it writes."),
     ("macro or directive", "Use a `localparam` or `parameter` instead: a macro can build text the "
      "check never sees."),
+    ("inside an escaped identifier", "Rename it to a plain name (letters, digits, `_` and `$`), "
+     "or keep the back-tick and the double quote out of the escaped name."),
     ("two-state", "Use `reg` or `logic` (reset a register with rst_n): a two-state type starts "
      "at 0 in a simulator and turns an x into 0, which the check cannot see. For a loop index, "
      "declare it in the for header with no range (`for (int i = 0; i < 8; i++)`) or use "

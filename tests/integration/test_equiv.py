@@ -743,6 +743,8 @@ async def test_no_combinational_read_before_write_in_the_counter(
 # Round 19: realfin (the control of realcase: a finite real, the same number in both tools) and
 # deadlp, deadkid and deadcase (a localparam, a child's parameter and a generate case localparam
 # passed to a helper with a proven select in code that no tool builds: dead code everywhere).
+# Round 20: strhelp (a sized string localparam and a child's sized string parameter set by an
+# override, passed to helpers in plain assigns: they hold bits, never a real).
 EQUIVALENT = [
     "swpick",
     "n52",
@@ -777,6 +779,7 @@ EQUIVALENT = [
     "deadlp",
     "deadkid",
     "deadcase",
+    "strhelp",
 ]
 EQUIVALENT_CASES = [
     (d, fe) for d in EQUIVALENT for fe in FRONTENDS if (DESIGNS / d / SOURCE_FILE[fe]).exists()
@@ -823,7 +826,17 @@ REFUSAL_ADVICE = {
     # converted in a function body, and a real argument of a function that has no select
     "xrefreal": "a hierarchical name",
     "realbody": "Use a real only to compute an integer parameter or localparam",
-    "realsafe": "a real: a simulator converts an infinite or NaN real to an all-x integer",
+    "realsafe": "Compute an integer localparam from the real first",
+    # Round 20: an infinite real argument that Yosys converts without a warning in a localparam
+    # value, a parameter override, an unrolled loop and a function that it works out; a back-tick
+    # or a double quote inside an escaped identifier (Icarus expands a macro there; Verilator and
+    # Icarus spell the quote differently, so a value was never compared)
+    "realparam": "with an argument that can hold a real",
+    "realover": "also in a parameter value, an override",
+    "realloop": "calls the function `f` with an argument that can hold a real",
+    "realnest": "(realnest.v, line 21) calls the function `f`",
+    "esctick": "(esctick.v, line 12) uses a back-tick inside an escaped identifier",
+    "escquote": "(escquote.v, line 13) uses a double quote inside an escaped identifier",
 }
 
 
