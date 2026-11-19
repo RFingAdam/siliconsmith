@@ -20,7 +20,7 @@ FROM verilator/verilator:v5.046@sha256:8003e282e9ff02eb446083eb5a3c512225a269f0a
 # ca-certificates comes from the live Ubuntu archive, curl and zstd from the apt snapshot; none of
 # them reach the final image.
 # The pins here must equal tt.lock (tests/test_image_pins.py checks the hash).
-FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5 AS pdk
+FROM ubuntu:24.04@sha256:73b999393d07f2bf65a40373778a44dc9a6d54ad7718d29247d8ff9413c4d6a8 AS pdk
 ARG SKY130_OPEN_PDKS=8afc8346a57fe1ab7934ba5a6056ea8b43078e71
 ARG PDK_COMMON_SHA256=be8a548341fd9177af9e461ad7b4fdd89afbe03dba68dc42d155321fdc3f86bf
 ARG PDK_HD_SHA256=17047505cfff30841bf53960b8cbf9e7c79b2a3bbb2ebec0bb254eb441e4ce1e
@@ -63,7 +63,7 @@ RUN mkdir -p /pdk \
     } > manifest.json \
  && chmod -R a-w,a+rX /pdk
 
-FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
+FROM ubuntu:24.04@sha256:73b999393d07f2bf65a40373778a44dc9a6d54ad7718d29247d8ff9413c4d6a8
 
 # Ubuntu archive snapshot to install from. `apt-get update --snapshot` talks https to
 # snapshot.ubuntu.com, and the base image has no root certificates, so ca-certificates is
