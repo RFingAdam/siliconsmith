@@ -49,13 +49,6 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           BASE_REPO: ${{ github.repository }}
-      - name: Check the CLA box on fork pull requests
-        if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
-        run: uv run python scripts/check_cla.py
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          BASE_REPO: ${{ github.repository }}
       - name: Set up Python for the pip-compat check
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:

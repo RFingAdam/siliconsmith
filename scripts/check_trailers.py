@@ -9,8 +9,8 @@ BASE (or env BASE) is the commit to compare against; messages come from
 `git log --format=%B BASE..HEAD`. The PR body, if any, is read from env PR_BODY.
 
 Signed-off-by lines are rejected on same-repo branches (owner and agents) and accepted on fork
-PRs; the CLA (see check_cla.py), not the DCO, covers outside contributors. A PR is from a fork
-when env HEAD_REPO and BASE_REPO are both set and differ.
+PRs, where outside contributors sign off under the DCO. A PR is from a fork when env HEAD_REPO
+and BASE_REPO are both set and differ.
 """
 
 from __future__ import annotations
