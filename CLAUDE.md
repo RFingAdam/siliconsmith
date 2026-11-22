@@ -21,7 +21,7 @@ The repo started as a plan-only starter. It is built one pull request per issue,
 - The repository license is **AGPL-3.0-or-later** (since the relicense after commit `f752b50`; older versions stay Apache-2.0). New source, tests and scripts get SPDX headers: `AGPL-3.0-or-later`. Templates (`src/siliconsmith/templates/**`), skills (`src/siliconsmith/skills/**`, `docs/glossary.md`) and example designs (`examples/**`) stay **Apache-2.0**, so users' chip designs are never encumbered. `REUSE.toml` and `tests/test_license_headers.py` enforce the split by path.
 - Files and text that Siliconsmith writes into a user's project (scaffold, wrapper, emitted Verilog, `docs/verification.md`, tool hints the agent copies) are Apache-2.0 through the additional permission in `OUTPUT-EXCEPTION.md`. Never change the SPDX strings those generators emit. The permission covers the whole program, and generator modules carry a pointer to that file in their header (add one to any new module that writes into projects or returns hints). Captured generator output under `tests/fixtures/` keeps its Apache-2.0 header.
 - **Open-source tools only.** No Cadence, Synopsys, Siemens, or other commercial EDA, even as an optional extra.
-- Call every EDA tool as an **external process** (subprocess or `docker run`). Never vendor tool source or binaries into this repo. Never `import` or link GPL-licensed libraries (including the KLayout Python module) into our code. This keeps the sandbox model and keeps the owner able to offer a commercial license.
+- Call every EDA tool as an **external process** (subprocess or `docker run`). Never vendor tool source or binaries into this repo. Never `import` or link GPL-licensed libraries (including the KLayout Python module) into our code. This keeps the sandbox model and keeps Siliconsmith's AGPL-3.0-or-later code (and the Apache-2.0 output exception) cleanly separate from GPL tools.
 - GPL and LGPL tools are listed in `THIRD_PARTY_LICENSES.md`. If you add a tool, verify its license from the project's official source, record it in that file, and follow the same subprocess rule.
 - Do not copy code from repositories that have **no license**. That includes [ssql2014/mcp4eda](https://github.com/ssql2014/mcp4eda). You may read public docs or papers for ideas; you may not paste or adapt their code.
 - Pin the toolchain in a Docker image (`ghcr.io/rfingadam/siliconsmith-toolchain`). Do not require host installs besides Docker and Python.
@@ -42,7 +42,7 @@ The repo started as a plan-only starter. It is built one pull request per issue,
 ## Git and attribution
 
 - Commits are authored as the repository owner, Adam Engelbrecht (`RFingAdam`).
-- **No bot credit in commits or PRs.** Agents never add `Signed-off-by` lines (not even the owner's), `Co-authored-by` lines, "Generated with" lines, Cursor/Claude/Codex trailers, or any line that names an AI tool as an author or co-author. Outside contributors agree to `CLA.md` by ticking the box in the pull request template (there is no DCO).
+- **No bot credit in commits or PRs.** Agents never add `Signed-off-by` lines (not even the owner's), `Co-authored-by` lines, "Generated with" lines, Cursor/Claude/Codex trailers, or any line that names an AI tool as an author or co-author. Outside contributors sign off their own commits (DCO).
 - **CI trailer scan.** It fails on `Co-authored-by`, "Generated with" and AI-tool trailers in any commit of the PR or in the PR body. It fails on `Signed-off-by` only in PRs from a branch of this repository (the owner's and agents' PRs). In PRs from a fork, outside contributors' own `Signed-off-by` lines pass.
 - Update a branch with `git merge origin/main`. Never rebase or force-push, and never use admin bypass.
 
@@ -53,3 +53,16 @@ The repo started as a plan-only starter. It is built one pull request per issue,
 - Be honest in docs and skills: a 2.4 GHz Bluetooth radio is not realistic on a Tiny Tapeout analog tile; SAW/BAW filters have no open fab in this project.
 - Keep secrets out of the repo and out of logs.
 - Beginner-friendly docs: the owner is new to digital HDL. Example READMEs should explain what the design does and why, in plain English.
+
+## MCP first (do not bypass with bash)
+
+If this MCP covers the job, use its tools. If a call fails, root-cause and fix this MCP (branch, test, PR), then retry through the MCP. Do not silently fall back to bash, vendor CLIs, or ad-hoc scripts.
+
+A temporary bypass is allowed only when you state it in your report and log it in `docs/KNOWN_ISSUES.md` (or the Known issues file linked below). Record the command family only — no secrets, hostnames, LAN IPs, or private paths.
+
+Plain bash is fine for local files, git, builds, and work this MCP does not cover.
+
+### Use the `siliconsmith` MCP for
+
+- Tiny Tapeout and open-source chip-design jobs this MCP exposes (scaffold, toolchain, sim)
+- Calling LibreLane / OpenROAD / related EDA tools when this MCP can do the job
