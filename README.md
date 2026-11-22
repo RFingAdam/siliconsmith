@@ -194,7 +194,7 @@ virtual environment, and either activate it before you start the agent or put th
 ### 2. Pull the toolchain image
 
 ```sh
-docker pull ghcr.io/rfingadam/siliconsmith-toolchain:ctx-e5ffaeb6f6b1
+docker pull ghcr.io/rfingadam/siliconsmith-toolchain:ctx-6f9ca00808ac
 ```
 
 It is about 258 MB to download. The server never pulls the image by itself. If the image is
@@ -369,7 +369,7 @@ Siliconsmith is built to tell you what has been checked and what has not.
 Every simulator and chip tool runs inside one Docker image. It has no network access when
 Siliconsmith runs it.
 
-    ghcr.io/rfingadam/siliconsmith-toolchain:ctx-e5ffaeb6f6b1
+    ghcr.io/rfingadam/siliconsmith-toolchain:ctx-6f9ca00808ac
 
 Size (linux/amd64 only): about 816 MB unpacked, and about 258 MB to download. An arm64 image is
 planned (M5-3).
@@ -398,7 +398,7 @@ different image, set `SILICONSMITH_IMAGE` for the server, and pass the same name
 `siliconsmith status --image`, because the image is part of what makes a result stale.
 
 To build it yourself instead:
-`docker build -t ghcr.io/rfingadam/siliconsmith-toolchain:ctx-e5ffaeb6f6b1 docker/`
+`docker build -t ghcr.io/rfingadam/siliconsmith-toolchain:ctx-6f9ca00808ac docker/`
 
 ## Documentation
 
